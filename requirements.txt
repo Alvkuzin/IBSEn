@@ -1,6 +1,5 @@
 numpy
 scipy
-naima
 astropy
 matplotlib
 pathlib

@@ -6,21 +6,30 @@ A collection of Python scripts for processing, modeling, and visualizing observa
 
 ## Project Structure
 
-Project/
-├── ObsData/ # Observed light curves and spectral data
-├── TabData/ # Pre-tabulated numerical data
-├── Outputs/ # Output of model fits and results
-├── GetObsData.py # Collects and organizes observational data
-├── Orbit.py # Orbital characteristics and solutions
-├── TransportShock.py # Electron transport equation solvers
-├── Absorbtion.py # Photoelectric and γ-γ absorption scripts
-├── ElEv.py # Electron evolution on the IBS
-├── SpecIBS.py # IBS spectrum calculation (Synchrotron + IC)
-├── LC.py # PSRB light curve model
-├── DopplBoost_fit_plots.py # Fits model to observed light curves
-├── Show_ObsLightCurves.py # Visualizes observed light curves
-├── Show_precalc_LC_fits.py # Displays model fits to data
-└── Show_spectra.py # Compares observed and theoretical spectra
+The project contains several folders:
+
+1. ObsData/ # Observed light curves and spectral data
+2. TabData/ # Pre-tabulated numerical data
+3. Outputs/ # Output of model fits and results
+
+and a bunch of Python sctipts:
+
+1. For reading the observational data:
+   -GetObsData.py # Collects and organizes observational data
+2. Some general scripts:
+   - Orbit.py # Orbital characteristics and solutions
+   - TransportShock.py # Electron transport equation solvers
+   - Absorbtion.py # Photoelectric and γ-γ absorption scripts
+3. Directly related to the emission calculation:
+   - ElEv.py # Electron evolution on the IBS
+   - SpecIBS.py # IBS spectrum calculation (Synchrotron + IC)
+   - LC.py # PSRB light curve model
+   - DopplBoost_fit_plots.py # Fits model to observed light curves
+4. For displaying results or data:
+   - Show_ObsLightCurves.py # Visualizes observed light curves 
+   - Show\_precalc\_LC_fits.py # Displays model fits to data
+   - Show_spectra.py # Compares observed and theoretical spectra
+
 
 ---
 
@@ -30,28 +39,33 @@ To collect and clean the raw observational data:
 
 ```bash
 python GetObsData.py
+```
 
 To calculate and fit light curves:
 
-
+```bash
 python DopplBoost_fit_plots.py
+```
 
 To visualize observed and theoretical light curves:
 
+```bash
 python Show_ObsLightCurves.py
 python Show_precalc_LC_fits.py
+```
 
 To display spectra:
 
+```bash
 python Show_spectra.py
 ```
 
 ## Requirements 
 
-This project requires Python 3 and some standard scientific libraries. You can install them (if needed) with:
+This project requires Python 3, [Naima](https://naima.readthedocs.io/en/latest/index.html), and some standard scientific libraries. You can install them (if needed, Naima excluded) with:
 
 ```bash
-pip install numpy scipy matplotlib
+pip install -r requirements.txt
 ```
 
 
