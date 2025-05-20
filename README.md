@@ -1,6 +1,6 @@
 # IBSEn: calculates the IBS Emissivity for PSR B1259-63.
 
-IBSEn: IntraBinary Shock Emission n-not-meaning-anything is collection of Python scripts for processing, modeling, and visualizing observational data of the gamma-ray binary pulsar PSR B1259-63. This project includes tools to handle observational data, compute intrabinary shock (IBS) emissivity: spectra and light curves, and fit theoretical models to light curves and spectra.
+IBSEn: IntraBinary Shock Emission n-not-meaning-anything is a collection of Python scripts for processing, modeling, and visualizing observational data of the gamma-ray binary pulsar PSR B1259-63. This project includes tools to handle observational data, compute intrabinary shock (IBS) emissivity: spectra and light curves, and fit theoretical models to light curves and spectra.
 
 ---
 
@@ -24,10 +24,10 @@ and a bunch of Python sctipts:
    - `ElEv.py`  Electron evolution on the IBS
    - `SpecIBS.py`  IBS spectrum calculation (Synchrotron + IC)
    - `LC.py`  PSRB light curve model
-   - `DopplBoost\_fit\_plots.py` # Fits model to observed light curves
+   - `DopplBoost_fit_plots.py` # Fits model to observed light curves
 4. For displaying results or data:
    - `Show_ObsLightCurves.py`  Visualizes observed light curves 
-   - `Show\_precalc\_LC_fits.py`  Displays model fits to data
+   - `Show_precalc_LC_fits.py`  Displays model fits to data
    - `Show_spectra.py`  Compares observed and theoretical spectra
 
 
@@ -35,30 +35,7 @@ and a bunch of Python sctipts:
 
 ## Usage
 
-To collect and clean the raw observational data:
-
-```bash
-python GetObsData.py
-```
-
-To calculate and fit light curves:
-
-```bash
-python DopplBoost_fit_plots.py
-```
-
-To visualize observed and theoretical light curves:
-
-```bash
-python Show_ObsLightCurves.py
-python Show_precalc_LC_fits.py
-```
-
-To display spectra:
-
-```bash
-python Show_spectra.py
-```
+Honestly, all scripts are not suited for running from the command line... It's a bunch of scripts, not a package, have mercy.
 
 ## Requirements 
 
@@ -67,9 +44,6 @@ This project requires Python 3, [Naima](https://naima.readthedocs.io/en/latest/i
 ```bash
 pip install -r requirements.txt
 ```
-
-
-Additional dependencies may apply depending on plotting or fitting routines used.
 
 ## Notes
 
