@@ -1,0 +1,10 @@
+numpy
+scipy
+naima
+astropy
+matplotlib
+pathlib
+joblib
+multiprocessing
+time
+xarray

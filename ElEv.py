@@ -11,7 +11,7 @@ from naima.models import ExponentialCutoffPowerLaw, Synchrotron, InverseCompton
 import time
 from joblib import Parallel, delayed
 
-from cycler import cycler
+# from cycler import cycler
 # from TransportShock import Denys_solver
 from scipy.optimize import curve_fit
 import TransportShock
