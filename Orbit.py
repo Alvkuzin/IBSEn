@@ -4,6 +4,8 @@ from numpy import pi, sin, cos
 
 G = 6.67e-8
 DAY = 86400.
+AU = 1.5e13
+
 MoptPSRB = 24
 MxNStyp = 1.4
 GMPSRB = G * (MoptPSRB + MxNStyp) * 2e33
@@ -12,10 +14,31 @@ TorbPSRB = PPSRB * DAY
 aPSRB = (TorbPSRB**2 * GMPSRB / 4 / pi**2)**(1/3)
 ePSRB = 0.874
 MPSRB_cgs = (MoptPSRB + MxNStyp) * 2e33
+DPSRB = 2.4e3 * 206265 * AU
 
-def a_axis(Torb, Mtot):
+def Get_PSRB_params():
+    """
+    Quickly access some PSRB orbital parameters: orbital period P [days],
+    orbital period T [s], major half-axis a [cm], e, M [g], GM, 
+    distance to the system D [cm], star radius Ropt [cm].
+
+    Returns : dictionary
+    -------
+    'P' [days], 'a' [cm], 'e', 'M' [g], 'GM': cgs, 'D' [cm], 'Ropt' [cm],
+    'T' [s]
+
+    """
+    res = {'P': PPSRB, 'a': aPSRB, 'e': ePSRB, 'M': MPSRB_cgs, 'GM': GMPSRB,
+           'D': DPSRB, 'Ropt': 10. * 7.e10, 'T': TorbPSRB}
+    return res
+
+def a_axis(Torb=TorbPSRB, Mtot=MPSRB_cgs):
     GM_ = G * Mtot
     return (Torb**2 * GM_ / 4 / pi**2)**(1/3)
+
+def r_peri(Torb=TorbPSRB, Mtot=MPSRB_cgs, e=ePSRB):
+    a_ = a_axis(Torb, Mtot)
+    return a_ * (1 - e)
 
 def Mean_motion(t, Torb):
     return 2 * np.pi * t / Torb
@@ -71,10 +94,17 @@ def Y_coord(t, Torb=TorbPSRB, e=ePSRB, Mtot=MPSRB_cgs):
     a_ = a_axis(Torb, Mtot)
     return a_ * (1 - e**2)**0.5 * sin(Ecc_an(t, Torb, e))
 
+def Z_coord(t, Torb=TorbPSRB, e=ePSRB, Mtot=MPSRB_cgs):
+    if isinstance(t, np.ndarray):
+        return np.zeros(t.size)
+    else:
+        return 0.
+
 def Vector_S_P(t, Torb=TorbPSRB, e=ePSRB, Mtot=MPSRB_cgs):
-    x_, y_ = (X_coord(t, Torb, e, Mtot),
-             Y_coord(t, Torb, e, Mtot))
-    return np.array([x_, y_, 0])
+    x_, y_, z_ = (X_coord(t, Torb, e, Mtot),
+                  Y_coord(t, Torb, e, Mtot),
+                  Z_coord(t, Torb, e, Mtot))
+    return np.array([x_, y_, z_])
 
 def N_from_V(some_vector):
     return some_vector / ABSV(some_vector)

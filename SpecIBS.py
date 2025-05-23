@@ -14,9 +14,10 @@ from scipy.interpolate import splev, splrep, interp1d, RegularGridInterpolator
 import time
 import ElEv
 import TransportShock
-import Orbit as Orb
+import Orbit as Obt
 import xarray as xr
 import Absorbtion
+from ShapeIBS import approx_IBS
 
 
 # start = time.time()
@@ -24,29 +25,27 @@ G = 6.67e-8
 c_light = 3e10
 sigma_b = 5.67e-5
 h_planck_red = 1.05e-27
+m_e = 9.109e-28
+MC2E = m_e * c_light**2
+
 Rsun = 7e10
 AU = 1.5e13
 DAY = 86400.
-Mopt = 24
-Ropt = 10 * Rsun
-Mx = 1.4
-GM = G * (Mopt + Mx) * 2e33
-P = 1236.724526
-Torb = P * DAY
-a = (Torb**2 * GM / 4 / pi**2)**(1/3)
-e = 0.87
+# Mopt = 24
+# Ropt = 10 * Rsun
+# Mx = 1.4
+# GM = G * (Mopt + Mx) * 2e33
+# P = 1236.724526
+# Torb = P * DAY
+# a = (Torb**2 * GM / 4 / pi**2)**(1/3)
+# e = 0.87
 # e = 0
-r_periastron = a * (1 - e)
-D_system = 2.4e3 * 206265 * AU
+orb_p_psrb = Obt.Get_PSRB_params()
+
+# r_periastron = a * (1 - e)
+# D_system = 2.4e3 * 206265 * AU
 sed_unit = u.erg / u.s / u.cm**2
 RAD_IN_DEG = pi / 180.0
-# print((r_periastron/Ropt)**2*5e-4)
-
-# We don't want to read the file each time functions are called, so we read 
-# it once
-### --------------------- For shock front shape --------------------------- ###
-file_sh = Path(Path.cwd(), 'TabData', "Shocks4.nc")
-ds_sh = xr.load_dataset(file_sh)
 
 def interplg(x, xdata, ydata, axis=0):
     asc = np.argsort(xdata)
@@ -104,12 +103,12 @@ def d_boost(Gammas, angle_beta_obs):
     return 1 / Gammas / (1 - beta_vel * cos(angle_beta_obs))
 
 
-def B_and_u_test(Bx, Bopt, r_SE, r_PE, T_opt):      # just for testing
+def B_and_u_test(Bx, Bopt, r_SE, r_PE, Topt, Ropt):      # just for testing
     L_spindown, sigma_magn = 8e35 * (Bx / 3e11)**2, 1e-2
     B_puls = (L_spindown * sigma_magn / c_light / r_PE**2)**0.5
     B_star = Bopt * (Ropt / r_SE)
     factor = 2 * (1 - (1 - (Ropt / r_SE)**2)**0.5 )
-    u_dens = sigma_b * T_opt**4 / c_light * factor
+    u_dens = sigma_b * Topt**4 / c_light * factor
     return B_puls, B_star, u_dens
 
 def LorTrans_B_iso(B_iso, gamma):
@@ -210,198 +209,6 @@ def transform_to_comoving(E_lab, dN_dE_lab, gamma, E_comov=None, n_mu=101):
 
     return E_comov, dN_dE_comov
 
-def approx_IBS(b, Na, s_max, full_output = False):
-    """
-    The shape of the IBS in the model of Canto, Raga, Wilkin (1996)
-    https://ui.adsabs.harvard.edu/abs/1996ApJ...469..729C/abstract
-    
-    Parameters
-    ----------
-    b : float
-        b = | log10 (beta_eff) |. Should be > 0.1.
-    Na : int
-        The number of nods in the grid.
-    s_max : float
-        DESCRIPTION.
-    full_output : bool, optional
-        DESCRIPTION. The default is False.
-
-    Returns
-    -------
-    tuple
-        The shape of the IBS: the tuple of its characteristics. If full_output
-        = False, then the tuple is (x [np.ndarray], y [np.ndarray],
-        theta [np.ndarray], r [np.ndarray], s [np.ndarray]). If full_output
-        = True, then the tuple is ((x [np.ndarray], y [np.ndarray],
-        theta [np.ndarray], r [np.ndarray], s [np.ndarray], theta1 [np.ndarray],
-        r1 [np.ndarray], theta_inf (float), r_in_apex (float)). 
-        All quantities are dimentionless, so that the distance between the 
-        star and the pulsar = 1.
-
-    """
-    # first, find the shape in given b by interpolation
-    intpl = ds_sh.interp(abs_logbeta=b)
-    # and get its x, y, theta, r, s, theta1, r1 as np.arrays
-    xs_, ys_, ts_, rs_, ss_, t1s_, r1s_ = (intpl.x, intpl.y, intpl.theta, intpl.r, intpl.s, intpl.theta1, intpl.r1, )
-    xs_, ys_, ts_, rs_, ss_, t1s_, r1s_ = [np.array(arr) for arr in (xs_, ys_, ts_, rs_, ss_, t1s_, r1s_)]
-    tang = np.arctan(np.gradient(ys_, xs_, edge_order=2))
-    if isinstance(s_max, float):
-        # leave only the points where arclength < s_max. This may not work good
-        # when the b is super big, like > 8-9, as many points will be cut in
-        # already sparse arrays
-        ok = np.where(ss_ < s_max)
-    if isinstance(s_max, str):
-        if s_max == 'bow':
-            # leave only the part of the shock in forward half-sphere from the 
-            # pulsar
-            ok = np.where(xs_ >= 0)
-        if s_max == 'incl':
-            # leave only the parts where the angle between the flow and the line
-            # from pulsar is < 90 + 10
-            ok = np.where(ts_ + np.abs(tang) <= pi/2 + 10/180*pi)
-    xs_, ys_, ts_, rs_, ss_, t1s_, r1s_, tang = [arr[ok] for arr in (xs_, ys_, ts_, rs_, ss_, t1s_, r1s_, tang)]
-    # now we interpolate the values onto the equally-spaced grid over y with
-    # Na nods, since this is the best way to interpolate (not over s)
-    intx, ints, intth, intr, intth1, intr1, inttan = (interp1d(ys_, xs_), interp1d(ys_, ss_),
-            interp1d(ys_, ts_), interp1d(ys_, rs_), interp1d(ys_, t1s_), 
-            interp1d(ys_, r1s_), interp1d(ys_, tang))    
-    yplot = np.linspace(np.min(ys_)*1.001, np.max(ys_)*0.999, int(Na))
-    xp, tp, rp, sp, t1p, r1p, tanp = (intx(yplot), intth(yplot), intr(yplot), ints(yplot),
-            intth1(yplot), intr1(yplot), inttan(yplot))
-    yp = yplot
-    if full_output:
-        return xp, yp, tp, rp, sp, t1p, r1p, tanp, intpl.theta_inf.item(), intpl.r_apex.item()
-    if not full_output:
-        return xp, yp, tp, rp, sp
-    
-# def SED_old_apex(Btot, e_density, dist, E0_e, Ecut_e, Ampl_e, p_e, T_opt, 
-#              beta_ecpl, cooling,  eta_flow=None, eta_syn=None,
-#             eta_IC=None):
-#     if not cooling:
-#         ECPL = ExponentialCutoffPowerLaw(amplitude = Ampl_e * u.Unit("1/eV"),
-#                 e_0 = E0_e * u.TeV, alpha = p_e, e_cutoff = Ecut_e * u.TeV, beta = beta_ecpl)
-#     if cooling:
-#         spec_energies = np.logspace(9, np.log10(5.1e14), 1000)
-#         ECPL = ElEv.Evolved_ECPL(spec_energies=spec_energies, logNorm = np.log10(float(Ampl_e)),
-#                             E0_e = E0_e, Ecut_e=Ecut_e, p_e=p_e, beta_ecpl=beta_ecpl,
-#                             B=Btot, Topt=T_opt, dist=dist, eta_flow=eta_flow,
-#                             eta_syn=eta_syn, eta_IC=eta_IC, to_evolve=True)
-#     Sync = Synchrotron(ECPL, B = Btot * u.G)
-#     # print('btot = ', Btot)
-#     seed_ph = ['star', T_opt * u.K, e_density * u.erg / u.cm**3] 
-#     # print('edens = ', e_density)
-#     IC = InverseCompton(ECPL, seed_photon_fields = [seed_ph])
-#     return Sync, IC
-
-# def SED_boosted_old(nus, SED_spline, beta_IBS, Gamma, s_max, phi, bopt2bpuls_ap,
-#                 delta_power=3, if_MF_boost=False, what_to_boost='Syn',
-#                 ):
-#     xs, ys, thetas, rs, ss = approx_IBS(-np.log10(beta_IBS), 100, s_max)
-#     th_tan_up = np.arctan(np.gradient(ys, xs, edge_order=2))
-#     th_tan_low = - th_tan_up
-#     ang_up = pi - phi + th_tan_up
-#     ang_low = pi - phi + th_tan_low
-#     Gammas = Gma(ss, s_max, Gamma)
-#     r_ = bopt2bpuls_ap / (1 + bopt2bpuls_ap)
-#     xe = beta_IBS**0.5 / (1 + beta_IBS**0.5)
-#     # print('AAAAAAAAAAAAAAAA', xe)
-#     r2opt = ((1 - xs)**2 + ys**2)**0.5
-#     b_ = (1 - r_) * xe / rs + r_ * (1 - xe) / r2opt 
-#     n_ = 0.5 * (1 - cos(thetas))
-#     u_ = (1-xe)**2 / r2opt**2
-#     if if_MF_boost:
-#         b_ = b_ / Gammas * rs * n_ # Khangu che to tam et al 2014
-#     delta_b_up = d_boost(Gammas, ang_up)
-#     delta_b_low = d_boost(Gammas, ang_low)
-#     sed = np.zeros(nus.size)
-#     if what_to_boost == 'Syn':
-#         for i in range(nus.size):
-#             nu = nus[i]
-#             j_up = splev(nu / delta_b_up, SED_spline)
-#             j_low = splev(nu / delta_b_low, SED_spline)
-#             f_up = (trapezoid(delta_b_up**delta_power * n_ * b_**2 * j_up, ss)# /
-#                     # trapezoid(n_ * b_**2 , ss) / 2
-#                     )
-#             f_low = (trapezoid(delta_b_low**delta_power * n_ * b_**2 * j_low, ss)# /
-#                      # trapezoid(n_ * b_**2, ss) / 2
-#                      )
-#             sed[i] = f_up + f_low
-#         return sed
-#     if what_to_boost == 'IC':
-#         for i in range(nus.size):
-#             nu = nus[i]
-#             j_up = splev(nu / delta_b_up, SED_spline)
-#             j_low = splev(nu / delta_b_low, SED_spline)
-#             f_up = (trapezoid(delta_b_up**(delta_power) * n_ * u_ * j_up, ss)
-#                     # / trapezoid(n_ * u_, ss) / 2
-#                     )
-#             f_low = (trapezoid(delta_b_low**(delta_power) * n_ * u_ * j_low, ss)
-#                      # / trapezoid(n_ * u_, ss) / 2
-#                      )
-#             sed[i] = f_up + f_low
-#         return sed
-
-# def SED_old_PSRB(E, B_puls, B_star, e_density, r_SE, r_SP, E0_e, Ecut_e, Ampl_e, p_e, T_opt, LoS_to_IBS,
-#          if_boost = False, Gamma = 1, delta_power=3, 
-#          if_MF_boost=False, beta_ecpl=1, cooling=False,  eta_flow=1,
-#          eta_syn=1, eta_IC=1):
-    
-#         # LoS_to_IBS = -(pi - (LoS_to_orb - True_an(t)))
-#     dmax = Gamma * (1 + beta_from_g(Gamma))
-#     E_ext = np.logspace(np.log10(np.min(E)/dmax/1.1), np.log10(np.max(E)*dmax*1.1),
-#             int(2 * E.size * np.log10(dmax**2 * 1.21 * np.max(E) / np.min(E)) / np.log10(np.max(E) / np.min(E)) ))
-#     Sync, IC = SED_old_apex(B_puls+B_star, e_density, r_SP, E0_e, Ecut_e,
-#                             Ampl_e, p_e, T_opt, beta_ecpl, cooling, eta_flow,
-#                             eta_syn, eta_IC)
-
-#     E_dim = E_ext * u.eV
-#     sed_syncr = Sync.sed(E_dim, distance = 2.4 * u.kpc)
-#     sed_IC = IC.sed(E_dim, distance = 2.4 * u.kpc)
-#     SED_splSY = splrep(x = E_ext, y = sed_syncr/sed_unit)
-#     SED_splIC = splrep(x = E_ext, y = sed_IC/sed_unit)
-#     # sed_tot = sed_syncr + sed_IC
-#     if not if_boost:
-#         return(
-#             (splev(E, SED_splSY)+splev(E, SED_splIC))* sed_unit,
-#                                     splev(E, SED_splSY)* sed_unit,
-#                                     splev(E, SED_splIC)* sed_unit
-#                                     )
-#     if if_boost:
-#         beta_eff = ((r_SP - r_SE) / r_SE)**2
-        
-#         # B_puls, B_star, u_dens = B_and_u(Bx, Bopt, r_SE, r_SP - r_SE, T_opt)
-#         bopt2bpuls_ap =  B_star / B_puls 
-#         SED_boostSY = SED_boosted_old(nus = E,
-#                 SED_spline = SED_splSY, beta_IBS = beta_eff, Gamma = Gamma,
-#                 s_max = 3, phi = LoS_to_IBS, bopt2bpuls_ap = bopt2bpuls_ap,
-#                 delta_power = delta_power, if_MF_boost = if_MF_boost,
-#                 what_to_boost = 'Syn')
-#         SED_boostIC = SED_boosted_old(nus = E,
-#                 SED_spline = SED_splIC, beta_IBS = beta_eff, Gamma = Gamma,
-#                 s_max = 3, phi = LoS_to_IBS, bopt2bpuls_ap = bopt2bpuls_ap,
-#                 delta_power = delta_power, if_MF_boost = if_MF_boost,
-#                 what_to_boost = 'IC')
-#         SED_boost = SED_boostSY + SED_boostIC
-#         return SED_boost * sed_unit, SED_boostSY * sed_unit, SED_boostIC * sed_unit
-
-# def F_nu(nu, f_spl, beta, Gamma_term, s_max, phi):
-#     # f_spl = splrep(x = nu_prime, y = F_prime)
-#     # xs, ys, thetas, rs, ss = Shock_front(beta, s_max)
-#     xs, ys, thetas, rs, ss = Approx_IBS(-np.log10(beta), 100, s_max)
-#     th_tan_up = np.arctan(np.gradient(ys, xs, edge_order=2))
-#     th_tan_low = - th_tan_up
-#     Gammas = 1 + (Gamma_term - 1) * ss / s_max
-
-#     delta_b_up = d_boost(Gammas, phi - th_tan_up)
-#     delta_b_low = d_boost(Gammas, phi - th_tan_low)
-#     f_up = splev(nu / delta_b_up, f_spl)
-#     f_low = splev(nu / delta_b_low, f_spl)
-#     n = 0.5 * (1 - cos(thetas)) / rs 
-#     flux_up = trapezoid(delta_b_up**2 * n * f_up, ss) / trapezoid(n, ss) / 2
-#     flux_low = trapezoid(delta_b_low**2 * n * f_low, ss) / trapezoid(n, ss) / 2
-#     return flux_up, flux_lowamma
-
-
 # -----------------------------------------------------------------------------
 # now we define the real functions for solving the advection equation
 # vel_func(s, ...) dn/ds + d(edot(s, e, ...) * n) / ds = f_inject(s, e, ...)
@@ -434,7 +241,7 @@ def vel_func(s, Gamma, smax_g, dorb): # s --- in real units, smax - dimentionles
     gammas = Gma(s, smax_g_cm, Gamma)
     return vel_from_g(gammas)
 
-def edot(s, e, B, Topt, dist, eta_flow, eta_syn, eta_IC, s_table, r_table, th_table, dorb): 
+def edot(s, e, B, Topt, Ropt, dist, eta_flow, eta_syn, eta_IC, s_table, r_table, th_table, dorb): 
     s_t = s_table * dorb
     r_t = r_table * dorb
     th_spl = interp1d(x = s_t, y = th_table, fill_value='extrapolate')
@@ -444,7 +251,7 @@ def edot(s, e, B, Topt, dist, eta_flow, eta_syn, eta_IC, s_table, r_table, th_ta
     r_toS = (dorb**2 + r_toP**2 - 2 * dorb * r_toP * cos(th_interp))**0.5
     B_on_shock = B * np.min(r_toP) / r_toP #TODO: now it's assumed the field is only from the pulsar... should fix this in future
     eta_IC_on_shock = eta_IC * (np.min(r_toS) / r_toS)**2 # can i do that??????
-    return ElEv.total_loss(ee = e, B = B_on_shock, Topt = Topt,
+    return ElEv.total_loss(ee = e, B = B_on_shock, Topt = Topt, Ropt=Ropt,
                            dist = dist, eta_flow = eta_flow, eta_syn = eta_syn,
                            eta_IC = eta_IC_on_shock)
 
@@ -473,14 +280,13 @@ def f_inject(s, e, dorb, s_table, th_table, p, ecut, Norm, emin, emax):
 # (4) Integrate SED(s, E) over s with a weights of delta_doppl^3
 # -----------------------------------------------------------------------------
     
-def SED_from_IBS(E, B_apex, u_g_apex, Topt, r_SP, E0_e, Ecut_e, Ampl_e, p_e,
-                 beta_IBS, Gamma, s_max_em, s_max_g, N_shock, bopt2bpuls_ap, phi, delta_power=3,
-                 s_adv = True, lorentz_boost = True, simple = False, eta_a = 1e20,
-                 cooling=True, abs_photoel = False, abs_gg = False, Nh_tbabs = 0.8,
+def SED_from_IBS(E, B_apex, u_g_apex, Topt, Ropt, r_SP, E0_e, Ecut_e, Ampl_e, p_e,
+                 beta_IBS, Gamma, s_max_em, s_max_g, N_shock, bopt2bpuls_ap, 
+                 phi, delta_power=3, orb = 'psrb',
+                 lorentz_boost = True, simple = False, eta_a = 1e20,
+                 cooling='no', abs_photoel = False, abs_gg = False, Nh_tbabs = 0.8,
                  nu_los_ggabs = 2.3, t_ggabs = 10 * DAY, syn_only = False):
-    # if simple:
-    #     lorentz_boost = False
-
+    
     # phi is an angle between LoS and shock front X axis
     r_SE = r_SP / (1 + beta_IBS**0.5)
     
@@ -505,7 +311,7 @@ def SED_from_IBS(E, B_apex, u_g_apex, Topt, r_SP, E0_e, Ecut_e, Ampl_e, p_e,
     emin, emax = 1e9, 5.1e14
     ecut = Ecut_e * 1e12
     # (B, Topt, dist, eta_flow, eta_syn, eta_IC, ss_tab, rs_tab, thetas_tab, r_SP)
-    tot_loss_args = (B_apex, Topt, r_SE, eta_a, 1, 1, ss, rs, thetas, r_SP)
+    tot_loss_args = (B_apex, Topt, Ropt, r_SE, eta_a, 1, 1, ss, rs, thetas, r_SP)
     f_args = (r_SP, ss, thetas, p_e, ecut, Ampl_e, emin, emax)
     # print('start 2')
     # if cooling  s_adv:
@@ -522,7 +328,7 @@ def SED_from_IBS(E, B_apex, u_g_apex, Topt, r_SP, E0_e, Ecut_e, Ampl_e, p_e,
         v_args_input = None
         
     dNe_de_IBS, e_vals = ElEv.evolved_e(cooling=cooling, r_SP=r_SP, ss=ss,
-    rs=rs, thetas=thetas, s_adv=s_adv, edot_func=edot, f_inject_func=f_inject,
+    rs=rs, thetas=thetas, edot_func=edot, f_inject_func=f_inject,
     tot_loss_args=tot_loss_args, f_args=f_args, vel_func=v_input,
     v_args = v_args_input, eta_flow_args=eta_args)
 
@@ -659,26 +465,34 @@ def SED_from_IBS(E, B_apex, u_g_apex, Topt, r_SP, E0_e, Ecut_e, Ampl_e, p_e,
         SED_E = SED_E * Absorbtion.abs_photoel(E * 1.6e-12, Nh = Nh_tbabs)
     if abs_gg:
         SED_E = SED_E * Absorbtion.abs_gg_tab(E * 1.6e-12,
-                                        nu_los = nu_los_ggabs, t = t_ggabs)
+                            nu_los = nu_los_ggabs, t = t_ggabs, Teff=Topt)
         
     return SED_E
 
 def dummy_LC(t, Bx, Bopt, Topt, E0_e, Ecut_e, Ampl_e, p_e,
-                 beta_IBS, Gamma, s_max_em, s_max_g, delta_power=3, nu_los = 2.4,
-                 s_adv = True, lorentz_boost = True, simple = False, eta_a=1e20,
-                 cooling=True, abs_photoel = False, abs_gg = False, Nh_tbabs = 0.8,
+                 beta_IBS, Gamma, s_max_em, s_max_g, orb, delta_power=3, nu_los = 2.4,
+                 lorentz_boost = True, simple = False, eta_a=1e20,
+                 cooling='no', abs_photoel = False, abs_gg = False, Nh_tbabs = 0.8,
                  nu_los_ggabs = 2.3, t_ggabs = 10 * DAY):
-    r_SP = Orb.Radius(t)
+    if orb == 'psrb':    
+        T_orb, exc, Mtot, Ropt = [orb_p_psrb[key] for key in ('T', 'e', 'M', 'Ropt')]
+    elif orb == 'circ':    
+        T_orb, exc, Mtot, Ropt = [orb_p_psrb[key] for key in ('T', 'e', 'M', 'Ropt')]
+        exc = 0
+    else:
+        T_orb, exc, Mtot, Ropt = [orb[key] for key in ('T', 'e', 'M', 'Ropt')]
+        
+    r_SP = Obt.Radius(t, Torb=T_orb, e=exc, Mtot=Mtot)
     r_SE = r_SP / (1 + beta_IBS**0.5)
-    phi = Orb.True_an(t)
+    phi = Obt.True_an(t, Torb=T_orb, e=exc)
     phi_LoS_ShockX = pi - (nu_los - phi)
     Es = np.logspace(np.log10(300), 4, 59) # 0.3-10 keV only
-    Bp, Bo, u = B_and_u_test(Bx, Bopt, r_SE, r_PE = r_SP - r_SE, T_opt = Topt)
-    sed = SED_from_IBS(E = Es, B_apex = Bp, u_g_apex = u, Topt = Topt,
+    Bp, Bo, u = B_and_u_test(Bx, Bopt, r_SE, r_PE = r_SP - r_SE, Topt = Topt, Ropt=Ropt)
+    sed = SED_from_IBS(E = Es, B_apex = Bp, u_g_apex = u, Topt = Topt, Ropt=Ropt,
         r_SP = r_SP, E0_e = E0_e, Ecut_e = Ecut_e, Ampl_e = Ampl_e, p_e = p_e,
         beta_IBS = beta_IBS, Gamma = Gamma, s_max_em = s_max_em, s_max_g = s_max_g, N_shock = 10, 
         bopt2bpuls_ap = Bo/Bp, phi = phi_LoS_ShockX, delta_power=3,
-        s_adv = s_adv, lorentz_boost = lorentz_boost, simple = simple, eta_a=eta_a,
+        lorentz_boost = lorentz_boost, simple = simple, eta_a=eta_a,
         cooling=cooling, abs_photoel=abs_photoel, abs_gg = abs_gg, Nh_tbabs =Nh_tbabs,
         nu_los_ggabs = nu_los, t_ggabs = t, syn_only=True)
     flux = trapezoid(sed/Es, Es)
@@ -747,7 +561,7 @@ if __name__=='__main__':
     # plt.xscale('log')
     # plt.yscale('log')
     # plt.legend()
-
+    P = orb_p_psrb['P']
     tplot = np.linspace(-0.15*P, P*0.11, 61) * DAY
     f = np.zeros(tplot.size)
     f_sim = np.zeros(tplot.size)
@@ -766,25 +580,25 @@ if __name__=='__main__':
     eta_an = int_an(Gamma, smax)
     # for eta in (1e20, 100, 10, eta_an, 1, 0.1, 0.01, 1e-20):
     # for eta in (1e20,  eta_an, 1, 1e-20):     
-    # for eta in ( 6, ):     
+    for eta in ( 6, ):     
 
-    #     start = time.time()
-    #     # for i in range(tplot.size):
-    #     cool = 'stat_ibs'
-    #     if eta == 6:
-    #         cool = 'stat_mimic'
-    #     def func_simple(i):
-    #         f_sim_ = dummy_LC(tplot[i], Bx, Bopt, Topt, E0_e=1, Ecut_e=1, Ampl_e=1, p_e=pe,
-    #                         beta_IBS=beta_eff, Gamma=Gamma, s_max_em='bow',
-    #                         s_max_g=4., simple=False, s_adv=False,
-    #                         eta_a = eta, lorentz_boost=True, cooling=cool)   
-    #         return f_sim_
-    #     f_sim = Parallel(n_jobs=10)(delayed(func_simple)(i) for i in range(0, len(tplot)))
-    #     f_sim=np.array(f_sim)
-    #     # label = 'simple calculation'
-    #     label = f'no adv, eta = {eta}'
-    #     plt.plot(tplot/DAY, f_sim/(f_sim[np.argmin(np.abs(tplot))]), label = label, ls='--')
-    #     print('full method took ', time.time() - start)
+        start = time.time()
+        # for i in range(tplot.size):
+        cool = 'stat_ibs'
+        if eta == 6:
+            cool = 'stat_mimic'
+        def func_simple(i):
+            f_sim_ = dummy_LC(tplot[i], Bx, Bopt, Topt, E0_e=1, Ecut_e=1, Ampl_e=1, p_e=pe,
+                            beta_IBS=beta_eff, Gamma=Gamma, s_max_em='bow',
+                            s_max_g=4., simple=False, orb='circ',
+                            eta_a = eta, lorentz_boost=True, cooling='no')   
+            return f_sim_
+        f_sim = Parallel(n_jobs=10)(delayed(func_simple)(i) for i in range(0, len(tplot)))
+        f_sim=np.array(f_sim)
+        # label = 'simple calculation'
+        label = f'no adv, eta = {eta}'
+        plt.plot(tplot/DAY, f_sim/(f_sim[np.argmin(np.abs(tplot))]), label = label, ls='--')
+        print('full method took ', time.time() - start)
         
     # f_sim = np.zeros(tplot.size)    
     # def func_simple(i):
@@ -803,8 +617,21 @@ if __name__=='__main__':
     # plt.plot(tplot/DAY, f_sim//(f_sim[np.argmin(np.abs(tplot))]), label = label, color='k', ls='--')
     # print('full method took ', time.time() - start)
     
-    plt.legend()
-    plt.show()
+    # plt.legend()
+    # plt.show()
+    
+    # start = time.time()
+    # tplot = np.linspace(-200, 100, 100) * DAY
+    # # tplot = 10 * DAY
+    # nu_los = 2.3
+    # Teff = 3.1e4
+    # for tpl_ in tplot:
+    #     E = np.logspace(9, 13, 500)*1.6e-12 # erg
+    #     tau = Absorbtion.abs_gg_tab(E, 2.33, tpl_, 3.1e4)
+    #     # plt.scatter(tplot / DAY, tau, s=1)
+    # plt.scatter(E/m_e, tau, s=1)
+    # print(time.time() - start)
+    # plt.xscale('log')
 
 
 

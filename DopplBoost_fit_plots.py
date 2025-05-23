@@ -30,16 +30,9 @@ h_planck_red = 1.05e-27
 Rsun = 7e10
 AU = 1.5e13
 DAY = 86400.
-Mopt = 24
-Ropt = 10 * Rsun
-Mx = 1.4
-GM = G * (Mopt + Mx) * 2e33
-P = 1236.724526
-Torb = P * DAY
-a = (Torb**2 * GM / 4 / pi**2)**(1/3)
-e = 0.87
+PSRB_par = Orb.Get_PSRB_params()
+P, a, e, M, GM, D, Ropt = [PSRB_par[str(x)] for x in ('P', 'a', 'e', 'M', 'GM', 'D', 'Ropt')]
 r_periastron = a * (1 - e)
-D_system = 2.4e3 * 206265 * AU
 sed_unit = u.erg / u.s / u.cm**2
 RAD_IN_DEG = pi / 180.0
 
@@ -115,6 +108,7 @@ def make_custom_xgrid(xdata, N, Nbefore=2, Nafter=4):
     # Concatenate, sort, unique
     grid = np.unique(np.concatenate(parts))
     return grid * DAY
+    
 
 
 def Normalization_byhands(xdata, ydata, dydata, params_noN):

@@ -17,6 +17,8 @@ from scipy.optimize import curve_fit
 import TransportShock
 import xarray as xr
 from pathlib import Path
+from ShapeIBS import approx_IBS as approx_IBS_test
+import Orbit as Orb
 
 G = 6.67e-8
 c_light = 3e10
@@ -26,19 +28,11 @@ m_e = 9.11e-28
 re = 2.81794e-13 #cm ; classical electron radius
 erg_to_eV = 6.24E11 # 1 erg = 6.24E11 eV
 k_boltz = 1.38e-16
-# print(m_e * c_light**2 * erg_to_eV)
-
-Rsun = 7e10
-AU = 1.5e13
+orb_p_psrb = Orb.Get_PSRB_params()
 DAY = 86400.
-Mopt = 24.
-Ropt = 10 * Rsun
-Mx = 1.4
-GM = G * (Mopt + Mx) * 2e33
-P = 1236.724526
-Torb = P * DAY
-a = (Torb**2 * GM / 4 / pi**2)**(1/3)
-e = 0.87
+sed_unit = u.erg / u.s / u.cm**2
+RAD_IN_DEG = pi / 180.0
+
 
 # We don't want to read the file each time functions are called, so we read 
 # it once
@@ -77,34 +71,21 @@ def vel_from_g(g_vel):
 def Gma(s, sm, G_term):
     return 1 + (G_term - 1) * s / sm
 
-
 def gfunc(x, a = -0.362, b = 0.826, alpha = 0.682, beta = 1.281): #from 1310.7971
     return (1 +  (a * x**alpha) / (1 + b * x**beta) )**(-1)
     
-def Gani(u, c = 6.13):
+def Gani(u_, c = 6.13):
     cani = c
-    return cani * u * np.log(1 + 2.16 * u / cani) / (1 + cani * u / 0.822)
+    return cani * u_ * np.log(1 + 2.16 * u_ / cani) / (1 + cani * u_ / 0.822)
 
-def Giso(u, c = 4.62):
+def Giso(u_, c = 4.62):
     ciso = c
-    return ciso * u * np.log(1 + 0.722 * u / ciso) / (1 + ciso * u / 0.822)
+    return ciso * u_ * np.log(1 + 0.722 * u_ / ciso) / (1 + ciso * u_ / 0.822)
 
 def Giso_full(x):
     return Giso(x, 5.68) * gfunc(x)
 
-
-r_periastron = a * (1 - e)
-# D_system = 2.4e3 * 206265 * AU
-sed_unit = u.erg / u.s / u.cm**2
-RAD_IN_DEG = pi / 180.0
-
-Lsun=3.9E33#erg/s
-Lstar = 5.8E4*Lsun #erg/s
-
-# emax = 5e14
-# emin = 6e8
-
-def ICLoss(Ee, Topt, dist): # Ee in eV !!!!!!
+def ICLoss(Ee, Topt, Ropt, dist): # Ee in eV !!!!!!
     kappa = (Ropt / 2 / dist)**2
     T_me = (k_boltz * Topt / m_e / c_light**2)
     Ee_me = Ee  / erg_to_eV / m_e / c_light**2
@@ -121,47 +102,23 @@ def SyncLoss(ee, B):
 def t_adiab(dist, eta_flow):
     return eta_flow * dist / c_light
 
-def ecpl_test(e, ind, ecut):
-    return e**(-ind) * exp(-e / ecut)
+def ecpl_test(E, ind, ecut):
+    return E**(-ind) * exp(-E / ecut)
 
-def total_loss(ee, B, Topt, dist, eta_flow, eta_syn, eta_IC):
+def total_loss(ee, B, Topt, Ropt, dist, eta_flow, eta_syn, eta_IC):
     # if isinstance(eta_flow, np.ndarray)
     eta_flow_max = np.max(np.asarray(eta_flow))
     if eta_flow_max < 1e10:
-        return eta_syn * SyncLoss(ee, B) + eta_IC * ICLoss(ee, Topt, dist) - ee / t_adiab(dist, eta_flow)
+        return eta_syn * SyncLoss(ee, B) + eta_IC * ICLoss(ee, Topt, Ropt, dist) - ee / t_adiab(dist, eta_flow)
     else:
-        return eta_syn * SyncLoss(ee, B) + eta_IC * ICLoss(ee, Topt, dist)
+        return eta_syn * SyncLoss(ee, B) + eta_IC * ICLoss(ee, Topt, Ropt, dist)
     
-
-def approx_IBS_test(b, Na, s_max, full_output = False):
-    # b = | log10 (beta_eff) |
-    # first, find the shape in given b by interpolation
-    intpl = ds_sh.interp(abs_logbeta=b)
-    # and get its x, y, theta, r, s, theta1, r1 as np.arrays
-    xs_, ys_, ts_, rs_, ss_, t1s_, r1s_ = (intpl.x, intpl.y, intpl.theta, intpl.r, intpl.s, intpl.theta1, intpl.r1, )
-    xs_, ys_, ts_, rs_, ss_, t1s_, r1s_ = [np.array(arr) for arr in (xs_, ys_, ts_, rs_, ss_, t1s_, r1s_)]
-    
-    ok = np.where(ss_ < s_max)
-    xs_, ys_, ts_, rs_, ss_, t1s_, r1s_ = [arr[ok] for arr in (xs_, ys_, ts_, rs_, ss_, t1s_, r1s_)]
-
-    intx, ints, intth, intr, intth1, intr1= (interp1d(ys_, xs_), interp1d(ys_, ss_),
-            interp1d(ys_, ts_), interp1d(ys_, rs_), interp1d(ys_, t1s_), 
-            interp1d(ys_, r1s_))    
-    yplot = np.linspace(np.min(ys_)*1.001, np.max(ys_)*0.999, Na)
-    xp, tp, rp, sp, t1p, r1p = (intx(yplot), intth(yplot), intr(yplot), ints(yplot),
-            intth1(yplot), intr1(yplot))
-    yp = yplot
-    if full_output:
-        return xp, yp, tp, rp, sp, t1p, r1p, intpl.theta_inf.item(), intpl.r_apex.item()
-    if not full_output:
-        return xp, yp, tp, rp, sp
-    
-def B_and_u_test(Bx, Bopt, r_SE, r_PE, T_opt):      # just for testing
-    L_spindown, sigma_magn = 8e35 * (Bx / 3e11)**2, 1e-2
+def B_and_u_test(Bx, Bopt, r_SE, r_PE, Topt, Ropt):      # just for testing
+    L_spindown, sigma_magn = 8e35 * (Bx / 3e11)**2., 1e-2
     B_puls = (L_spindown * sigma_magn / c_light / r_PE**2)**0.5
     B_star = Bopt * (Ropt / r_SE)
-    factor = 2 * (1 - (1 - (Ropt / r_SE)**2)**0.5 )
-    u_dens = sigma_b * T_opt**4 / c_light * factor
+    factor = 2. * (1. - (1. - (Ropt / r_SE)**2.)**0.5 )
+    u_dens = sigma_b * Topt**4. / c_light * factor
     return B_puls, B_star, u_dens
 
 def Stat_distr(Es, Qs, Edots):
@@ -279,7 +236,7 @@ def eta_flow_mimic(s, s_max_g, Gamma, dorb):
     return s_max_g/ga * ((1. + ga*s/s_max_g/dorb)**2 - 1.)**0.5
     
 
-def edot_test(s, e, B, Topt, dist, eta_flow, eta_syn, eta_IC, s_table,
+def edot_test(s, e, B, Topt, Ropt, dist, eta_flow, eta_syn, eta_IC, s_table,
               r_table, th_table, dorb): # s_table and r_table both dimentionless
     s_t = s_table * dorb
     r_t = r_table * dorb
@@ -288,7 +245,7 @@ def edot_test(s, e, B, Topt, dist, eta_flow, eta_syn, eta_IC, s_table,
     r_toS = (dorb**2 + r_toP**2 - 2 * dorb * r_toP * cos(th_interp))**0.5
     B_on_shock = B * np.min(r_t) / r_toP #TODO: now it's assumed the field is only from the pulsar... should fix this in future
     eta_IC_on_shock = eta_IC * (dist / r_toS)**2 # can i do that??????
-    return total_loss(e, B_on_shock, Topt, dist, eta_flow,
+    return total_loss(e, B_on_shock, Topt, Ropt, dist, eta_flow,
                                 eta_syn, eta_IC_on_shock)
 
 def f_inject_test(s, e, dorb, s_table, th_table, p, ecut, Norm, emin, emax): 
@@ -318,14 +275,10 @@ def analyt_adv_Ntot(s, f_inj_integrated, Gamma, r_SP, s_max_g):
     # return f_inj_integrated * r_SP/c_light * s_max_g/ga * ((1 + ga*s/s_max_g)**2  -1)**0.5
 
 def analyt_adv_Ntot_tomimic(s,e, f_inj_func, f_inj_args, dorb, s_max_g, Gamma): 
-    # s and e -- meshgrids, but returns 1d-array 
+    # s and e -- 2d meshgrid arrays, but the function returns 1d-array 
     ga = Gamma - 1
     f_ = f_inj_func(s, e, *f_inj_args)
-    # print('mimic f_', f_.shape)
     f_integrated = trapezoid(f_, e, axis=1)
-    # print('mimic f_int', f_integrated.shape)
-    # s_t = s_table * dorb
-    # q_s = sin(th_table)
     x__ = ga*s[:, 0]/s_max_g/dorb
     return f_integrated * r_SP/c_light * s_max_g/ga * (2 * x__ + x__**2)**0.5
 
@@ -333,83 +286,56 @@ def t_leak_test(s,e, f_inj_func, f_inj_args, dorb, s_max_g, Gamma):
     ga = Gamma - 1
     f_ = f_inj_func(s, e, *f_inj_args)
     f_integrated = trapezoid(f_, e, axis=1)
-    Ntot = analyt_adv_Ntot(s = s[:, 0], f_inj_integrated = f_integrated, Gamma=Gamma,
-                           r_SP=dorb, s_max_g = s_max_g)
-    # print(Ntot.shape)
-    # print(s.shape)
-    # print(s[:, 0].shape)
+    Ntot = analyt_adv_Ntot(s = s[:, 0], f_inj_integrated = f_integrated,
+                           Gamma=Gamma, r_SP=dorb, s_max_g = s_max_g)
     ga = Gamma-1
     gs = 1 + ga * s[:, 0]/s_max_g / r_SP
     res = 1/c_light * Ntot / np.gradient(Ntot, s[:, 0], edge_order=2)/beta_from_g(gs)
-    res2d = np.zeros(ss.shape)
-    # return res[:, None] + np.max(res) / 1e16
     return res[:,None] * s / (1e-17 + s)
-    # return dorb/c_light * s / np.max(s)
-    # return np.interp(s, s_t, res)
-    # s_t = s_table * dorb
-    # q_s = sin(th_table)
-    # return f_integrated * r_SP/c_light * s_max_g/ga * ((1 + ga*s/s_max_g/dorb)**2  -1)**0.5
 
-# def t_leak_test(s, e, eta, s_table, r1_table, th_table, dorb, s_max_g, Gamma):
-#     s_t = s_table * dorb
-#     # r1_t = r1_table * dorb
-#     # th = np.interp(s, s_t, th_table)
-#     q_s = sin(th_table)+1e-3
-#     # r_toS = np.interp(s, s_t, r1_t)
-#     # return eta * r_toS / c_light
-#     # return eta * dorb / c_light * s / np.max(s)
-#     # return  s *1e44
-#     # return eta * flow_time_to_s(s = s, s_max_g = s_max_g, Gamma = Gamma, r_SP = dorb)
-#     ga = Gamma-1
-#     gs = 1 + ga * s_table/s_max_g
-#     # denom = np.gradient(q_s * (gs**2-1)**0.5, s_table, edge_order=2)
-#     # numer = dorb/c_light * q_s * gs
-#     # res = numer / denom
-#     Ntot = analyt_adv_Ntot(s = s_table, f_inj_integrated = q_s, Gamma=Gamma,
-#                            r_SP=dorb, s_max_g = s_max_g)
-#     res = dorb/c_light * Ntot / np.gradient(Ntot, s_table, edge_order=2)/beta_from_g(gs)
-#     return np.interp(s, s_t, res)
+# def ECPL(e_, logNorm, E0_e, Ecut_e, p_e, beta, normalize='overall', emin=1e9,
+#          emax=5.1e14):
+#     if normalize == 'overall':
+#         result = 10**logNorm * (e_ / (E0_e*1e12))**(-p_e) * np.exp(-( (e_ / (Ecut_e*1e12) ) )**beta)
+#         mask = (e_ < emin) | (e_ > emax)
+#         result = np.where(mask, 0.0, result)
+#         return result 
     
-def Analyt_stat(energies, Q_func, B, Topt, dist, eta_flow, eta_syn, eta_IC, mode = 'add to Edot'): # LESHA. Blum & Gould, and common sense
-    if mode == 'add to Edot':
-        return Stat_distr(Es = energies, Qs = Q_func(energies), 
-                Edots = total_loss(energies, B, Topt, dist,  eta_flow, eta_syn, eta_IC))
-        integral_here = np.zeros(energies.size)+1
-        energies_back = energies[::-1]
-        Q_func_array = Q_func(energies_back)
-        integral_here = -cumulative_trapezoid(Q_func_array, energies_back, initial = 0)[::-1]
-        return 1 / np.abs(total_loss(energies, B, Topt, dist,  eta_flow, eta_syn, eta_IC)) * integral_here
-    # if mode == 'add to eq':
-    #     edot = lambda epr: total_loss(epr, B, Topt, dist, eta_flow, eta_syn, eta_IC) + epr / t_adiab(dist, eta_flow)
-    #     int_in_exp = lambda xi, e: quad(func = lambda epr: 1 / t_adiab(dist, eta_flow) / edot(epr),
-    #                                  a = e, b = xi)[0]
-    #     under_int = lambda xi, e: np.exp(int_in_exp(xi, e)) * Q_func(xi)
-    #     res = np.empty(energies.size)
-    #     for i in range(energies.size):
-    #         res[i] = quad(func = under_int, a = energies[i], b = emax,
-    #                       args=energies[i])[0] / np.abs(edot(energies[i]))
-    #     return res
+# def Analyt_stat(energies, Q_func, B, Topt, dist, eta_flow, eta_syn, eta_IC, mode = 'add to Edot'): 
+#     if mode == 'add to Edot':
+#         return Stat_distr(Es = energies, Qs = Q_func(energies), 
+#                 Edots = total_loss(energies, B, Topt, dist,  eta_flow, eta_syn, eta_IC))
+#         integral_here = np.zeros(energies.size)+1
+#         energies_back = energies[::-1]
+#         Q_func_array = Q_func(energies_back)
+#         integral_here = -cumulative_trapezoid(Q_func_array, energies_back, initial = 0)[::-1]
+#         return 1 / np.abs(total_loss(energies, B, Topt, dist,  eta_flow, eta_syn, eta_IC)) * integral_here
+
+# def Evolved_ECPL(spec_energies, logNorm, E0_e, Ecut_e, p_e, beta_ecpl, B, Topt, dist, eta_flow, eta_syn, eta_IC, mode='add to Edot',
+#                  normalize = 'overall', to_evolve = True):
+#     # if p_e == 2:
+#     #     first = spec_energies**(1-p_e)*(E0_e*1e12)**(p_e) * expn(2, spec_energies/(Ecut_e*1e12))        
+#     #     integral_here = 10**logNorm * first
+#     #     naima_evolved = 1 / np.abs(total_loss(spec_energies, B, Topt, dist,  eta_flow, eta_syn, eta_IC)) * integral_here
+#     # else:
+#     Q_func = lambda e_: ECPL(e_, logNorm, E0_e, Ecut_e, p_e, beta_ecpl, normalize)
+#     if to_evolve:
+#         naima_evolved = Analyt_stat(energies = spec_energies, Q_func = Q_func,
+#                                  B=B, Topt=Topt, dist=dist, eta_flow=eta_flow,
+#                                  eta_syn=eta_syn, eta_IC=eta_IC, mode=mode)
+#     if not to_evolve:
+#         naima_evolved = Q_func(spec_energies)
+#     if __name__=='__main__':
+#         return naima_evolved
+#     else:
+#         ok = np.where(naima_evolved > 0)
+#         electrons_spectrum = naima.models.TableModel( spec_energies[ok]*u.eV,
+#                                             (naima_evolved[ok])/u.eV )
+#         return electrons_spectrum
+   
+
     
-def ECPL(e_, logNorm, E0_e, Ecut_e, p_e, beta, normalize='overall', emin=1e9,
-         emax=5.1e14):
-    if normalize == 'overall':
-        result = 10**logNorm * (e_ / (E0_e*1e12))**(-p_e) * np.exp(-( (e_ / (Ecut_e*1e12) ) )**beta)
-        mask = (e_ < emin) | (e_ > emax)
-        result = np.where(mask, 0.0, result)
-        return result    
-    # if normalize == 'rate':
-    #     e_int = np.logspace(np.log10(6e8), np.log10(5e13), 1000)
-    #     res = lambda ee: (ee / (E0_e*1e12))**(-p_e) * np.exp(-( (ee / (Ecut_e*1e12) ) )**beta)
-    #     norm = 10**logNorm / trapezoid(res(e_int), e_int)
-    #     return norm * res(e_)
-    
-# def tab_adv(r_SP, beta_eff, Gamma, Bap):
-#     # Linear interpolation across parameters, no interpolation over x/y
-#     res_interp = ds_adv["res"].interp(r_SP=r_SP, beta_eff=beta_eff, Gamma=Gamma,
-#                                   B_apex=Bap)
-#     return res_interp
-    
-def evolved_e(cooling, r_SP, ss, rs, thetas, s_adv, edot_func, f_inject_func,
+def evolved_e(cooling, r_SP, ss, rs, thetas, edot_func, f_inject_func,
               tot_loss_args, f_args, vel_func = None, v_args = None, emin = 1e9, 
               emax = 5.1e14, t_func = None, t_args = None, eta_flow_func = None, 
               eta_flow_args = None):
@@ -429,14 +355,14 @@ def evolved_e(cooling, r_SP, ss, rs, thetas, s_adv, edot_func, f_inject_func,
         
     if cooling in ('stat_apex', 'stat_ibs', 'stat_mimic'):
         # For each s, --> stationary distribution
-        e_vals = np.logspace(np.log10(emin), np.log10(emax), 977)
+        e_vals = np.logspace(np.log10(emin), np.log10(emax), 979)
         smesh, emesh = np.meshgrid(ss*r_SP, e_vals, indexing = 'ij')
         if cooling == 'stat_mimic':
-            (B0, Topt, r_SE, eta_fl, eta_sy, eta_ic, ss, rs, thetas, r_SP) = tot_loss_args
+            (B0, Topt, Ropt, r_SE, eta_fl, eta_sy, eta_ic, ss, rs, thetas, r_SP) = tot_loss_args
             if eta_flow_func == None:
                 eta_flow_func = eta_flow_mimic
             eta_fl_new = eta_flow_func(smesh, *eta_flow_args)
-            tot_loss_args = (B0, Topt, r_SE, eta_fl_new * eta_fl,
+            tot_loss_args = (B0, Topt, Ropt, r_SE, eta_fl_new * eta_fl,
                                  eta_sy, eta_ic, ss, rs, thetas, r_SP)    
         f_inj_se = f_inject_func(smesh, emesh, *f_args)
         edots_se = edot_func(smesh, emesh, *tot_loss_args)
@@ -451,7 +377,7 @@ def evolved_e(cooling, r_SP, ss, rs, thetas, s_adv, edot_func, f_inject_func,
                 dNe_de_IBS[i_s, :] = Stat_distr(e_vals, f_inj_se[i_s, :], edots_se[i_s, :])
 
     if cooling in ('leak_apex', 'leak_ibs', 'leak_mimic'):
-        e_vals = np.logspace(np.log10(emin), np.log10(emax), 977)
+        e_vals = np.logspace(np.log10(emin), np.log10(emax), 987)
         smesh, emesh = np.meshgrid(ss*r_SP, e_vals, indexing = 'ij')
         f_inj_se = f_inject_func(smesh, emesh, *f_args)
         edots_se = edot_func(smesh, emesh, *tot_loss_args)
@@ -510,31 +436,11 @@ def evolved_e(cooling, r_SP, ss, rs, thetas, s_adv, edot_func, f_inject_func,
             
     return dNe_de_IBS, e_vals
 
-def Evolved_ECPL(spec_energies, logNorm, E0_e, Ecut_e, p_e, beta_ecpl, B, Topt, dist, eta_flow, eta_syn, eta_IC, mode='add to Edot',
-                 normalize = 'overall', to_evolve = True):
-    # if p_e == 2:
-    #     first = spec_energies**(1-p_e)*(E0_e*1e12)**(p_e) * expn(2, spec_energies/(Ecut_e*1e12))        
-    #     integral_here = 10**logNorm * first
-    #     naima_evolved = 1 / np.abs(total_loss(spec_energies, B, Topt, dist,  eta_flow, eta_syn, eta_IC)) * integral_here
-    # else:
-    Q_func = lambda e_: ECPL(e_, logNorm, E0_e, Ecut_e, p_e, beta_ecpl, normalize)
-    if to_evolve:
-        naima_evolved = Analyt_stat(energies = spec_energies, Q_func = Q_func,
-                                 B=B, Topt=Topt, dist=dist, eta_flow=eta_flow,
-                                 eta_syn=eta_syn, eta_IC=eta_IC, mode=mode)
-    if not to_evolve:
-        naima_evolved = Q_func(spec_energies)
-    if __name__=='__main__':
-        return naima_evolved
-    else:
-        ok = np.where(naima_evolved > 0)
-        electrons_spectrum = naima.models.TableModel( spec_energies[ok]*u.eV,
-                                            (naima_evolved[ok])/u.eV )
-        return electrons_spectrum
 
     
 if __name__=='__main__':
     Topt = 3e4
+    Ropt = orb_p_psrb['Ropt']
     p_e = 1.7
     Es = np.logspace(8, 15, 1000)
     Ecut_e = 5 # TeV
@@ -546,7 +452,7 @@ if __name__=='__main__':
     beta_eff = 1e-2
     start = time.time()
     r_SE = r_SP / (1 + beta_eff**0.5)
-    xs, ys, thetas, rs, ss, th1s, r2opt, th_inf, xe = approx_IBS_test(-np.log10(beta_eff), 57, smax, True)
+    xs, ys, thetas, rs, ss, th1s, r2opt, th_tan, th_inf, xe = approx_IBS_test(-np.log10(beta_eff), 57, smax, True)
     #dorb, s_table, th_table, p, ecut, Norm, emin, emax
     # inject_ecpl = f_inject_test(1, Es, r_SP, ss, thetas, p_e, ecut = Ecut_e*1e12, Norm = 1,
     #                             emin=1e9, emax=5.1e14)*Es**2
@@ -561,7 +467,7 @@ if __name__=='__main__':
         r_SE = r_SP / (1 + beta_eff**0.5)
         
         ####### ---------------- advection -----------------------------#######
-        tot_loss_args = (B0, Topt, r_SE, 1e49, 1, 1, ss, rs, thetas, r_SP)
+        tot_loss_args = (B0, Topt, Ropt, r_SE, 1e49, 1, 1, ss, rs, thetas, r_SP)
         f_args = (r_SP, ss, thetas, p_e, Ecut_e*1e12, 1, 1e9, 5.1e14)
         v_input = vel_func_test
         v_args_input = (Gamma, smax, r_SP)
@@ -587,7 +493,7 @@ if __name__=='__main__':
         
         # ####### ---------------- w leakage -----------------------------#######
         start = time.time()
-        tot_loss_args = (B0, Topt, r_SE, 1e49, 1, 1, ss, rs, thetas, r_SP)
+        tot_loss_args = (B0, Topt, Ropt, r_SE, 1e49, 1, 1, ss, rs, thetas, r_SP)
         f_args =  (r_SP, ss, thetas, p_e, Ecut_e*1e12, 1, 1e9, 5.1e14)
         #   est(s,e, f_inj_func, f_inj_args, dorb, s_max_g, Gamma):
         t_args = (f_inject_test, f_args, r_SP, smax, Gamma)
@@ -595,7 +501,9 @@ if __name__=='__main__':
                               f_inject_func=f_inject_test, tot_loss_args=tot_loss_args, f_args=f_args,
                               vel_func=None, v_args=None, t_args=t_args, t_func=t_leak_test)
         
-        sed_avg = trapezoid(N2d[2:, :], ss[2:], axis=0) / (ss[-1]-ss[1]) * ee**2
+        sed_avg = trapezoid(N2d[1:, :], ss[1:], axis=0) / (ss[-1]-ss[1]) * ee**2
+        # sed_avg = trapezoid(N2d, ss, axis=0) / np.max(ss) * ee**2
+        
         # for is_ in range(ss.size):
         #     ax[0].plot(ee, N2d[is_, :], label = is_)
         Ntot = trapezoid(N2d, ee, axis=1)
@@ -615,7 +523,7 @@ if __name__=='__main__':
         # eta_mimic = eta_flow_mimic(s = ss*r_SP, s_max_g = smax, Gamma=Gamma, dorb=r_SP)
         # # eta_flow_args = (smax, Gamma, r_SP)
         # # print(eta_mimic)  eta_mimic[:, None]
-        # tot_loss_args = (B0, Topt, r_SE, eta_mimic[:, None], 1, 1, ss, rs, thetas, r_SP)
+        # tot_loss_args = (B0, Topt, Ropt, r_SE, eta_mimic[:, None], 1, 1, ss, rs, thetas, r_SP)
         # f_args =  (r_SP, ss, thetas, p_e, Ecut_e*1e12, 1, 1e9, 5.1e14)
         # #   est(s,e, f_inj_func, f_inj_args, dorb, s_max_g, Gamma):
         # # t_args = (f_inject_test, f_args, r_SP, smax, Gamma)
@@ -636,7 +544,7 @@ if __name__=='__main__':
         # eta_mimic = eta_flow_mimic(s = ss*r_SP, s_max_g = smax, Gamma=Gamma, dorb=r_SP)
         # eta_flow_args = (smax, Gamma, r_SP)
         # # print(eta_mimic)  eta_mimic[:, None]
-        # tot_loss_args = (B0, Topt, r_SE, None, 1, 1, ss, rs, thetas, r_SP)
+        # tot_loss_args = (B0, Topt, Ropt, r_SE, None, 1, 1, ss, rs, thetas, r_SP)
         # f_args =  (r_SP, ss, thetas, p_e, Ecut_e*1e12, 1, 1e9, 5.1e14)
         # #   est(s,e, f_inj_func, f_inj_args, dorb, s_max_g, Gamma):
         # # t_args = (f_inject_test, f_args, r_SP, smax, Gamma)

@@ -16,6 +16,7 @@ from scipy.interpolate import splev, splrep, interp1d
 # from My_e_evol import Evolved_ECPL
 import Orbit as Orb
 import SpecIBS
+import GetObsData
 
 # start_time = time.time()
 #import matplotlib
@@ -55,6 +56,17 @@ def interplg(x, xdata, ydata):
     spl_ = interp1d(np.log10(xdata), np.log10(ydata))
     return 10**( spl_( np.log10(x) ) )
 
+def fit_norm(xdata, ydata, xtheor, ytheor):
+    fspl = interp1d(xtheor, ytheor)
+    ydata_fake = fspl(xdata)
+    def to_fit(xda, norma):              
+        return (norma * ydata_fake - ydata)
+    
+    norm, dnorm = curve_fit(to_fit, xdata = xdata, 
+                    ydata = np.zeros(xdata.size), p0 = (1e44,))
+    norm = norm[0]
+    return ytheor * norm
+
 def po(E, g, norm):
     return norm * E**(-g)
 
@@ -65,10 +77,22 @@ def unpack(query, dictat):
         list_.append(dictat[name])
     return list_
 
+def c_sound(delta, r_inD):
+    mu_gas = 0.6
+    if isinstance(r_inD, np.ndarray):
+        res = delta * (GM / Ropt / mu_gas)**0.5 * (Ropt / r_inD)**0.25
+        res[r_inD < 0] = 0
+    else:
+        if r_inD < 0: res = 0
+        else:
+            res = delta * (GM / Ropt / mu_gas)**0.5 * (Ropt / r_inD)**0.25
+    return res
+
 def Pressure_wind(R_from_star, Norm, R_reference = Ropt):    
-    x = R_from_star / R_reference
-    return Norm /  x**2 
-    
+    return Norm * (R_reference / R_from_star)**2
+
+def Pressure_pulsar(R_from_pulsar, Norm, R_reference = Ropt):
+    return Norm * (R_reference / R_from_pulsar)**2 
 
 def Pressure_disk(Vec_R_from_star, alpha, incl, Norm, delta, np_disk,
             R_reference = Ropt, radial_profile = 'pl', R_trunk = 20 * Ropt):
@@ -78,7 +102,7 @@ def Pressure_disk(Vec_R_from_star, alpha, incl, Norm, delta, np_disk,
     r_toD = Orb.ABSV(r_fromdisk) 
     r_indisk = Vec_R_from_star - r_fromdisk
     r_inD = Orb.ABSV(r_indisk)
-    z0 = delta * r_inD * (r_inD / Ropt)**0.5 
+    z0 = delta * r_inD * (r_inD / Ropt)**0.25 
     vert = np.exp(-r_toD**2 / 2 / z0**2)
     if radial_profile == 'pl':
         rad = (R_reference / r_inD)**np_disk
@@ -88,27 +112,53 @@ def Pressure_disk(Vec_R_from_star, alpha, incl, Norm, delta, np_disk,
         if r_inD >= R_trunk:
             rad = (R_reference / R_trunk)**np_disk * (R_trunk / r_inD)**2
     return Norm * rad * vert 
-    
 
-def Pressure_pulsar(R_from_pulsar, Norm, R_reference = Ropt):
-    return Norm * (R_reference / R_from_pulsar)**2 
-
-def Dist_SE_1d(t, alpha, incl, f_w, f_d, f_p, delta, np_disk, r_pr, R_t):   
+def Dist_SE_1d(t, alpha, incl, f_w, f_d, f_p, delta, np_disk, r_pr, R_t,
+               hyst = False, SE_prev = None, t_prev = None):   
     r_sp_vec = Orb.Vector_S_P(t)
-    nwind = Orb.N_from_V(r_sp_vec)
+    nwind = Orb.N_from_V(r_sp_vec) # unit vector from S to P
     r_sp = Orb.ABSV(r_sp_vec)
-    pres_w = lambda r_se: Pressure_wind(r_se, f_w)
-    pres_d = lambda r_se: Pressure_disk(r_se*nwind,
-                        alpha, incl, f_d, delta, np_disk,
-                        radial_profile = r_pr, R_trunk = R_t)
-    pres_p = lambda r_se: Pressure_pulsar(np.abs(r_sp - r_se), f_p)
+    pres_w = lambda r_se: Pressure_wind(R_from_star=r_se, Norm=f_w)
+    pres_d = lambda r_se: Pressure_disk(Vec_R_from_star=r_se*nwind,
+                        alpha=alpha, incl=incl, Norm=f_d, delta=delta,
+                        np_disk=np_disk, radial_profile = r_pr, R_trunk = R_t)
+    pres_p = lambda r_se: Pressure_pulsar(R_from_pulsar=np.abs(r_sp - r_se),
+                                          Norm=f_p)
     to_solve = lambda r_se: pres_d(r_se) + pres_w(r_se) - pres_p(r_se)
     rse = brentq(to_solve, Ropt, r_sp*(1-1e-6))
+    ### ---------------- test if the solution is good -------------------------
     p_ref = pres_p(rse)
-    max_err = np.max(to_solve(rse) / p_ref)
-    if max_err > 1e-3:
-        print('t = %s error is huge: %s'%(t/DAY, max_err))  
-    return rse
+    max_rel_err = np.max(to_solve(rse) / p_ref)
+    if max_rel_err > 1e-3:
+        print('t = %s error is huge: %s'%(t/DAY, max_rel_err))  
+    ### -----------------------------------------------------------------------
+    # if hyst = True (hysteresis), then compare if the shock wave had enough
+    # time to evolve since previous t. If yes, then return rse. If no, 
+    # return rse_prev - v * delta t
+    # Hysteresis only works when rse decreases, not increases
+    rse_to_return = rse
+
+    if hyst:
+        rpe = r_sp - rse
+        rsp_prev = Orb.Radius(t_prev)
+        rpe_prev = rsp_prev - SE_prev
+                # if SE_prev < 0 or (rse/Orb.Radius(t) < SE_prev/Orb.Radius(t_prev) ): # when r_se decreases, hysreresis works
+        # if SE_prev < 0 or (rpe/r_sp > rpe_prev/rsp_prev): # if r_sp increases, hysteresis works
+        csound = c_sound(delta=delta, r_inD = SE_prev)
+        
+        deltaT = abs(t - t_prev)
+        dot_r = np.abs(Orb.Radius(t) - Orb.Radius(t_prev)) / deltaT# * SE_prev / Orb.Radius(t_prev)
+        # v_shock = max(csound, dot_r) #!!!
+        v_shock = csound + dot_r
+        # print(csound)
+        # print(SE_prev)
+        # print(deltaT)
+        rse_to_return = max(rse, SE_prev - v_shock * deltaT)
+        # rse_to_return = 1e13
+        # else: # when r_se increases, turn off the hysreresis
+        #     rse_to_return = rse
+            
+    return rse_to_return
 
 def Thresh_crit(x, xarr, yarr):
     p = 1
@@ -150,7 +200,7 @@ def B_and_u(Bx, Bopt, r_SE, r_PE, T_opt):
     u_dens = sigma_b * T_opt**4 / c_light * factor
     return B_puls, B_star, u_dens
 
-def SED_tot_PSRB(t, E, params, syn_only):
+def SED_tot_PSRB(t, E, params, syn_only, hyst = False, SE_prev = None, t_prev = None):
     que_va = """delta f_w f_d f_p np_disk Bx Bopt alpha0 incl enh_p enh_H 
     E0_e Ecut_e logNorm p_e Topt r_pr R_t if_boost Gamma LoS_to_orb 
     delta_pow MF_boost beta cooling eta_flow eta_syn eta_IC
@@ -161,15 +211,13 @@ def SED_tot_PSRB(t, E, params, syn_only):
      MF_boost, beta, cooling, eta_flow,
      eta_syn, eta_IC,
       lorentz_boost, simple, abs_photoel, abs_gg, s_max) = unpack(que_va, params)
-    # print('log N = ', logAmpl_e)
-    # print('N = ', 10**logAmpl_e)
     
     f_d_mod, delta_mod = P_and_h(t, params)
     SP_vec = Orb.Vector_S_P(t)
     nu_true = Orb.True_an(t)
     r_SP = Orb.ABSV(SP_vec)
     r_SE = Dist_SE_1d(t, alpha, incl, f_w, f_d_mod, f_p, delta_mod, 
-                         np_disk, r_pr, R_t)
+                         np_disk, r_pr, R_t, hyst, SE_prev, t_prev)
     Bp, Bs, u = B_and_u(Bx = Bx, Bopt = Bopt, r_SE = r_SE, r_PE = r_SP - r_SE,
                         T_opt = T_opt)
     r_PE = r_SP - r_SE
@@ -188,106 +236,160 @@ def SED_tot_PSRB(t, E, params, syn_only):
     # return sed, sed_SY, sed_IC, some_params
     return sed, some_params      
 
-def Flux(t, params, bands = ([3e2, 1e4],), syn_only = False):
-    Fluxes = []
+def Flux(t, params, bands, syn_only = False, hyst = False, 
+         SE_prev = None, t_prev = None):
     N_per_dec = 51
-    for band in bands:
-        e1, e2 = band
+    if syn_only:
+        e1, e2 = 3e2, 1e4
         E_integr = np.logspace(np.log10(e1), np.log10(e2), int(N_per_dec*np.log10(e2/e1)))
-        sed_in_range, some_params = SED_tot_PSRB(t, E_integr, params, syn_only)
-        Fluxes.append(trapezoid(x = E_integr, y = sed_in_range/E_integr))
-        if e1 == 3e2:
-            # where_fit = np.where(np.logical_and(E_integr > 1e3, E_integr < 1e4))
-            # popt, pcov = curve_fit(f = po, xdata = E_integr[where_fit],
-            #                        ydata = sed_in_range[where_fit],
-            #                        p0=(1, 0.5))
-            # G_ind = popt[0] + 2 #!!!
-            G_ind = -1
+        sed_in_range, some_params = SED_tot_PSRB(t, E_integr, params, syn_only,
+                                                 hyst, SE_prev, t_prev)
+        Fluxes = [trapezoid(x = E_integr, y = sed_in_range/E_integr), -1, -1]
+        G_ind = -1
+    if not syn_only:
+        Fluxes = []
+        for band in bands:
+            e1, e2 = band
+            E_integr = np.logspace(np.log10(e1), np.log10(e2), int(N_per_dec*np.log10(e2/e1)))
+            sed_in_range, some_params = SED_tot_PSRB(t, E_integr, params, syn_only,
+                                                     hyst, SE_prev, t_prev)
+            Fluxes.append(trapezoid(x = E_integr, y = sed_in_range/E_integr))
+            if e1 == 3e2:
+                where_fit = np.where(np.logical_and(E_integr > 3e3, E_integr < 1e4))
+                popt, pcov = curve_fit(f = po, xdata = E_integr[where_fit],
+                                       ydata = sed_in_range[where_fit],
+                                       p0=(1, 0.5))
+                G_ind = popt[0] + 2 
+
     return np.array(Fluxes), G_ind, some_params        
 
-def Xray_flux_full_output(t, params,  swift_only=False):
-    if not swift_only:
-        bands = np.array([np.array([3e2, 1e4]), 
-                          np.array([3e4, 5e4]),
-                          np.array([4e11, 1e14])])
-        Fluxes, G_ind, some_params = Flux(t, params, bands, syn_only = False)
-        Fx, FI, Ftev = Fluxes
-        Bp, Bs, us_rad,  r_SP, r_SE, r_PE = [some_params[n_] 
-            for n_ in ('Bp', 'Bs', 'u_rad', 'r_SP', 'r_SE', 'r_PE')]
-        Btot = Bs + Bp
-        beta_an = params['f_p'] / params['f_w']
-        r_StoE_an = r_SP / (1 + beta_an**0.5)
-        return (r_SE, r_StoE_an, r_SP, r_PE, us_rad, Fx,
-                 Bs, Bp, Btot, Ftev, FI, G_ind)
-    if swift_only:
-        Fx, G_ind, some_params = Flux(t, params, syn_only = True)
-        return Fx
+def Xray_flux_full_output(t, params,  swift_only=False, hyst = False, 
+         SE_prev = None, t_prev = None):
+    # if not swift_only:
+    bands = np.array([np.array([3e2, 1e4]), 
+                      np.array([3e4, 5e4]),
+                      np.array([4e11, 1e14])])
+    Fluxes, G_ind, some_params = Flux(t, params, bands, swift_only,
+                                      hyst, SE_prev, t_prev)
+    Fx, FI, Ftev = Fluxes
+    Bp, Bs, us_rad,  r_SP, r_SE, r_PE = [some_params[n_] 
+        for n_ in ('Bp', 'Bs', 'u_rad', 'r_SP', 'r_SE', 'r_PE')]
+    Btot = Bs + Bp
+    beta_an = params['f_p'] / params['f_w']
+    r_StoE_an = r_SP / (1 + beta_an**0.5)
+    return (r_SE, r_StoE_an, r_SP, r_PE, us_rad, Fx,
+             Bs, Bp, Btot, Ftev, FI, G_ind)
+    # if swift_only:
+    #     Fx, G_ind, some_params = Flux(t, params, swift_only, hyst, SE_prev, t_prev)
+    #     return Fx, some_params['r_SE']
     
-def Xray_Light_curve(tplot, params, ifparallel = False,
-                     swift_only=False): # tplot in seconds
-    if swift_only:
-        if ifparallel == False:
-            Fsx = np.zeros(tplot.size)
-            for it in range(tplot.size):
-                Fsx[it] = Xray_flux_full_output(tplot[it], params, True)
-                
-        if ifparallel == True:
-            def func_(i_):
-                return Xray_flux_full_output(tplot[i_], params, True)
-            if params['cooling'] == 'adv':
-                n_cores = 3
-            else:
-                n_cores = multiprocessing.cpu_count()
-            res= Parallel(n_jobs=n_cores)(delayed(func_)(i) for i in range(0, len(tplot)))
-            Fsx=np.array(res)[:, 0]
-                
-        return Fsx
-    
-    if not swift_only:
-        if ifparallel == False:
-            (r_StoE, r_StoE_an, r_StoP, r_PtoE, us_rad, Fsx,  Bsstar_scal, 
-             Bspuls_scal, Bstot_scal, Ftev, FI, G_ind) = np.zeros((12, tplot.size))
+def Xray_Light_curve(tplot, params, ifparallel = False,  swift_only=False):
+    hyst = params['hyst']
+    if hyst: ifparallel = False # if hysteresis if on, no paral !
+
+    if ifparallel == False:
+        (r_StoE, r_StoE_an, r_StoP, r_PtoE, us_rad, Fsx,  Bsstar_scal, 
+         Bspuls_scal, Bstot_scal, Ftev, FI, G_ind) = np.zeros((12, tplot.size))
+        if not hyst:
             for it in range(tplot.size):
                 t_ = tplot[it]
-    
                 (r_StoE[it], r_StoE_an[it], r_StoP[it], r_PtoE[it], us_rad[it],
                  Fsx[it],  Bsstar_scal[it],  Bspuls_scal[it], 
-                 Bstot_scal[it], Ftev[it],  FI[it], G_ind[it]) = Xray_flux_full_output(t_, params,  False)
+                 Bstot_scal[it], Ftev[it],  FI[it], G_ind[it]) = Xray_flux_full_output(t_, params,  swift_only)
+        if hyst:
+            
+            rse_prev = -1e100 # first ``previous`` r_se is very small so that
+            tprev = np.min(tplot) - 1.*DAY # first ``previous`` t
+            t_disk1, t_disk2 = Orb.times_of_disk_passage(params['alpha0'], params['incl'])
+            for it in range(tplot.size):
+                t_ = tplot[it]
+                if (t_ > -10.3*DAY and t_ < 5*DAY) or (t_ > 20*DAY): 
+                # if t_ > t_disk1:
+                    hyst_here = True
+                else:
+                    hyst_here = False
+                (r_StoE[it], r_StoE_an[it], r_StoP[it], r_PtoE[it], us_rad[it],
+                 Fsx[it],  Bsstar_scal[it],  Bspuls_scal[it], 
+                 Bstot_scal[it], Ftev[it],  FI[it], G_ind[it]) = Xray_flux_full_output(t_, params,  swift_only,
+                                  hyst=hyst_here, SE_prev=rse_prev, t_prev= tprev)
+                rse_prev = r_StoE[it] # re-define r_se on ``previous`` step
+                tprev = t_ # re-define t on ``previous`` step
+            
+    if ifparallel == True:
+        def func_(i_):
+            return Xray_flux_full_output(tplot[i_], params, swift_only)
+        if params['cooling'] == 'adv':
+            n_cores = 3
+        else:
+            n_cores = multiprocessing.cpu_count()
+        res= Parallel(n_jobs=n_cores)(delayed(func_)(i) for i in range(0, len(tplot)))
+        res=np.array(res)
+        ##    print(np.array(res).size)
+        (r_StoE, r_StoE_an, r_StoP, r_PtoE, us_rad, Fsx,  Bsstar_scal, 
+        Bspuls_scal, Bstot_scal, Ftev, FI, G_ind) = [res[:, ii] for ii in range(12)]
                 
-        if ifparallel == True:
-            def func_(i_):
-                return Xray_flux_full_output(tplot[i_], params,  False)
-            if params['cooling'] == 'adv':
-                n_cores = 3
-            else:
-                n_cores = multiprocessing.cpu_count()
-            res= Parallel(n_jobs=n_cores)(delayed(func_)(i) for i in range(0, len(tplot)))
-            res=np.array(res)
-            ##    print(np.array(res).size)
-            (r_StoE, r_StoE_an, r_StoP, r_PtoE, us_rad, Fsx,  Bsstar_scal, 
-            Bspuls_scal, Bstot_scal, Ftev, FI, G_ind) = [res[:, ii] for ii in range(12)]
-                
-        return (r_StoE, r_StoE_an, r_StoP, r_PtoE, us_rad, Fsx,  Bsstar_scal, 
-                                Bspuls_scal, Bstot_scal, Ftev, FI, G_ind)
+    return (r_StoE, r_StoE_an, r_StoP, r_PtoE, us_rad, Fsx,  Bsstar_scal, 
+                            Bspuls_scal, Bstot_scal, Ftev, FI, G_ind)
 
         
 if __name__=='__main__':
-    par_templ101417 = {'f_w': 1., 'f_d': 15, 'f_p': 0.1,  't_enh_p': [0,],
-                 't_enh_H': ['t2', ],  'enh_H':[1,],
-               'alpha0': -8. * RAD_IN_DEG, 'incl': 25. * RAD_IN_DEG,
-              'beta': 1., 'np_disk': 2.7, 'Bx': 8e12, 'Bopt': 0., 'E0_e': 1.,
-              'Ecut_e': 5., 'p_e': 1.7, 'Topt': 3e4,
-              'char_r': Orb.Radius(0.0), 'wobble_ampl':0, 'phi_offset': 0 * pi/180,
-              'r_pr': 'broken_pl', 'R_t': 5 * Ropt,
-              'if_boost': True, 'Gamma': 1.16, 'LoS_to_orb': 2.3, 'delta_pow': 3,
-              'MF_boost': False,  'delta':1.4e-2, 'enh_p': [1,],
-              'cooling': True, 'eta_flow': 1e-1,
-              'eta_syn': 1, 'eta_IC': 1., 's_adv': False, 'lorentz_boost': True,
-              'simple': True, 'logNorm': 1, 's_max': 2.5, }
-    tpl = np.linspace(-30, 60, 41) * DAY
-    (r_StoE, r_StoE_an, r_StoP, r_PtoE, us_rad, Fsx,  Bsstar_scal, 
-    Bspuls_scal, Bstot_scal, Ftev, FI, G_ind) = Xray_Light_curve(tpl, par_templ101417, ifparallel = True)
-    # fx, g, par = Flux(10*DAY, par_templ101417)
-    # print(Fsx)
-    # np.array(Fluxes), G_ind, some_params 
-    plt.plot(tpl/DAY, Fsx)
+    fig, ax = plt.subplots(nrows=2, ncols=1, sharex=True)
+    ax0, ax1 = ax[0], ax[1]
+    da = GetObsData.getSingleLC('101417_full', )
+    da_xray = da['xray']
+
+    (tdata, dt, f, dfminus, dfplus,
+     df, ind, dind_minus, dind_plus) = [da_xray[ind_] for ind_ in ('t', 'dt',
+        'f', 'df_minus', 'df_plus', 'df', 'ind', 'dind_minus', 'dind_plus')]
+    cond =  np.logical_and((tdata>-320),  (tdata<165))
+    tdata, f, dfminus, dfplus = [ar[cond] for ar in (tdata, f, dfminus, dfplus)]
+    ax0.errorbar(tdata, f, yerr=(dfminus, dfplus), c='k', fmt='o')                                                             
+
+    import time
+    start = time.time()
+    for hyst, ls in zip([False, True], ['-', '--']):
+    # for hyst, ls in zip([ True, ], ['--', ]):
+          
+        par_templ101417 = {'f_w': 1., 'f_d':58, 'f_p': 0.1,  't_enh_p': [0,],
+                     't_enh_H': ['t2', ],  'enh_H':[1,],
+                   'alpha0': -8. * RAD_IN_DEG, 'incl': 25. * RAD_IN_DEG,
+                  'beta': 1., 'np_disk': 2.7, 'Bx': 5e11, 'Bopt': 0., 'E0_e': 1.,
+                  'Ecut_e': 1., 'p_e': 1.7, 'Topt': 3.3e4,
+                  'char_r': r_periastron, 'wobble_ampl':0, 'phi_offset': 0 * pi/180,
+                  'r_pr': 'broken_pl', 'R_t': 5 * Ropt,
+                  'if_boost': True, 'Gamma': 1.4, 'LoS_to_orb': 2.3, 'delta_pow': 3,
+                  'MF_boost': False,  'delta':3e-2, 'enh_p': [1,],
+                  'cooling': 'stat_mimic',  'hyst': hyst, 'logNorm': 43.7,
+                  'eta_flow': 1,
+                  'eta_syn': 1, 'eta_IC': 1.,  'lorentz_boost': True,
+                  'simple': True, 'abs_photoel': True,  'abs_gg': False, 's_max': 'bow'}
+        tpl = np.linspace(-210, 120, 361) * DAY
+        (r_StoE, r_StoE_an, r_StoP, r_PtoE, us_rad, Fsx,  Bsstar_scal, 
+        Bspuls_scal, Bstot_scal, Ftev, FI, G_ind) = Xray_Light_curve(tpl, par_templ101417, ifparallel = True, 
+                                                                     swift_only=True)
+        Fsx = fit_norm(tdata, f, tpl/DAY, Fsx)
+        ax0.plot(tpl/DAY, Fsx, label = 'swift', ls=ls)
+        ax0.set_yscale('log')
+        # ax0.plot(tpl/DAY, Ftev*1e-9, label = 'hess')
+        # ax0.plot(tpl/DAY, (FI-0.1)*1e-9, label = 'integral')
+        # ax0.plot(tpl/DAY, (G_ind+0.1)*1e-9, label = 'ind')
+        ax1.plot(tpl/DAY, r_StoE,ls=ls)
+        ax1.plot(tpl/DAY, r_PtoE,ls=ls)
+        ax1.plot(tpl/DAY, r_StoP,ls=ls, color='k')
+        # ax1.plot(tpl/DAY, np.gradient(r_StoP, tpl), ls=ls, color='r')
+        # ax1.plot(tpl/DAY, np.gradient(-r_PtoE, tpl), ls=ls, color='m')
+        
+        # ax1.plot(tpl/DAY, c_sound(1.4e-2, r_StoE), ls=ls, color='b')
+        # ax1.plot(tpl/DAY, c_sound(1.4e-2, r_StoE), ls=ls, color='b')
+        
+        
+        
+        # print(c_sound(0.01, r_))
+    
+    # ax0.plot(tpl/DAY, Fsx, label = 'swift')
+    # ax0.plot(tpl/DAY, Ftev, label = 'hess')
+    # ax0.plot(tpl/DAY, FI, label = 'integral')
+    # ax0.plot(tpl/DAY, (G_ind)*1e-9, label = 'ind')
+    ax0.legend()
+    print(time.time() - start)
+    
