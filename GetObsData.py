@@ -128,20 +128,20 @@ TeV data from 2024 ((((((NEU NEU NEU NEU NEU NEU ACHTUNG ACHTUNG))))))
 ###############################################################################
 """
 
-da_H4 = np.genfromtxt(Path(obs_fold, "out.spec"))
-eH4, FlH4 = da_H4[:, 0] * 1e9, da_H4[:, 3] / 1e9
-sedH4 = FlH4 * eH4**2
-# print(eH)
-deH4 = np.zeros(eH4.size)
-deH4[0] = 0.5 * (eH4[1] - eH4[0])
-for i in range(1, eH4.size):
-    deH4[i] = np.abs(eH4[i] - eH4[i-1]) - deH4[i-1]
-dFl_min, dFl_pl = da_H4[:, 4] / 1e9, da_H4[:, 5] / 1e9
-dsedH4 = (dFl_min + dFl_pl) / 2 * eH4**2
+# da_H4 = np.genfromtxt(Path(obs_fold, "out.spec"))
+# eH4, FlH4 = da_H4[:, 0] * 1e9, da_H4[:, 3] / 1e9
+# sedH4 = FlH4 * eH4**2
+# # print(eH)
+# deH4 = np.zeros(eH4.size)
+# deH4[0] = 0.5 * (eH4[1] - eH4[0])
+# for i in range(1, eH4.size):
+#     deH4[i] = np.abs(eH4[i] - eH4[i-1]) - deH4[i-1]
+# dFl_min, dFl_pl = da_H4[:, 4] / 1e9, da_H4[:, 5] / 1e9
+# dsedH4 = (dFl_min + dFl_pl) / 2 * eH4**2
 
-data_HESS24_full = {'e': eH4, 'de': deH4, 'sed': sedH4, 'dsed': dsedH4,
-                'de_minus': deH4, 'de_plus': deH4, 'dsed_minus': dsedH4,
-                'dsed_plus': dsedH4}
+# data_HESS24_full = {'e': eH4, 'de': deH4, 'sed': sedH4, 'dsed': dsedH4,
+#                 'de_minus': deH4, 'de_plus': deH4, 'dsed_minus': dsedH4,
+#                 'dsed_plus': dsedH4}
 
 
 """
@@ -235,7 +235,7 @@ def getSpecData():
         'spec_I24': data_Integral24,
         'spec_S24': data_Swift24,
         'spec_Hess21': data_HESS21_full, 
-        'spec_Hess24': data_HESS24_full,
+        # 'spec_Hess24': data_HESS24_full,
         'spec_Hess21_25_36': data_HESS21_21_36_me,
         'spec_Fermi24_m20_0': data_BlueFermi,
         'spec_Fermi24_0_20': data_RedFermi, 
@@ -275,13 +275,13 @@ def getSingleLC(year, cond  = None):
         tdata = data['t'] 
 
         
-    if year in ('', '2024'):
-        hd1, hd2, hfl, hdfl = np.loadtxt(Path(path, 'lc_ct14.night'),
-                                         usecols=[0,1,2,6], unpack=True)
-        hd1 += - (t_p21 + P)
-        hd2 += - (t_p21 + P)
-        hd = 0.5*(hd1 + hd2)
-        hdd = 0.5*np.abs(hd1 - hd2)
+    # if year in ('', '2024'):
+    #     hd1, hd2, hfl, hdfl = np.loadtxt(Path(path, 'lc_ct14.night'),
+    #                                      usecols=[0,1,2,6], unpack=True)
+    #     hd1 += - (t_p21 + P)
+    #     hd2 += - (t_p21 + P)
+    #     hd = 0.5*(hd1 + hd2)
+    #     hdd = 0.5*np.abs(hd1 - hd2)
         
     if year == '2021':
         # Nt1, Nt2,Nf, Nf1, Nf2 = np.loadtxt(Path(path, 'Nicer2021.txt'),

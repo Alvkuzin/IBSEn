@@ -28,17 +28,19 @@ h_planck_red = 1.05e-27
 Rsun = 7e10
 AU = 1.5e13
 DAY = 86400.
-Mopt = 24
-Ropt = 10 * Rsun
-Mx = 1.4
-GM = G * (Mopt + Mx) * 2e33
-P = 1236.724526
-Torb = P * DAY
-a = (Torb**2 * GM / 4 / pi**2)**(1/3)
-e = 0.87
+# Mopt = 24
+# Ropt = 10 * Rsun
+# Mx = 1.4
+# GM = G * (Mopt + Mx) * 2e33
+# P = 1236.724526
+# Torb = P * DAY
+# a = (Torb**2 * GM / 4 / pi**2)**(1/3)
+# e = 0.87
 
-r_periastron = a * (1 - e)
-D_system = 2.4e3 * 206265 * AU
+# r_periastron = a * (1 - e)
+# D_system = 2.4e3 * 206265 * AU
+orb_p_psrb = Orb.Get_PSRB_params()
+# Torb, e, Mtot, Ropt, P, GM = [orb_p_psrb[key] for key in ('T', 'e', 'M', 'Ropt', 'P', 'GM')]
 sed_unit = u.erg / u.s / u.cm**2
 RAD_IN_DEG = pi / 180.0
 
@@ -77,7 +79,8 @@ def unpack(query, dictat):
         list_.append(dictat[name])
     return list_
 
-def c_sound(delta, r_inD):
+def c_sound(delta, r_inD, Ropt, orb_p = orb_p_psrb):
+    GM = orb_p['GM']
     mu_gas = 0.6
     if isinstance(r_inD, np.ndarray):
         res = delta * (GM / Ropt / mu_gas)**0.5 * (Ropt / r_inD)**0.25
@@ -88,21 +91,21 @@ def c_sound(delta, r_inD):
             res = delta * (GM / Ropt / mu_gas)**0.5 * (Ropt / r_inD)**0.25
     return res
 
-def Pressure_wind(R_from_star, Norm, R_reference = Ropt):    
+def Pressure_wind(R_from_star, Norm, R_reference):    
     return Norm * (R_reference / R_from_star)**2
 
-def Pressure_pulsar(R_from_pulsar, Norm, R_reference = Ropt):
+def Pressure_pulsar(R_from_pulsar, Norm, R_reference):
     return Norm * (R_reference / R_from_pulsar)**2 
 
 def Pressure_disk(Vec_R_from_star, alpha, incl, Norm, delta, np_disk,
-            R_reference = Ropt, radial_profile = 'pl', R_trunk = 20 * Ropt):
-    ndisk = Orb.N_disk(alpha, incl)
+            R_reference, radial_profile = 'pl', R_trunk = None):
+    ndisk = Orb.N_disk(alpha, incl, orb_p='psrb')
     r_fromdisk = Orb.mydot(Vec_R_from_star, ndisk) * ndisk
     r_indisk = Vec_R_from_star - r_fromdisk
     r_toD = Orb.ABSV(r_fromdisk) 
     r_indisk = Vec_R_from_star - r_fromdisk
     r_inD = Orb.ABSV(r_indisk)
-    z0 = delta * r_inD * (r_inD / Ropt)**0.25 
+    z0 = delta * r_inD * (r_inD / R_reference)**0.25 
     vert = np.exp(-r_toD**2 / 2 / z0**2)
     if radial_profile == 'pl':
         rad = (R_reference / r_inD)**np_disk
@@ -113,17 +116,19 @@ def Pressure_disk(Vec_R_from_star, alpha, incl, Norm, delta, np_disk,
             rad = (R_reference / R_trunk)**np_disk * (R_trunk / r_inD)**2
     return Norm * rad * vert 
 
-def Dist_SE_1d(t, alpha, incl, f_w, f_d, f_p, delta, np_disk, r_pr, R_t,
+def Dist_SE_1d(t, alpha, incl, f_w, f_d, f_p, delta, np_disk, r_pr, R_t, Ropt,
                hyst = False, SE_prev = None, t_prev = None):   
-    r_sp_vec = Orb.Vector_S_P(t)
+    r_sp_vec = Orb.Vector_S_P(t, orb_p='psrb')
     nwind = Orb.N_from_V(r_sp_vec) # unit vector from S to P
     r_sp = Orb.ABSV(r_sp_vec)
-    pres_w = lambda r_se: Pressure_wind(R_from_star=r_se, Norm=f_w)
+    pres_w = lambda r_se: Pressure_wind(R_from_star=r_se, Norm=f_w, 
+                                        R_reference=Ropt)
     pres_d = lambda r_se: Pressure_disk(Vec_R_from_star=r_se*nwind,
                         alpha=alpha, incl=incl, Norm=f_d, delta=delta,
-                        np_disk=np_disk, radial_profile = r_pr, R_trunk = R_t)
+                        np_disk=np_disk, radial_profile = r_pr, R_trunk = R_t,
+                        R_reference=Ropt)
     pres_p = lambda r_se: Pressure_pulsar(R_from_pulsar=np.abs(r_sp - r_se),
-                                          Norm=f_p)
+                                          Norm=f_p, R_reference=Ropt)
     to_solve = lambda r_se: pres_d(r_se) + pres_w(r_se) - pres_p(r_se)
     rse = brentq(to_solve, Ropt, r_sp*(1-1e-6))
     ### ---------------- test if the solution is good -------------------------
@@ -140,14 +145,15 @@ def Dist_SE_1d(t, alpha, incl, f_w, f_d, f_p, delta, np_disk, r_pr, R_t,
 
     if hyst:
         rpe = r_sp - rse
-        rsp_prev = Orb.Radius(t_prev)
+        rsp_prev = Orb.Radius(t_prev, orb_p='psrb')
         rpe_prev = rsp_prev - SE_prev
                 # if SE_prev < 0 or (rse/Orb.Radius(t) < SE_prev/Orb.Radius(t_prev) ): # when r_se decreases, hysreresis works
         # if SE_prev < 0 or (rpe/r_sp > rpe_prev/rsp_prev): # if r_sp increases, hysteresis works
         csound = c_sound(delta=delta, r_inD = SE_prev)
         
         deltaT = abs(t - t_prev)
-        dot_r = np.abs(Orb.Radius(t) - Orb.Radius(t_prev)) / deltaT# * SE_prev / Orb.Radius(t_prev)
+        dot_r = np.abs(Orb.Radius(t, orb_p='psrb') -
+        Orb.Radius(t_prev, orb_p='psrb')) / deltaT# * SE_prev / Orb.Radius(t_prev)
         # v_shock = max(csound, dot_r) #!!!
         v_shock = csound + dot_r
         # print(csound)
@@ -183,7 +189,7 @@ def Thresh_crit(x, xarr, yarr):
 def P_and_h(t, params): 
     que_va = 'delta f_d enh_p enh_H t_enh_p t_enh_H alpha0 incl'
     delta, f_d, enh_p, enh_H, t_enh_p, t_enh_H, alpha, incl = unpack(que_va, params)
-    tdisk1, tdisk2 = Orb.times_of_disk_passage(alpha, incl)
+    tdisk1, tdisk2 = Orb.times_of_disk_passage(alpha, incl, orb_p='psrb')
     t_enh_H_ = [tdisk1 if t_ == 't1' else t_ for t_ in t_enh_H]
     t_enh_H_ = [tdisk2 if t_ == 't2' else t_ for t_ in t_enh_H_]
     t_enh_p_ = [tdisk1 if t_ == 't1' else t_ for t_ in t_enh_p]
@@ -192,7 +198,7 @@ def P_and_h(t, params):
     current_H_enh = Thresh_crit(t, t_enh_H_, enh_H)
     return current_p_enh * f_d, current_H_enh * delta
 
-def B_and_u(Bx, Bopt, r_SE, r_PE, T_opt):      
+def B_and_u(Bx, Bopt, r_SE, r_PE, T_opt, Ropt):      
     L_spindown, sigma_magn = 8e35 * (Bx / 3e11)**2, 1e-2
     B_puls = (L_spindown * sigma_magn / c_light / r_PE**2)**0.5
     B_star = Bopt * (Ropt / r_SE)
@@ -204,22 +210,22 @@ def SED_tot_PSRB(t, E, params, syn_only, hyst = False, SE_prev = None, t_prev = 
     que_va = """delta f_w f_d f_p np_disk Bx Bopt alpha0 incl enh_p enh_H 
     E0_e Ecut_e logNorm p_e Topt r_pr R_t if_boost Gamma LoS_to_orb 
     delta_pow MF_boost beta cooling eta_flow eta_syn eta_IC
-     lorentz_boost simple abs_photoel abs_gg s_max"""
+     lorentz_boost simple abs_photoel abs_gg s_max Ropt"""
     (delta, f_w, f_d, f_p, np_disk, Bx, Bopt, alpha, incl, enhance_p,
      enhance_h, E0_e, Ecut_e, logAmpl_e, p_e, T_opt, 
      r_pr, R_t, if_boost, Gamma, LoS_to_orb, delta_pow, 
      MF_boost, beta, cooling, eta_flow,
      eta_syn, eta_IC,
-      lorentz_boost, simple, abs_photoel, abs_gg, s_max) = unpack(que_va, params)
+      lorentz_boost, simple, abs_photoel, abs_gg, s_max, Ropt) = unpack(que_va, params)
     
     f_d_mod, delta_mod = P_and_h(t, params)
-    SP_vec = Orb.Vector_S_P(t)
-    nu_true = Orb.True_an(t)
+    SP_vec = Orb.Vector_S_P(t, orb_p='psrb')
+    nu_true = Orb.True_an(t, orb_p='psrb')
     r_SP = Orb.ABSV(SP_vec)
     r_SE = Dist_SE_1d(t, alpha, incl, f_w, f_d_mod, f_p, delta_mod, 
                          np_disk, r_pr, R_t, hyst, SE_prev, t_prev)
     Bp, Bs, u = B_and_u(Bx = Bx, Bopt = Bopt, r_SE = r_SE, r_PE = r_SP - r_SE,
-                        T_opt = T_opt)
+                        T_opt = T_opt, Ropt=Ropt)
     r_PE = r_SP - r_SE
     beta_eff = (r_PE / r_SE)**2
     sed = SpecIBS.SED_from_IBS(E=E, B_apex=Bp+Bs, u_g_apex=u, Topt=T_opt,
@@ -300,7 +306,7 @@ def Xray_Light_curve(tplot, params, ifparallel = False,  swift_only=False):
             
             rse_prev = -1e100 # first ``previous`` r_se is very small so that
             tprev = np.min(tplot) - 1.*DAY # first ``previous`` t
-            t_disk1, t_disk2 = Orb.times_of_disk_passage(params['alpha0'], params['incl'])
+            t_disk1, t_disk2 = Orb.times_of_disk_passage(params['alpha0'], params['incl'], orb_p='psrb')
             for it in range(tplot.size):
                 t_ = tplot[it]
                 if (t_ > -10.3*DAY and t_ < 5*DAY) or (t_ > 20*DAY): 
@@ -349,14 +355,14 @@ if __name__=='__main__':
     start = time.time()
     for hyst, ls in zip([False, True], ['-', '--']):
     # for hyst, ls in zip([ True, ], ['--', ]):
-          
+        Ropt_ = 10 * 7e10
         par_templ101417 = {'f_w': 1., 'f_d':58, 'f_p': 0.1,  't_enh_p': [0,],
                      't_enh_H': ['t2', ],  'enh_H':[1,],
                    'alpha0': -8. * RAD_IN_DEG, 'incl': 25. * RAD_IN_DEG,
                   'beta': 1., 'np_disk': 2.7, 'Bx': 5e11, 'Bopt': 0., 'E0_e': 1.,
                   'Ecut_e': 1., 'p_e': 1.7, 'Topt': 3.3e4,
-                  'char_r': r_periastron, 'wobble_ampl':0, 'phi_offset': 0 * pi/180,
-                  'r_pr': 'broken_pl', 'R_t': 5 * Ropt,
+                  'char_r': 1.5e13, 'wobble_ampl':0, 'phi_offset': 0 * pi/180,
+                  'r_pr': 'broken_pl', 'R_t': 5 * Ropt_, 'Ropt': Ropt_, 
                   'if_boost': True, 'Gamma': 1.4, 'LoS_to_orb': 2.3, 'delta_pow': 3,
                   'MF_boost': False,  'delta':3e-2, 'enh_p': [1,],
                   'cooling': 'stat_mimic',  'hyst': hyst, 'logNorm': 43.7,
@@ -365,7 +371,7 @@ if __name__=='__main__':
                   'simple': True, 'abs_photoel': True,  'abs_gg': False, 's_max': 'bow'}
         tpl = np.linspace(-210, 120, 361) * DAY
         (r_StoE, r_StoE_an, r_StoP, r_PtoE, us_rad, Fsx,  Bsstar_scal, 
-        Bspuls_scal, Bstot_scal, Ftev, FI, G_ind) = Xray_Light_curve(tpl, par_templ101417, ifparallel = True, 
+        Bspuls_scal, Bstot_scal, Ftev, FI, G_ind) = Xray_Light_curve(tpl, par_templ101417, ifparallel = False, 
                                                                      swift_only=True)
         Fsx = fit_norm(tdata, f, tpl/DAY, Fsx)
         ax0.plot(tpl/DAY, Fsx, label = 'swift', ls=ls)

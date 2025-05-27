@@ -488,6 +488,7 @@ def dummy_LC(t, Bx, Bopt, Topt, E0_e, Ecut_e, Ampl_e, p_e,
     phi_LoS_ShockX = pi - (nu_los - phi)
     Es = np.logspace(np.log10(300), 4, 59) # 0.3-10 keV only
     Bp, Bo, u = B_and_u_test(Bx, Bopt, r_SE, r_PE = r_SP - r_SE, Topt = Topt, Ropt=Ropt)
+    Bp = 1.
     sed = SED_from_IBS(E = Es, B_apex = Bp, u_g_apex = u, Topt = Topt, Ropt=Ropt,
         r_SP = r_SP, E0_e = E0_e, Ecut_e = Ecut_e, Ampl_e = Ampl_e, p_e = p_e,
         beta_IBS = beta_IBS, Gamma = Gamma, s_max_em = s_max_em, s_max_g = s_max_g, N_shock = 10, 

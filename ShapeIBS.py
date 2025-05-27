@@ -13,12 +13,12 @@ import xarray as xr
 file_sh = Path(Path.cwd(), 'TabData', "Shocks4.nc")
 ds_sh = xr.load_dataset(file_sh)
 
-def lin(x, k, b):
-    return k*x + b
+# def lin(x, k, b):
+#     return k*x + b
 
 
-def lin_appr(arr1, arr2, x1, x2, xn):
-    return (arr1*(xn-x2) + arr2*(x1-xn))/(x1-x2)
+# def lin_appr(arr1, arr2, x1, x2, xn):
+#     return (arr1*(xn-x2) + arr2*(x1-xn))/(x1-x2)
 
 def Theta_inf(beta):
     to_solve1 = lambda tinf: tinf - tan(tinf) - pi / (1. - beta)
@@ -34,10 +34,10 @@ def Theta1_CRW(theta, beta):
         th1 = brentq(to_solve2, 1e-10, th1_inf)
         return th1
     
-def d_boost(Gamma, angle_beta_obs):
-    b_ = angle_beta_obs
-    beta_ = (1 - 1/Gamma**2)**0.5
-    return 1 / Gamma / (1 + beta_ * cos(b_))
+# def d_boost(Gamma, angle_beta_obs):
+#     b_ = angle_beta_obs
+#     beta_ = (1 - 1/Gamma**2)**0.5
+#     return 1 / Gamma / (1 + beta_ * cos(b_))
 
 def Shock_front(beta, s_max, N, full_return = False):
     """

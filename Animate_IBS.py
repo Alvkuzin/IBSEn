@@ -26,28 +26,20 @@ Gamma = 2.5
 nu_los = 2.3
 
 
-# orb = 'circ'
-orb = 'psrb'
+# orb_p = 'circ'
+orb_p = 'psrb'
 
-beta_ef = 0.1
-s_max = 'bow'
-# s_max = 3
-orb_p_psrb = Orb.Get_PSRB_params()
-
-if orb == 'psrb':    
-    T_orb, exc, Mtot, Ropt, P = [orb_p_psrb[key] for key in ('T', 'e', 'M', 'Ropt', 'P')]
-elif orb == 'circ':    
-    T_orb, exc, Mtot, Ropt, P = [orb_p_psrb[key] for key in ('T', 'e', 'M', 'Ropt', 'P')]
-    exc = 0
-else:
-    T_orb, exc, Mtot, Ropt = [orb[key] for key in ('T', 'e', 'M', 'Ropt')]
-    P = T_orb / DAY
+beta_ef = 0.01
+# s_max = 'bow'
+s_max = 3
+orb_p_psrb = Orb.Get_PSRB_params(orb_p)
+P, exc = [orb_p_psrb[key] for key in ('P', 'e')]
 
 ### ----------------------------------------------------------------- #####
 ###  ---------- Draw a realistic IBS with the orbital shape ------------ ##
 ### ----------------------------------------------------------------- #####   
 tpl = np.linspace(-P/2, P/2, 1000) * DAY
-r_per = Orb.r_peri(Torb=T_orb, e=exc, Mtot=Mtot)
+r_per = Orb.r_peri(orb_p)
 
 
 fps = 30
@@ -59,7 +51,7 @@ interval = 1000 / fps  # in milliseconds
 fig, ax = plt.subplots(nrows=2)
 ax0, ax1 = ax
 # ax.grid(True)
-xs, ys, zs = Orb.Vector_S_P(tpl, Torb=T_orb, e=exc, Mtot=Mtot) / r_per
+xs, ys, zs = Orb.Vector_S_P(tpl, orb_p) / r_per
 
 
 x_sh, y_sh, th_sh, s_sh, r_sh = approx_IBS(b = np.abs(np.log10(beta_ef)),
@@ -75,7 +67,7 @@ tanim = np.linspace(-40, 110, num_frames) * DAY
 def func_simple(i):
     f_sim_ = dummy_LC(tanim[i], Bx, Bopt, Topt, E0_e=1, Ecut_e=1, Ampl_e=1, p_e=pe,
                     beta_IBS=beta_ef, Gamma=Gamma, s_max_em=s_max,
-                    s_max_g=4., simple=True, orb=orb,
+                    s_max_g=4., simple=True, orb=orb_p,
                     eta_a = 1, lorentz_boost=True, cooling='no')   
     return f_sim_
 
@@ -101,11 +93,11 @@ def update(i):
     init()
 
     t = tanim[i]
-    x, y, z = Orb.Vector_S_P(t, Torb=T_orb, e=exc, Mtot=Mtot) / r_per
-    nu_tr = Orb.True_an(t, Torb=T_orb, e=exc)
+    x, y, z = Orb.Vector_S_P(t, orb_p) / r_per
+    nu_tr = Orb.True_an(t, orb_p)
     ax0.scatter(x, y, c='r')
     ax0.plot([0, 4*x], [0, 4*y], c='r', ls='--')
-    r = Orb.Radius(t, Torb=T_orb, e=exc, Mtot=Mtot) / r_per
+    r = Orb.Radius(t, orb_p) / r_per
     
     # r_sh = np.column_stack((x_sh, y_sh))
     # first, rescale the shock

@@ -1,19 +1,18 @@
 import numpy as np
 from matplotlib import pyplot as plt
 from numpy import pi, sin, cos, exp
-import naima
-from scipy.special import expn
+# from scipy.special import expn
 import astropy.units as u
 # from scipy import integrate
 from scipy.integrate import trapezoid, quad, cumulative_trapezoid, solve_ivp
 from scipy.interpolate import interp1d, RegularGridInterpolator
-from naima.models import ExponentialCutoffPowerLaw, Synchrotron, InverseCompton
+# from naima.models import ExponentialCutoffPowerLaw, Synchrotron, InverseCompton
 import time
-from joblib import Parallel, delayed
+# from joblib import Parallel, delayed
 
 # from cycler import cycler
 # from TransportShock import Denys_solver
-from scipy.optimize import curve_fit
+# from scipy.optimize import curve_fit
 import TransportShock
 import xarray as xr
 from pathlib import Path
