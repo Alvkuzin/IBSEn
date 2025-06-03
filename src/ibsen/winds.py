@@ -7,7 +7,7 @@ from astropy import constants as const
 
 
 from ibsen.get_obs_data import get_parameters
-from .orbit_utils import rotated_vector, mydot, mycross, n_from_v, absv
+from .utils import rotated_vector, mydot, mycross, n_from_v, absv
 from ibsen.orbit import Orbit
 
 

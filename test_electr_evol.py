@@ -1,6 +1,7 @@
 # main.py
 import matplotlib.pyplot as plt
 import matplotlib
+from matplotlib import animation
 from matplotlib.animation import FuncAnimation
 from matplotlib.collections import LineCollection
 from matplotlib.colors import ListedColormap, Normalize
@@ -28,6 +29,12 @@ star with the intrabinary shock, which depends on the winds.
 
 def plot_with_gradient(fig, ax, xdata, ydata, some_param, colorbar=False, lw=2,
                        ls='-', colorbar_label='grad', minimum=None, maximum=None):
+    """
+    to draw the plot (xdata, ydata) on the axis ax with color along the curve
+    marking some_param. The color changes from blue to red as some_param increases.
+    You may provide your own min and max values for some_param:
+    minimum and maximum, then the color will be scaled according to them.
+    """
     # Prepare line segments
     points = np.array([xdata, ydata]).T.reshape(-1, 1, 2)
     segments = np.concatenate([points[:-1], points[1:]], axis=1)
@@ -55,34 +62,60 @@ def plot_with_gradient(fig, ax, xdata, ydata, some_param, colorbar=False, lw=2,
 
 DAY = 86400.
 
-gamma = 4.15
-s_max = 1.
-# s_max = 'bow'
-
-nu_los = 2.3
+# nu_los = 2.3
 # nu_los = 0
+
+
+# nu_true=nu_los
+
+### ----------------------------------------------------------------------- ###
+### ----------------------------------------------------------------------- ###
+gamma = 2.15 # max bulk motion gamma at ibs
+s_max = 1. # where to cut the ibs
+# s_max = 'bow'
 
 alpha_deg = -8.
 incl_deg = 25.
-# nu_true=nu_los
+
+to_show = 'near_per'   ### for now, no other options
+# to_show = 'whole'
+
 sys_name = 'psrb'
-# sys_name = 'circ'
+# sys_name = 'rb'
+
+f_d = 50 # disk
+# f_d = 0 # no disk
+# f_d = 1e3 # super strong disk
+
+f_p = 0.01
+
+delta = 0.02 # relative half-thickness of the disk (at r=Ropt)
+
+
+### ----------------------------------------------------------------------- ###
+### ----------------------------------------------------------------------- ###
 
 # beta = 0.01
 
 orb = Orbit(sys_name = sys_name, n=1000)
+
+nu_los = orb.nu_los
+
 winds = Winds(orbit=orb, sys_name = sys_name, alpha=alpha_deg/180*pi, incl=incl_deg*pi/180,
-              f_d=50, f_p=0.01, delta=0.02, np_disk=3, rad_prof='broken_pl',
+              f_d=f_d, f_p=f_p, delta=delta, np_disk=3, rad_prof='broken_pl',
               r_trunk=None)
 
-# calc the map of the disk log(pressure) for visualising
-# rs = np.linspace(0.01, 3, 105)
-# phis = np.linspace(0, 2*pi-1e-3, 103)
-# rr, phiphi = np.meshgrid(rs, phis, indexing='ij')
-# XX = rr * cos(phiphi)
-# YY = rr * sin(phiphi)
-x_forp = np.linspace(-5.13e13, 6.1e13, 301)
-y_forp = np.linspace(-8.5e13, 9.4e13, 305)
+### ----------------------------------------------------------------------- ###
+####  ---- calc the map of the disk log(pressure) for visualising -------- ####
+### ----------------------------------------------------------------------- ###
+
+if to_show=='whole':
+    x_forp = np.linspace(-orb.a*2, orb.a*2, 301)
+    y_forp = np.linspace(-orb.b*2, orb.b*2, 305)
+if to_show=='near_per':
+    x_forp = np.linspace(-5.13e13, 6.1e13, 301)
+    y_forp = np.linspace(-8.5e13, 9.4e13, 305)
+    
 XX, YY = np.meshgrid(x_forp, y_forp, indexing='ij')
 disk_ps = np.zeros((x_forp.size, y_forp.size))
 for ix in range(x_forp.size):
@@ -112,7 +145,6 @@ t1, t2 = winds.times_of_disk_passage
 print(t1/DAY, t2/DAY)
 vec_disk1, vec_disk2 = winds.vectors_of_disk_passage
 
-# ibs = IBS(beta=beta, gamma_max=gamma, s_max=s_max, s_max_g=4, n=25, one_horn=False,)
 orb_x, orb_y = orb.xtab, orb.ytab
 
 fps = 30
@@ -121,11 +153,13 @@ num_frames = int(duration * fps)
 interval = 1000 / fps  # in milliseconds
 fig, ax = plt.subplots(nrows=2)
 
+if to_show=='whole':
+    tanim = np.linspace(-orb.T/2, orb.T/2, num_frames) 
+if to_show=='near_per':
+    tanim = np.linspace(-40, 40, num_frames) * DAY    
 
-tanim = np.linspace(-40, 40, num_frames) * DAY
 # tanim = np.linspace(-40, 110, num_frames) * DAY
 # tanim = np.linspace(-200, 110, num_frames) * DAY
-# tanim = np.linspace(-orb.T/2, orb.T/2, num_frames) 
 
 
 
@@ -142,11 +176,68 @@ def init():
     ax[0].plot([0, 3*orb.r_apoastr*cos(nu_los)], [0, 3*orb.r_apoastr*sin(nu_los)], color='g', ls='--')
     xx1, yy1, zz1 = vec_disk1
     xx2, yy2, zz2 = vec_disk2
-    ax[0].plot([xx1, xx2], [yy1, yy2], color='orange', ls=':')
+    ax[0].plot([xx1, xx2], [yy1, yy2], color='orange', ls='--')
     
     
     
     # ax1.plot(tanim/DAY, f_sim)
+    
+    
+### ---------------------- precalculate ibs and e ------------------------- ###
+
+Nibs = 47
+x_sh2d, y_sh2d, dopl2d, ntotinj2d, ntot2d, maxsed2d = [ np.zeros((tanim.size, 2*Nibs))*i for i in range(6) ]
+evals2d = []
+dNe_de_IBS_avg = []
+
+for i in range(tanim.size):
+    t = tanim[i]
+    ibs = IBS(beta=None, winds=winds, gamma_max=gamma, s_max=s_max, s_max_g=2., n=Nibs, one_horn=False,
+               t_to_calculate_beta_eff=t
+               )
+    r = orb.r(t=t)
+    rsp = r - winds.dist_se_1d(t)
+    els = ElectronsOnIBS(Bp_apex=3. * 1e12/rsp, ibs=ibs,
+                         cooling='stat_mimic',
+                         # cooling='adv',
+                         
+                         p_e=1.7) # toy values for B and u_g, scaled for r
+    
+    es = np.logspace(9, 14, 103)
+    S_, E_ = np.meshgrid(ibs.s * orb.r(t), es, indexing='ij')
+    inj = els.f_inject(S_, E_)
+    nu_tr = orb.true_an(t=t)
+    ibs_rot = ibs.rotate(phi=pi+nu_tr)
+    x_sh, y_sh = ibs_rot.x, ibs_rot.y
+    x_sh, y_sh = x_sh * r, y_sh * r
+    x_sh += r * cos(nu_tr)
+    y_sh += r * sin(nu_tr)
+    dopls = ibs.dopl(nu_true = nu_tr)
+    x_sh2d[i, :] = x_sh
+    y_sh2d[i, :] = y_sh
+    dopl2d[i, :] = dopls
+    ntotinj2d[i, :] = trapezoid(inj, es, axis=1)
+    
+    dNe_de_IBS, e_vals = els.calculate(to_return=True)
+    ntot2d[i, :] = trapezoid(dNe_de_IBS, e_vals, axis=1)
+    # evals2d[i, :] = e_vals
+    evals2d.append(e_vals)
+    # dNe_de_IBS_3d.append(dNe_de_IBS)
+    dNe_de_IBS_avg.append( trapezoid(dNe_de_IBS[Nibs:2*Nibs-1, :], ibs.s[Nibs:2*Nibs-1], axis=0) / np.max(ibs.s) )
+    # dNe_de_IBS_avg.append( -trapezoid(dNe_de_IBS[:Nibs-1, :], ibs.s[:Nibs-1], axis=0) / np.max(ibs.s) )
+    
+    # dNe_de_IBS_avg.append( dNe_de_IBS[Nibs-1, :])
+    
+    maxsed2d[i, :] = np.array([
+        e_vals[np.argmax(dNe_de_IBS[i_s, :] *e_vals**2)]
+        for i_s in range(x_sh.size)
+        ])
+    
+    
+    
+    
+evals2d = np.array(evals2d) 
+dNe_de_IBS_avg = np.array(dNe_de_IBS_avg)
 
 def update(i):
     """Draw the i-th frame."""
@@ -160,52 +251,36 @@ def update(i):
     t = tanim[i]
     ax[0].set_title(t/orb.T)
     x, y, z = orb.vector_sp(t=t)
-    nu_tr = orb.true_an(t=t)
+    # nu_tr = orb.true_an(t=t)
     ax[0].scatter(x, y, c='r')
     ax[0].plot([0, 4*x], [0, 4*y], c='r', ls='--')
-    # ibs = IBS(beta=betas_eff[i], gamma_max=gamma, s_max=s_max, s_max_g=2., n=250, one_horn=False,
-    #            t_to_calculate_beta_eff=t
-    #           )
-    ibs = IBS(beta=None, winds=winds, gamma_max=gamma, s_max=s_max, s_max_g=2., n=51, one_horn=False,
-               t_to_calculate_beta_eff=t
-               )
-    
-    els = ElectronsOnIBS(Bp_apex=1., u_g_apex=1., ibs=ibs, to_cut_theta=False, to_inject_theta='3d')
-    es = np.logspace(9, 14, 103)
-    S_, E_ = np.meshgrid(ibs.s * orb.r(t), es, indexing='ij')
-    inj = els.f_inject(S_, E_)
 
-    ibs_rot = ibs.rotate(phi=pi+nu_tr)
-    x_sh, y_sh = ibs_rot.x, ibs_rot.y
-    r = orb.r(t=t)
-    x_sh, y_sh = x_sh * r, y_sh * r
-    x_sh += r * cos(nu_tr)
-    y_sh += r * sin(nu_tr)
-    dopls = ibs.dopl(nu_true = nu_tr, nu_los=nu_los)
+    x_sh, y_sh, dopls, ntot, maxsed = x_sh2d[i], y_sh2d[i], dopl2d[i], ntot2d[i], maxsed2d[i]
     
-    # colored_param = dopls
-    colored_param = inj[:, 50] 
-    # colored_param = inj
-    
-    
-    plot_with_gradient(fig, ax[0], xdata=x_sh, ydata=y_sh, some_param=colored_param)
-    
-    Ntot = trapezoid(inj, es, axis=1)
-    plot_with_gradient(fig, ax[1], xdata=ibs_rot.s, ydata=Ntot,
-                       some_param=np.array([np.argmax(inj[is_, :]) for is_ in range(ibs.s.size) ]))
-    
-    
-    # ax.plot(ibs_rot.theta, dopls)
-    
-    
-    # ibs = IBS(beta=1, gamma_max=gamma, s_max=s_max, s_max_g=4, n=25, one_horn=False,
-    #           winds = winds, t_to_calculate_beta_eff=t
-    #           )
-    # ibs_real = ibs.rescale_to_position()
-    # plot_with_gradient(fig, ax, xdata=ibs_real.x, ydata=ibs_real.y, 
-    #                    some_param=ibs_real.real_dopl(nu_los))
+    colored_param = np.log10(dopls)
 
-    # ax.plot(x_sh, y_sh)
+    plot_with_gradient(fig, ax[0], xdata=x_sh, ydata=y_sh, 
+                       some_param=colored_param,
+                       minimum=np.min(np.log10(dopl2d)),
+                       maximum=np.max(np.log10(dopl2d)))
+    
+    ### for showing the number of particles VS s with color = e_max(sed)
+    # plot_with_gradient(fig, ax[1], xdata=ibs_rot.s, ydata=ntot, some_param=np.log10(maxsed))
+    # ax[1].set_ylim(0, np.max(ntot2d))
+    
+    # evals, dNe_de_avg = evals2d[i], 
+    
+    sed_e_here = evals2d[i]**2 * dNe_de_IBS_avg[i]
+    ax[1].plot(evals2d[i], sed_e_here)
+    ax[1].set_xscale('log')
+    ax[1].set_yscale('log')
+    ax[1].set_ylim(np.max(dNe_de_IBS_avg*evals2d[i]**2)/1e3, 
+                   np.max(dNe_de_IBS_avg*evals2d[i]**2))
+    ax[1].set_xlim(1e9, 5.1e14)
+    
+    
+    
+
     
     # ax.set_xlim(-orb.a*1.2, orb.a/2)
     # ax.set_ylim(-orb.b*1.3, orb.b*1.3)
@@ -214,18 +289,27 @@ def update(i):
     # ax.set_xlim(-orb.r_apoastr*1.2, orb.a*1.2)
     # ax.set_ylim(-orb.b*1.2, orb.b*1.2
     
-    # ax.set_xlim(-orb.a*2, orb.a*2)
-    # ax.set_ylim(-orb.b*2, orb.b*2)
+    if to_show=='whole':
+        ax[0].set_xlim(-orb.a*2, orb.a*2)
+        ax[0].set_ylim(-orb.b*2, orb.b*2)
     
-    ax[0].set_xlim(-0.5e14, 0.3e14)
-    ax[0].set_ylim(-orb.b*1.2, orb.b*1.2)
+    if to_show == 'near_per':
+        ax[0].set_xlim(-0.5e14, 0.3e14)
+        ax[0].set_ylim(-orb.b*1.2, orb.b*1.2)
     
 
-ani = FuncAnimation(
-    fig, update,
-    frames=num_frames,
-    interval=interval,
-)
+# ani = FuncAnimation(
+#     fig, update,
+#     frames=num_frames,
+#     interval=interval,
+# )
+
+### To save the animation using Pillow as a gif
+# writer = animation.PillowWriter(fps=30,
+#                                 metadata=dict(artist='Me'),
+#                                 bitrate=1800)
+# ani.save('anim_psrb.gif', writer=writer)
+
 # 
 
 #### ----------------------- draw one frame ----------------------------- #####

@@ -16,6 +16,7 @@ from pathlib import Path
 from ibsen.ibs import IBS
 
 
+
 G = float(const.G.cgs.value)
 K_BOLTZ = float(const.k_B.cgs.value)
 HBAR = float(const.hbar.cgs.value)
@@ -35,13 +36,13 @@ DAY = 86400.
 sed_unit = u.erg / u.s / u.cm**2
 RAD_IN_DEG = pi / 180.0
 
-def SyncLoss(ee, B):
+def syn_loss(ee, B):
     '''Synchrotron losses, dE/dt. Bis in G, electron energy -- eV '''
     # return -4e5 * B**2 * (ee/1e10)**2 #eV/s ???
     return -2.5e5 * B**2 * (ee/1e10)**2 #eV/s ???
 
-def Gma(s, sm, G_term):
-    return 1 + (G_term - 1) * s / sm
+# def Gma(s, sm, G_term):
+    # return 1 + (G_term - 1) * s / sm
 
 def gfunc(x, a = -0.362, b = 0.826, alpha = 0.682, beta = 1.281): #from 1310.7971
     return (1 +  (a * x**alpha) / (1 + b * x**beta) )**(-1)
@@ -57,7 +58,7 @@ def Giso(u_, c = 4.62):
 def Giso_full(x):
     return Giso(x, 5.68) * gfunc(x)
 
-def ICLoss(Ee, Topt, Ropt, dist): # Ee in eV !!!!!!
+def ic_loss(Ee, Topt, Ropt, dist): # Ee in eV !!!!!!
     kappa = (Ropt / 2 / dist)**2
     T_me = (K_BOLTZ * Topt / MC2E)
     Ee_me = Ee  / ERG_TO_EV / MC2E
@@ -80,11 +81,11 @@ def total_loss(ee, B, Topt, Ropt, dist, eta_flow, eta_syn, eta_IC):
     # if isinstance(eta_flow, np.ndarray)
     eta_flow_max = np.max(np.asarray(eta_flow))
     if eta_flow_max < 1e10:
-        return eta_syn * SyncLoss(ee, B) + eta_IC * ICLoss(ee, Topt, Ropt, dist) - ee / t_adiab(dist, eta_flow)
+        return eta_syn * syn_loss(ee, B) + eta_IC * ic_loss(ee, Topt, Ropt, dist) - ee / t_adiab(dist, eta_flow)
     else:
-        return eta_syn * SyncLoss(ee, B) + eta_IC * ICLoss(ee, Topt, Ropt, dist)
+        return eta_syn * syn_loss(ee, B) + eta_IC * ic_loss(ee, Topt, Ropt, dist)
     
-def Stat_distr(Es, Qs, Edots):
+def stat_distr(Es, Qs, Edots):
     """
     calculates the stationary spectrum of electrons: the solution of
     d(n * Edot)/dE = Q(E), which is
@@ -114,7 +115,7 @@ def Stat_distr(Es, Qs, Edots):
     return 1 / np.abs(Edots) * integral_here
 
 
-def Stat_distr_with_leak(Es, Qs, Edots, Ts, mode = 'ivp'):
+def stat_distr_with_leak(Es, Qs, Edots, Ts, mode = 'ivp'):
     """  
         calculates the stationary spectrum with leakage: the solution of
         d(n * Edot)/dE + n/T(E) = Q(E), which is
@@ -181,26 +182,28 @@ def Stat_distr_with_leak(Es, Qs, Edots, Ts, mode = 'ivp'):
         return n_analytic
     
     
-def evolved_e_advection(r_SP, ss, edot_func, f_inject_func,
+def evolved_e_advection(s_, edot_func, f_inject_func,
               tot_loss_args, f_args, vel_func, v_args, emin = 1e9, 
-              emax = 5.1e14):    
+              emax = 5.1e14):  
+        # s -- in [cm] !!!
+        
         # we calculate it on e-grid emin / extend_d < e <  emax * extend_u
         # and hope that zero boundary conditions will be not important
         
         # extend_u = 10; extend_d = 10; 
-        extend_u = 3; extend_d = 10; 
-        Ns, Ne = 901, 903
+        extend_u = 2; extend_d = 10; 
+        Ns, Ne = 201, 303 #!!!
         # Ns, Ne = 201, 203 
         Ne_real = int( Ne * np.log10(extend_u * emax / extend_d / emin) / np.log10(emax / emin) )
         e_vals_sample = np.logspace(np.log10(emin / extend_d), np.log10(emax * extend_u), Ne_real)
         
         # now we'll look where the f_inject is not negligible and only there
         # will we solve the equation 
-        ssmesh, emesh = np.meshgrid(ss * r_SP, e_vals_sample, indexing='ij')
+        ssmesh, emesh = np.meshgrid(s_, e_vals_sample, indexing='ij')
         f_sample = f_inject_func(ssmesh, emesh, *f_args)
-        f_sample_sed = f_sample[int(ss.size / 2.)] * e_vals_sample**2
+        f_sample_sed = f_sample[int(s_.size / 2.)] * e_vals_sample**2
         e_where_good = np.where(f_sample_sed > np.max(f_sample_sed) / 1e6 )
-        s_vals = np.linspace(0, np.max(ss), Ns) * r_SP
+        s_vals = np.linspace(0, np.max(s_), Ns)
         e_vals = e_vals_sample[e_where_good]
         dNe_de = solve_for_n(v_func = vel_func, edot_func = edot_func,
                             f_func = f_inject_func,
@@ -208,7 +211,7 @@ def evolved_e_advection(r_SP, ss, edot_func, f_inject_func,
                             edot_args = tot_loss_args,
                             f_args = f_args,
                             s_grid = s_vals, e_grid = e_vals, 
-                            method = 'FDM_cons', bound = 'dir')
+                            method = 'FDM_cons', bound = 'neun')
         # #### Only leave the part of the solution between emin < e < emax #!!!
         ind_int = np.logical_and(e_vals <= emax, e_vals >= emin)
         e_vals = e_vals[ind_int]
@@ -216,10 +219,84 @@ def evolved_e_advection(r_SP, ss, edot_func, f_inject_func,
         
         #### and evaluate the values on the IBS grid previously obtained:dNe_de_IBS, e_vals
         interp_x = interp1d(s_vals, dNe_de, axis=0, kind='linear', fill_value='extrapolate')
-        dNe_de_IBS = interp_x(ss * r_SP)
+        dNe_de_IBS = interp_x(s_)
         dNe_de_IBS[dNe_de_IBS <= 0] = np.min(dNe_de_IBS[dNe_de_IBS>0]) / 3.14
         
         return dNe_de_IBS, e_vals
+    
+def evolved_e(cooling, r_SP, ss, rs, thetas, edot_func, f_inject_func,
+              tot_loss_args, f_args, vel_func = None, v_args = None, emin = 1e9, 
+              emax = 5.1e14, t_func = None, t_args = None, eta_flow_func = None, 
+              eta_flow_args = None):
+    if cooling not in ('no', 'stat_apex', 'stat_ibs', 'stat_mimic', 'leak_apex', 'leak_ibs',
+                       'leak_mimic', 'adv'):
+        print('cooling should be one of these options:')
+        print('no', 'stat_apex', 'stat_ibs','stat_mimic', 'leak_apex', 'leak_ibs',
+                           'leak_mimic', 'adv')
+        print('setting cooling = \'no\' ')
+        cooling = 'no'
+        
+    if cooling == 'no':
+        # For each s, --> injected distribution
+        e_vals = np.logspace(np.log10(emin), np.log10(emax), 977)
+        smesh, emesh = np.meshgrid(ss*r_SP, e_vals, indexing = 'ij')
+        dNe_de_IBS = f_inject_func(smesh, emesh, *f_args)
+        
+    if cooling in ('stat_apex', 'stat_ibs', 'stat_mimic'):
+        # For each s, --> stationary distribution
+        e_vals = np.logspace(np.log10(emin), np.log10(emax), 979)
+        smesh, emesh = np.meshgrid(ss*r_SP, e_vals, indexing = 'ij')
+        if cooling == 'stat_mimic':
+            (B0, Topt, Ropt, r_SE, eta_fl, eta_sy, eta_ic, ss, rs, thetas, r_SP) = tot_loss_args
+            # if eta_flow_func == None:
+            #     eta_flow_func = eta_flow_mimic
+            eta_fl_new = eta_flow_func(smesh, *eta_flow_args)
+            tot_loss_args = (B0, Topt, Ropt, r_SE, eta_fl_new * eta_fl,
+                                 eta_sy, eta_ic, ss, rs, thetas, r_SP)    
+        f_inj_se = f_inject_func(smesh, emesh, *f_args)
+        edots_se = edot_func(smesh, emesh, *tot_loss_args)
+        dNe_de_IBS = np.zeros((ss.size, e_vals.size))
+                
+            # edots_se = edot_func(smesh, emesh, *tot_loss_args_new)
+        for i_s in range(ss.size):
+            if cooling == 'stat_apex':
+                f_inj_av = trapezoid(f_inj_se, ss, axis=0) / np.max(ss)
+                dNe_de_IBS[i_s, :] = stat_distr(e_vals, f_inj_av, edots_se[0, :])
+            if cooling in ('stat_ibs', 'stat_mimic'):
+                dNe_de_IBS[i_s, :] = stat_distr(e_vals, f_inj_se[i_s, :], edots_se[i_s, :])
+
+    if cooling in ('leak_apex', 'leak_ibs', 'leak_mimic'):
+        e_vals = np.logspace(np.log10(emin), np.log10(emax), 987)
+        smesh, emesh = np.meshgrid(ss*r_SP, e_vals, indexing = 'ij')
+        f_inj_se = f_inject_func(smesh, emesh, *f_args)
+        edots_se = edot_func(smesh, emesh, *tot_loss_args)
+        dNe_de_IBS = np.zeros((ss.size, e_vals.size))
+        ts_leak = t_func(smesh, emesh, *t_args)
+        # f_inj_integr = trapezoid(f_inj_se, e_vals, axis=1)
+        # Ntot_s = analyt_adv_Ntot_tomimic(smesh, emesh, f_inj_func = f_inject_func,
+        #             f_inj_args = f_args, dorb=r_SP, s_max_g=4, Gamma=Gamma)
+
+        for i_s in range(ss.size):
+            if cooling == 'leak_ibs':
+                # dNe_de_IBS[i_s, :] = Stat_distr_with_leak_ivp(e  = e_vals,
+                    # q_func, edot_func, T_func, q_args, edot_args, T_args)
+                dNe_de_IBS[i_s, :] = stat_distr_with_leak(Es = e_vals,
+                    Qs = f_inj_se[i_s, :], Edots = edots_se[i_s, :], Ts = ts_leak[i_s, :],
+                    mode = 'analyt')
+            if cooling == 'leak_apex':
+                f_inj_av = trapezoid(f_inj_se, ss, axis=0) / np.max(ss)
+                dNe_de_IBS[i_s, :] = stat_distr_with_leak(Es = e_vals,
+                    Qs = f_inj_av, Edots = edots_se[0, :], Ts = ts_leak[0, :])
+            if cooling == 'leak_mimic':
+                dNe_de_IBS[i_s, :] = stat_distr_with_leak(Es = e_vals,
+                    Qs = f_inj_se[i_s, :], Edots = edots_se[i_s, :], 
+                    Ts = ts_leak[i_s, :], mode = 'analyt') 
+        
+    if cooling == 'adv':
+        dNe_de_IBS, e_vals = evolved_e_advection(r_SP, ss, edot_func,
+                    f_inject_func, tot_loss_args, f_args, vel_func, v_args)
+            
+    return dNe_de_IBS, e_vals
     
 class ElectronsOnIBS:
     """
@@ -266,7 +343,7 @@ class ElectronsOnIBS:
         see above. The default is pi/2.
     
 """
-    def __init__(self, Bp_apex, u_g_apex, ibs: IBS,  to_inject_e = 'ecpl',
+    def __init__(self, Bp_apex, ibs: IBS, cooling=None, to_inject_e = 'ecpl',
                  to_inject_theta = '3d', ecut = 1.e12, p_e = 2., norm_e = 1.,
                  Bs_apex=0., eta_a = 1.,
                  eta_syn = 1., eta_ic = 1.,
@@ -284,11 +361,16 @@ class ElectronsOnIBS:
         """
         
         self.ibs = ibs # must contain ibs.winds 
+        self.cooling = cooling
+        self.allowed_coolings = ('no', 
+                                 'stat_apex', 'stat_ibs', 'stat_mimic',
+                                 # 'leak_apex', 'leak_ibs', 'leak_mimic',
+                                 'adv')
         
         self.Bp_apex = Bp_apex # pulsar magn field in apex
         self.Bs_apex = Bs_apex # opt star magn field in apex
         self.B_apex = Bp_apex + Bs_apex # total magn field in apex
-        self.u_g_apex = u_g_apex # photon energy density in apex
+        # self.u_g_apex = u_g_apex # photon energy density in apex
         
         # self.r_sp = r_sp # orbital separation (for rescaling ibs)
         self.eta_a = eta_a # to scale adiabatic time
@@ -309,6 +391,10 @@ class ElectronsOnIBS:
         
         
         self._check_and_set_ibs() #checks if there's right ibs and sets r_sp
+        self._set_b_and_u_ibs() # calculates dimensionless b_ and u_ from values in apex on entire ibs
+        
+        self.dNe_de_IBS = None
+        self.e_vals = None
         
         
         
@@ -322,9 +408,30 @@ class ElectronsOnIBS:
             self.r_sp = self.ibs.winds.orbit.r(self.ibs.t_forbeta)
         except:
             raise ValueError(""""Your ibs:IBS should contain ibs.winds""")
+                             
+    def b_and_u_s(self, s_):
+        r_to_p = self.ibs.s_interp(s_ = s_ / self.r_sp, what = 'r') # dimless
+        r_to_s = self.ibs.s_interp(s_ = s_ / self.r_sp, what = 'r1') # dimless
+        r_sa = (1. - self.ibs.x_apex)
+        B_on_shock = (self.Bp_apex * self.ibs.x_apex / r_to_p + 
+                      self.Bs_apex * r_sa / r_to_s)
+        u_g_on_shock = r_sa**2 / r_to_s**2
+        return B_on_shock / (self.B_apex), u_g_on_shock
+    
+    def u_g_density(self, r_from_s):      
+        factor = 2. * (1. - (1. - (self.ibs.winds.Ropt / r_from_s)**2)**0.5 )
+        u_dens = SIGMA_BOLTZ * self.ibs.winds.Topt**4 / C_LIGHT * factor
+        return u_dens
+    
+    def _set_b_and_u_ibs(self):
+        b_onibs, u_onibs = ElectronsOnIBS.b_and_u_s(self, s_ = self.ibs.s * self.r_sp)
+        self.u_g_apex = ElectronsOnIBS.u_g_density(self,
+                        r_from_s = (1. - self.ibs.x_apex) * self.r_sp)
+        self._b = b_onibs
+        self._u = u_onibs
 
     
-    def vel_func(self, s): # s --- in real units
+    def vel(self, s): # s --- in real units
         """
         Velocity of a bulk motion along the shock.    
     
@@ -350,38 +457,25 @@ class ElectronsOnIBS:
         return self.ibs.vel_from_g(gammas)
 
 
-    def edot(self, s, e): 
-        # s_t = s_table * dorb
-        # r_t = r_table * dorb
-        # th_spl = interp1d(x = s_t, y = th_table, fill_value='extrapolate')
-        # r_spl = interp1d(x = s_t, y = r_t, fill_value='extrapolate')
-        # th_interp = th_spl(s)
-        # r_toP = r_spl(s)
-        # r_sp = self.ibs.winds.orbit.r()
-        # th_interp = self.ibs.s_interp(s_ = s / r_sp, what = 'theta')
-        r_to_p = self.ibs.s_interp(s_ = s / self.r_sp, what = 'r') # dimless
-        r_to_s = self.ibs.s_interp(s_ = s / self.r_sp, what = 'r1') # dimless
-        r_sa = (1. - self.x_apex)
-        # r_toS = (dorb**2 + r_toP**2 - 2 * dorb * r_toP * cos(th_interp))**0.5
-        # B_on_shock = B * np.min(r_toP) / r_toP #TODO: now it's assumed the field is only from the pulsar... should fix this in future
-        B_on_shock = (self.Bp_apex * self.x_apex / r_to_p + 
-                      self.Bs_apex * r_sa / r_to_s)
-        eta_ic_on_shock = self.eta_ic * r_sa**2 / r_to_s**2
-        # eta_IC_on_shock = eta_IC * (np.min(r_toS) / r_toS)**2 # can i do that??????
-        return total_loss(ee = e, 
-                          B = B_on_shock, 
+    def edot(self, s_, e_): 
+        # r_to_p = self.ibs.s_interp(s_ = s_ / self.r_sp, what = 'r') # dimless
+        # r_to_s = self.ibs.s_interp(s_ = s_ / self.r_sp, what = 'r1') # dimless
+        r_sa = (1. - self.ibs.x_apex)
+        # B_on_shock = (self.Bp_apex * self.ibs.x_apex / r_to_p + 
+        #               self.Bs_apex * r_sa / r_to_s)
+        # eta_ic_on_shock = self.eta_ic * r_sa**2 / r_to_s**2
+        _b_s, _u_s = ElectronsOnIBS.b_and_u_s(self, s_ = s_)
+        return total_loss(ee = e_, 
+                          B = _b_s * self.B_apex, 
                           Topt = self.ibs.winds.Topt,
                           Ropt=self.ibs.winds.Ropt,
                           dist = self.r_sp * r_sa, 
                           eta_flow = self.eta_a, 
                           eta_syn = self.eta_syn,
-                          eta_IC = eta_ic_on_shock)
+                          eta_IC = self.eta_ic * _u_s)
 
     def f_inject(self, s_, e_): 
-        # s_arr = np.asanyarray(s)
-        # e_arr = np.asanyarray(e)
         thetas_here = self.ibs.s_interp(s_  = s_ / self.r_sp, what = 'theta')
-        # thetas_here = np.interp(s_arr, s_table * dorb, th_table)
         if self.to_inject_theta == '2d':
             thetas_part = np.zeros(thetas_here.shape) + 1. # uniform along theta
         elif self.to_inject_theta == '3d':
@@ -407,6 +501,139 @@ class ElectronsOnIBS:
             result = np.where(mask, 0.0, result)
         # return sin(thetas_here)
         return result
+    
+    # def analyt_adv_Ntot_tomimic(self, s, e): 
+    #     # s and e -- 2d meshgrid arrays, but the function returns 1d-array 
+    #     _ga = self.ibs.gamma_max - 1
+    #     # f_ = f_inj_func(s, e, *f_inj_args)
+    #     f_ = ElectronsOnIBS.f_inject(self, s_=s, e_=e)
+    #     f_integrated = trapezoid(f_, e, axis=1)
+    #     x__ = _ga*s[:, 0] / self.ibs.s_max_g / self.r_sp
+    #     return f_integrated * self.r_sp / C_LIGHT * self.s_max_g/_ga * (2 * x__ + x__**2)**0.5
+    
+    def analyt_adv_Ntot(self, s_1d, f_inj_integrated):
+        ### s [cm] and f_inj_integrated --- 1-dimensional
+        gammas = self.ibs.gma(s = s_1d)
+        betas = self.ibs.beta_from_g(gammas)
+        res = cumulative_trapezoid(f_inj_integrated / betas, s_1d, initial=0) / C_LIGHT
+        return res
+    
+    def t_leak_test(self, s,e):
+        f_ = ElectronsOnIBS.f_inject(self, s_=s, e_=e)
+        f_integrated = trapezoid(f_, e, axis=1)
+        _s_1d = s[:, 0]
+        Ntot = ElectronsOnIBS.analyt_adv_Ntot(self, s_1D = _s_1d, f_inj_integrated = f_integrated)
+        gammas = self.ibs.gma(s = _s_1d)
+        betas = self.ibs.beta_from_g(gammas)
+        res = 1. /C_LIGHT * Ntot / np.gradient(Ntot, _s_1d, edge_order=2)/betas
+        return res[:,None] * s / (1e-17 + s)
+    
+    def eta_flow_mimic(self, s):
+        """eta_flow(s) for testing. Defined so that eta_flow(s)*dorb/c_light =
+        = time of the buulk flow from apex to s = s.
+        s in [cm], Gamma is a terminal lorentz-factor, s_max_g [dimless] is s at 
+        which Gamma is reached, dorb is an
+        orbital separation"""
+        _ga = self.ibs.gamma_max - 1.
+        _x = _ga * s / self.ibs.s_max_g / self.r_sp
+        return self.ibs.s_max_g / _ga * ( (1. + _x)**2 - 1.)**0.5
+    
+    def calculate(self, to_set_onto_ibs=True, to_return=False):
+        ### we use the symmetry of ibs: calculate dNe_de only for 1 horn
+        if self.ibs.one_horn:
+            s_1d_dim = self.ibs.s * self.r_sp
+        if not self.ibs.one_horn:
+            s_1d_dim = self.ibs.s[self.ibs.n : 2*self.ibs.n] * self.r_sp
+        
+        if self.cooling not in self.allowed_coolings:
+            print('cooling should be one of these options:')
+            print(self.allowed_coolings)
+            print('setting cooling = \'no\'... ')
+            self.cooling = 'no'
+            
+        if self.cooling == 'no':
+            # For each s, --> injected distribution
+            e_vals = np.logspace(np.log10(self.emin), np.log10(self.emax), 977)
+            s2d, e2d = np.meshgrid(s_1d_dim, e_vals, indexing = 'ij')
+            dNe_de_IBS = ElectronsOnIBS.f_inject(self, s2d, e2d)
+            
+        if self.cooling in ('stat_apex', 'stat_ibs', 'stat_mimic'):
+            # For each s, --> stationary distribution
+            e_vals = np.logspace(np.log10(self.emin), np.log10(self.emax), 979)
+            smesh, emesh = np.meshgrid(s_1d_dim, e_vals, indexing = 'ij')
+            if self.cooling == 'stat_mimic':
+                eta_fl_new = ElectronsOnIBS.eta_flow_mimic(self, smesh)
+                self.eta_a = eta_fl_new
+    
+            f_inj_se = ElectronsOnIBS.f_inject(self, smesh, emesh)
+            edots_se = ElectronsOnIBS.edot(self, smesh, emesh)
+            dNe_de_IBS = np.zeros((s_1d_dim.size, e_vals.size))
+                    
+            for i_s in range(s_1d_dim.size):
+                if self.cooling == 'stat_apex':
+                    f_inj_av = trapezoid(f_inj_se, s_1d_dim, axis=0) / np.max(s_1d_dim)
+                    dNe_de_IBS[i_s, :] = stat_distr(e_vals, f_inj_av, edots_se[0, :])
+                if self.cooling in ('stat_ibs', 'stat_mimic'):
+                    dNe_de_IBS[i_s, :] = stat_distr(e_vals, f_inj_se[i_s, :], edots_se[i_s, :])
+
+        # if self.cooling in ('leak_apex', 'leak_ibs', 'leak_mimic'):
+        #     e_vals = np.logspace(np.log10(emin), np.log10(emax), 987)
+        #     smesh, emesh = np.meshgrid(ss*r_SP, e_vals, indexing = 'ij')
+        #     f_inj_se = f_inject_func(smesh, emesh, *f_args)
+        #     edots_se = edot_func(smesh, emesh, *tot_loss_args)
+        #     dNe_de_IBS = np.zeros((ss.size, e_vals.size))
+        #     ts_leak = t_func(smesh, emesh, *t_args)
+        #     # f_inj_integr = trapezoid(f_inj_se, e_vals, axis=1)
+        #     # Ntot_s = analyt_adv_Ntot_tomimic(smesh, emesh, f_inj_func = f_inject_func,
+        #     #             f_inj_args = f_args, dorb=r_SP, s_max_g=4, Gamma=Gamma)
+
+        #     for i_s in range(ss.size):
+        #         if self.cooling == 'leak_ibs':
+        #             # dNe_de_IBS[i_s, :] = Stat_distr_with_leak_ivp(e  = e_vals,
+        #                 # q_func, edot_func, T_func, q_args, edot_args, T_args)
+        #             dNe_de_IBS[i_s, :] = stat_distr_with_leak(Es = e_vals,
+        #                 Qs = f_inj_se[i_s, :], Edots = edots_se[i_s, :], Ts = ts_leak[i_s, :],
+        #                 mode = 'analyt')
+        #         if self.cooling == 'leak_apex':
+        #             f_inj_av = trapezoid(f_inj_se, ss, axis=0) / np.max(ss)
+        #             dNe_de_IBS[i_s, :] = stat_distr_with_leak(Es = e_vals,
+        #                 Qs = f_inj_av, Edots = edots_se[0, :], Ts = ts_leak[0, :])
+        #         if self.cooling == 'leak_mimic':
+        #             dNe_de_IBS[i_s, :] = stat_distr_with_leak(Es = e_vals,
+        #                 Qs = f_inj_se[i_s, :], Edots = edots_se[i_s, :], 
+        #                 Ts = ts_leak[i_s, :], mode = 'analyt') 
+            
+        if self.cooling == 'adv':
+            edot_func = lambda s_, e_: ElectronsOnIBS.edot(self, s_, e_)
+            f_inject_func = lambda s_, e_: ElectronsOnIBS.f_inject(self, s_, e_)
+            vel_func = lambda s_: ElectronsOnIBS.vel(self, s=s_)
+            
+            dNe_de_IBS, e_vals = evolved_e_advection(s_ = s_1d_dim,
+                edot_func=edot_func, f_inject_func=f_inject_func, 
+                tot_loss_args=(), f_args=(), vel_func=vel_func, v_args=())
+            
+        # if to_lor_trans, we transfer the spectrum to the co-moving
+        # reference frames for each s on ibs
+        # if to_lor_trans:
+            # dNe_de_IBS_transfered = np.zeros(dNe_de_IBS.shape)
+            # for i_s in range(s_1d_dim.size):
+                # dNe_de_IBS_transfered[i_s, :] = lor_trans_ug_e_spec(E_lab = e_vals, dN_dE_lab, gamma)
+                
+        # if there were 2 horns in ibs, we fill the 2nd horn with the values 
+        # from the 1st horn
+        if not self.ibs.one_horn:
+            dNe_de_IBS_2horns = np.zeros(((self.ibs.s).size, e_vals.size ))
+            dNe_de_IBS_2horns[:self.ibs.n, :] = dNe_de_IBS[::-1, :] # in reverse order from s=smax to ~0
+            dNe_de_IBS_2horns[self.ibs.n : 2*self.ibs.n, :] = dNe_de_IBS
+            dNe_de_IBS = dNe_de_IBS_2horns
+            
+        
+        if to_set_onto_ibs:
+            self.dNe_de_IBS = dNe_de_IBS
+            self.e_vals = e_vals
+            # print('dNe_de_IBS and e_vals are set')
+        if to_return:
+            return dNe_de_IBS, e_vals
     
     
     

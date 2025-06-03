@@ -186,33 +186,33 @@ def solveTranspFDM(a1, a2, Q, x_grid, y_grid,
         for j in range(Ny):
             k = idx(i, j)
             # Boundary: Dirichlet condition from Q_func or user
-            if i == Nx-1 or j == Ny-1:
+            if i == 0 or j == Ny-1 or j == 0:
                 rows.append(k); cols.append(k); data.append(1.0)
                 # b.append(Q(x_grid[i], y_grid[j], bc=True))
                 b.append(0)
                 continue
             if bound == 'dir':
-                if i == 0 or j == 0 :
+                if i == Nx-1:
                     rows.append(k); cols.append(k); data.append(1.0)
                     # b.append(Q(x_grid[i], y_grid[j], bc=True))
                     b.append(0)
                     continue
                 
             if bound == 'neun':
-                if i == 0:
+                if i == Nx-1:
                     # ∂u/∂x = 0 => (u[1,j] - u[0,j])=0
                     rows += [k, k]
-                    cols += [idx(1,j), k]
+                    cols += [idx(Nx-2,j), k]
                     data += [1.0, -1.0]
                     b.append(0.0)
                     continue
-                if j == 0:
-                    # ∂u/∂y = 0 => (u[i,1] - u[i,0])=0
-                    rows += [k, k]
-                    cols += [idx(i,1), k]
-                    data += [1.0, -1.0]
-                    b.append(0.0)
-                    continue
+                # if j == 0:
+                #     # ∂u/∂y = 0 => (u[i,1] - u[i,0])=0
+                #     rows += [k, k]
+                #     cols += [idx(i,1), k]
+                #     data += [1.0, -1.0]
+                #     b.append(0.0)
+                #     continue
  
                 
             a1_ij = A1[i, j]

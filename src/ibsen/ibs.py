@@ -6,8 +6,12 @@ from scipy.interpolate import interp1d
 from pathlib import Path
 import xarray as xr
 from .winds import Winds
+from .utils import lor_trans_b_iso, lor_trans_ug_iso, beta_from_g
+
+from astropy import constants as const
 
 C_LIGHT = 2.998e10
+SIGMA_BOLTZ = float(const.sigma_sb.cgs.value)
 
 ### --------------------- For shock front shape --------------------------- ###
 _here = Path(__file__).parent          # points to pulsar/
@@ -43,30 +47,25 @@ class IBS:
 
         self.calculate()
     
-        
-        
-        
-    # def modified_copy(self, **overrides):
-    #     kwargs = self._init_kwargs.copy()
-    #     kwargs.update(overrides)
-    #     return self.__class__(**kwargs)
     
-    @staticmethod    
-    def beta_from_g(g_vel):
-        if isinstance(g_vel, np.ndarray):
-            res = np.zeros_like(g_vel)
-            cond = (g_vel > 1.0) 
-            res[cond] = np.sqrt((g_vel[cond]-1.0) * (g_vel[cond]+1.0)) / g_vel[cond]
-        else:
-            if g_vel > 1.0:
-                res =  np.sqrt((g_vel-1.0) * (g_vel+1.0)) / g_vel
-            else:
-                res = 0.0
-        return res 
+    # @staticmethod    
+    # def beta_from_g(g_vel):
+    #     if isinstance(g_vel, np.ndarray):
+    #         res = np.zeros_like(g_vel)
+    #         cond = (g_vel > 1.0) 
+    #         res[cond] = np.sqrt((g_vel[cond]-1.0) * (g_vel[cond]+1.0)) / g_vel[cond]
+    #     else:
+    #         if g_vel > 1.0:
+    #             res =  np.sqrt((g_vel-1.0) * (g_vel+1.0)) / g_vel
+    #         else:
+    #             res = 0.0
+    #     return res 
     
     @staticmethod
     def vel_from_g(g_vel):
-        return C_LIGHT * IBS.beta_from_g(g_vel) 
+        return C_LIGHT * beta_from_g(g_vel) 
+    
+    
     
     def calculate(self):
         if self.winds is not None:
@@ -83,12 +82,9 @@ class IBS:
         self.tangent = tanp
         self.thetainf = theta_inf_
         self.x_apex = r_apex 
-        # self._init_kwargs=dict(beta=self.beta, gamma_max=self.gamma_max, s_max=self.s_max,
-        #                        s_max_g = self.s_max_g, n=self.n, one_horn=self.one_horn,
-        #                        winds=self.winds, x=self.x, y=self.y, theta=self.theta,
-        #                        r=self.r, s=self.s, theta1=self.theta1, r1=self.r1,
-        #                        tangent=self.tangent, thetainf=self.thetainf,
-        #                        x_apex=self.x_apex, t_forbeta=self.t_forbeta)
+        
+        # self.u_g_apex = IBS.u_g_density(self, r_from_s)
+        
 
 
 
@@ -96,12 +92,13 @@ class IBS:
         """
         Returns the interpolated value of 'what' (x, y, ...) at the coordinate 
         s_. Returned is the value for only one (upper) horn of the shock.
-        MIND THE DIMENTIONLESS! 
+        MIND THE DIMENSIONLESS! 
  
         Parameters
         ----------
         s_ : np.ndarray
             The arclength along the upper horn of the IBS to find the value at.
+            Dimensionless.
 
         Returns
         -------
@@ -135,7 +132,15 @@ class IBS:
     
     @property
     def beta_vel(self):
-        return IBS.beta_from_g(g_vel = self.g)
+        return beta_from_g(g_vel = self.g)
+    
+    def lor_trans_b_iso_on_ibs(self, B_iso):
+        return lor_trans_b_iso(B_iso=B_iso, gamma=self.g)
+    
+    def lor_trans_ug_iso_on_ibs(self, ug_iso):
+        return lor_trans_ug_iso(ug_iso=ug_iso, gamma=self.g)
+    
+    
     
     @property
     def theta_inf(self):
@@ -330,7 +335,7 @@ class IBS:
             
     @staticmethod
     def doppler_factor(g_vel, ang_):
-        beta_vels = IBS.beta_from_g(g_vel=g_vel)
+        beta_vels = beta_from_g(g_vel=g_vel)
         return 1 / g_vel / (1 - beta_vels * cos(ang_))
             
     def dopl(self, nu_true, nu_los=None):
@@ -418,6 +423,8 @@ class IBS:
         return IBS.doppler_factor(g_vel = self.g, ang_ = angs)
         # _nu_tr = self.winds.orbit.true_an(self.t_forbeta)
         # return IBS.dopl(self, _nu_tr, nu_los=0)
+        
+        
 
         
             
