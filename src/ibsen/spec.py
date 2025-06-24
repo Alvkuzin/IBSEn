@@ -2,19 +2,23 @@
 import numpy as np
 from numpy import pi, sin, cos, exp
 
-from .utils import lor_trans_e_spec_iso, lor_trans_b_iso, lor_trans_ug_iso
+from .utils import lor_trans_e_spec_iso, lor_trans_b_iso, lor_trans_ug_iso, loggrid
 from scipy.integrate import trapezoid
 import astropy.units as u
 from ibsen.get_obs_data import get_parameters
 import ibsen.absorbtion.absorbtion as absb
+from scipy.optimize import curve_fit
 
 from scipy.interpolate import interp1d, RegularGridInterpolator
 
-import time
+# import time
 import naima
 from naima.models import Synchrotron, InverseCompton
 
 sed_unit = u.erg / u.s / u.cm**2
+
+def pl(x, p, norm):
+    return norm * x**(-p)
 
 def unpack_dist(sys_name=None, dist=None):
     """
@@ -50,7 +54,7 @@ def unpack_dist(sys_name=None, dist=None):
 
 class SpectrumIBS:
     def __init__(self, els,
-                 delta_power=3, lorentz_boost=True, simple=False,
+                 delta_power=4, lorentz_boost=True, simple=False,
                  abs_photoel=True, abs_gg=False, nh_tbabs=0.8, syn_only=False,
                  distance = None):
         self.els = els
@@ -276,27 +280,58 @@ class SpectrumIBS:
             sed_tot = sed_tot * absb.abs_gg_tab(E=E,
                 nu_los = self._orb.nu_los, t = self._ibs.t_forbeta, Teff=_Topt)
             
+        sed_s_ = np.zeros((2 * s_1d_dim.size, E.size))
+        sed_s_[:s_1d_dim.size, :] = sed_s_e_down[::-1, :]
+        sed_s_[s_1d_dim.size : 2*s_1d_dim.size, :] = sed_s_e_up
+
         if to_set_onto_ibs:
-            self.sed_s = sed_s_e_up + sed_s_e_down
+            self.sed_s = sed_s_
             self.sed = sed_tot
             self.e_ph = E
             self.sed_spl = interp1d(E, sed_tot)
             # self.sed_logspl = interp1d(np.log10(E), np.log10(sed_tot))
             
         if to_return:    
-            return sed_tot
+            return E, sed_tot, sed_s_
     
     
-    def flux(self, E = np.logspace(np.log10(300.), 4.) ):
+    def flux(self, e1, e2):
         try:
-            # sed_loogspl_ = self.sed_logspl
             sed_spl_ = self.sed_spl
-            
         except:
             raise ValueError('The specrum has not been set yet.')
+        _E = loggrid(e1, e2, n_dec = 50)
+        sed_here = sed_spl_(_E)
+        return trapezoid(sed_here / _E, _E)
             
-        sed_here = sed_spl_(E)
-        return trapezoid(sed_here / E, E)
+    
+    def fluxes(self,  bands):
+        fluxes_ = []
+        for band in bands:
+            e1, e2 = band
+            fluxes_.append(SpectrumIBS.flux(self, e1, e2))
+        return np.array(fluxes_)
+    
+    def index(self, e1, e2):
+        try:
+            sed_spl_ = self.sed_spl
+        except:
+            raise ValueError('The specrum has not been set yet.')
+        _E = loggrid(e1, e2, n_dec = 50)
+        sed_here = sed_spl_(_E)
+        popt, pcov = curve_fit(f = pl, xdata = _E,
+                               ydata = sed_here,
+                               p0=(0.5, 
+                                   sed_here[0] * _E[0]**0.5
+                                   ))
+        return popt[0] + 2 
+    
+    def indexes(self, bands):
+        indexes_ = []
+        for band in bands:
+            e1, e2 = band
+            indexes_.append(SpectrumIBS.index(self, e1, e2))
+        return np.array(indexes_)
         
             
             

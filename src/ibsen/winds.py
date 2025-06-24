@@ -12,6 +12,9 @@ from ibsen.orbit import Orbit
 
 
 G = float(const.G.cgs.value)
+C_LIGHT = float(const.c.cgs.value)
+SIGMA_BOLTZ = float(const.sigma_sb.cgs.value)
+
 
 R_SOLAR = float(const.R_sun.cgs.value)
 M_SOLAR = float(const.M_sun.cgs.value)
@@ -60,7 +63,13 @@ class Winds:
                  M_ns = 1.4*M_SOLAR, f_p = 0.1, 
                  alpha=0, incl=30./180.*pi,   
                  f_d=10., np_disk = 3., delta=0.01, 
-                 rad_prof = 'pl', r_trunk = None):
+                 height_exp = 0.5,
+                 rad_prof = 'pl', r_trunk = None,
+                 
+                 ns_field_model = 'linear', ns_field_surf = None, ns_r_scale = None,
+                 ns_L_spindown = None, ns_sigma_magn = None,
+                 opt_field_model = 'linear', opt_field_surf = None, opt_r_scale = None,
+                 ):
         Topt_, Ropt_, Mopt_ = unpack_star(sys_name=sys_name, Topt=Topt, Ropt=Ropt, Mopt=Mopt)
         self.orbit = orbit
         self.Topt = Topt_
@@ -74,12 +83,128 @@ class Winds:
         
         self.np_disk = np_disk
         self.delta = delta
+        self.height_exp = height_exp
         self.rad_prof = rad_prof
         if r_trunk is None:
             self.r_trunk = 5 * Ropt_
         else:
             self.r_trunk = r_trunk
+            
+        self.ns_field_model = ns_field_model
+        self.ns_field_surf = ns_field_surf
+        self.ns_r_scale = ns_r_scale
+        self.ns_L_spindown = ns_L_spindown
+        self.ns_sigma_magn = ns_sigma_magn
         
+        
+        self.opt_field_model = opt_field_model
+        self.opt_field_surf = opt_field_surf
+        self.opt_r_scale = opt_r_scale
+        
+    
+    def ns_field(r_to_p, model='linear', B_surf = None, r_scale = None,
+                 L_spindown = None, sigma_magn = None):
+        
+            
+        """
+        The magnetic field of the NS [G] at the distance r_to_p.
+        
+        Parameters
+        ----------
+        r_to_p : TYPE
+            DESCRIPTION.
+        model : str, optional
+            How to calculate the magnetic field from the NS. Options:
+            -  'linear': B = B_surf * (r_scale / r_to_p). You should provide 
+            B_surf and r_scale.
+            - 'dipole': B = B_surf * (r_scale / r_to_p)^3. You should provide 
+            B_surf and r_scale.
+            - 'from_L_sigma': according to Kennel & Coroniti 1984a,b:
+                B = sqrt(L_spindown * sigma_magn / c / r_to_p^2). 
+                You should provide L_spindown and sigma_magn.
+            
+            The default is 'linear'.
+            
+            
+        B_surf : float, optional
+            The field at the NS surface [G]. The default is None.
+        r_scale : float, optional
+            The scale radius for model = 'liear' or model='dipole'.
+            The default is None.
+        L_spindown : float, optional
+            The spin-down luminosity of the NS [erg / s]. The default is None.
+        sigma_magn : float, optional
+            Magnetization of the piulsar wind. The default is None.
+
+        Returns
+        -------
+        The magnetic field of the NS [G] at the distance r_to_p.
+
+        """    
+        model_opts = ['linear', 'dipole', 'from_L_sigma']
+
+        if model not in (model_opts):
+            raise ValueError('the NS field model should be one of:',
+                             model_opts)
+        if model == 'linear':
+            B_puls = B_surf * (r_scale / r_to_p)
+        if model == 'dipole':
+            B_puls = B_surf * (r_scale / r_to_p)**3
+        
+        if model == 'from_L_sigma':        
+            B_puls = (L_spindown * sigma_magn / C_LIGHT / r_to_p**2)**0.5
+        
+        return B_puls
+    
+    def opt_field(r_to_s, model = 'linear', r_scale=None, B_surf=None):
+               
+            
+        """
+        The magnetic field of the opt. star [G] at the distance r_to_s.
+        
+        Parameters
+        ----------
+        r_to_a : float
+            The distance from the star [cm] to the point.
+        model : str, optional
+            How to calculate the magnetic field from the star. Options:
+            -  'linear': B = B_surf * (r_scale / r_to_p). You should provide 
+            B_surf and r_scale.
+            - 'dipole': B = B_surf * (r_scale / r_to_p)^3. You should provide 
+            B_surf and r_scale.
+
+            The default is 'linear'.
+            
+            
+        B_surf : float, optional
+            The field at the star surface [G]. The default is None.
+        r_scale : float, optional
+            The scale radius for model = 'liear' or model='dipole'.
+            The default is None.
+
+        Returns
+        -------
+        The magnetic field of the NS [G] at the distance r_to_p.
+
+        """    
+        model_opts = ['linear', 'dipole']
+
+        if model not in (model_opts):
+            raise ValueError('the opt star field model should be one of:',
+                             model_opts)
+        if model == 'linear':
+            B_puls = B_surf * (r_scale / r_to_s)
+        if model == 'dipole':
+            B_puls = B_surf * (r_scale / r_to_s)**3
+        
+        return B_puls
+    
+    def u_g_density(r_from_s, r_star, T_star):      
+        factor = 2. * (1. - (1. - (r_star / r_from_s)**2)**0.5 )
+        u_dens = SIGMA_BOLTZ * T_star**4 / C_LIGHT * factor
+        return u_dens
+    
+    
         
     @property
     def n_disk(self):
@@ -132,7 +257,7 @@ class Winds:
         return (self.Ropt / r_from_s)**2
     
     def disk_height(self, r):
-        return self.delta * r * (r / self.Ropt)**0.25
+        return self.delta * r * (r / self.Ropt)**self.height_exp
     
     def decr_disk_pressure(self, vec_r_from_s):
         ndisk = self.n_disk
@@ -180,4 +305,26 @@ class Winds:
         r_se = Winds.dist_se_1d(self, t)
         r_pe = r_sp - r_se
         return (r_pe / r_se)**2
+    
+    def magn_fields_apex(self, t):
+        r_se = Winds.dist_se_1d(self, t)
+        r_pe = self.orbit.r(t) - r_se
+        B_ns_apex = Winds.ns_field(r_to_p =r_pe, model=self.ns_field_model,
+                              B_surf = self.ns_field_surf,
+                              r_scale = self.ns_r_scale,
+                              L_spindown = self.ns_L_spindown,
+                              sigma_magn =self.ns_sigma_magn)
+        B_opt_apex = Winds.opt_field(r_to_s = r_se,
+                                     model = self.opt_field_model,
+                                     r_scale=self.opt_r_scale,
+                                     B_surf=self.opt_field_surf)
+        
+        return B_ns_apex, B_opt_apex
+    
+    def u_g_density_apex(self, t):  
+        r_se = Winds.dist_se_1d(self, t)
+        return Winds.u_g_density(r_from_s = r_se,
+                                 r_star = self.Ropt,
+                                 T_star = self.Topt)
+        
         

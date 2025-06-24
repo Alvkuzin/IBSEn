@@ -143,6 +143,11 @@ def lor_trans_e_spec_iso(E_lab, dN_dE_lab, gamma, E_comov=None, n_mu=101):
 
     return E_comov, dN_dE_comov
 
+
+def loggrid(x1, x2, n_dec):
+    n_points = int( np.log10(x2 / x1) * n_dec)
+    return np.logspace(np.log10(x1), np.log10(x2), n_points)
+
 # def Get_PSRB_params(orb_p = 'psrb'):
 #     """
 #     Quickly access some PSRB orbital parameters: orbital period P [days],

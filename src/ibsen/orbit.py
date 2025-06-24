@@ -72,7 +72,8 @@ class Orbit:
         self.ztab = None
         self.n = n
         
-        self.calculate()
+        if n is not None:
+            self.calculate()
         
     @property    
     def a(self):

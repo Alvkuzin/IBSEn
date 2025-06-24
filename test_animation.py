@@ -64,15 +64,15 @@ s_max = 1.
 alpha_deg = -8.
 incl_deg = 25.
 # nu_true=nu_los
-# sys_name = 'psrb'
+sys_name = 'psrb'
 
-sys_name = 'rb'
+# sys_name = 'rb'
 
 # beta = 0.01
 
 orb = Orbit(sys_name = sys_name, n=1000)
 winds = Winds(orbit=orb, sys_name = sys_name, alpha=alpha_deg/180*pi, incl=incl_deg*pi/180,
-              f_d=0, f_p=0.01, delta=0.02, np_disk=3, rad_prof='broken_pl',
+              f_d=50, f_p=0.01, delta=0.02, np_disk=3, rad_prof='broken_pl',
               r_trunk=None)
 
 # calc the map of the disk log(pressure) for visualising
@@ -122,11 +122,11 @@ interval = 1000 / fps  # in milliseconds
 fig, ax = plt.subplots()
 
 
-# tanim = np.linspace(-40, 40, num_frames) * DAY
+tanim = np.linspace(-40, 40, num_frames) * DAY
 
 # tanim = np.linspace(-40, 110, num_frames) * DAY
 # tanim = np.linspace(-200, 110, num_frames) * DAY
-tanim = np.linspace(-orb.T/2, orb.T/2, num_frames) 
+# tanim = np.linspace(-orb.T/2, orb.T/2, num_frames) 
 
 
 
@@ -137,13 +137,21 @@ def init():
     ax.plot(orb_x, orb_y)
     # ax.imshow(disk_ps, extent=[x_forp.min(), x_forp.max(), y_forp.min(), y_forp.max()],
     #        origin='lower', cmap='plasma', alpha=alpha)
-    # ax.contourf(XX, YY, disk_ps, levels=n_levels, cmap=custom_cmap)
+    ax.contourf(XX, YY, disk_ps, levels=n_levels, cmap=custom_cmap)
     ax.scatter(0, 0, c='k')
     ax.plot([np.min(orb_x), np.max(orb_x)], [0, 0], color='k', ls='--')
     ax.plot([0, 3*orb.r_apoastr*cos(orb.nu_los)], [0, 3*orb.r_apoastr*sin(orb.nu_los)], color='g', ls='--')
     xx1, yy1, zz1 = vec_disk1
     xx2, yy2, zz2 = vec_disk2
     ax.plot([xx1, xx2], [yy1, yy2], color='orange', ls=':')
+    
+    
+    
+    x, y, z = orb.vector_sp(t=10*DAY)
+    ax.plot([0, 4*x], [0, 4*y], c='r', ls='-', alpha=0.5)
+    
+    x, y, z = orb.vector_sp(t=33*DAY)
+    ax.plot([0, 4*x], [0, 4*y], c='r', ls='-', alpha=0.5)
     
     
     # ax1.plot(tanim/DAY, f_sim)
@@ -201,12 +209,12 @@ def update(i):
     # ax.set_xlim(-orb.r_apoastr*1.2, orb.a*1.2)
     # ax.set_ylim(-orb.b*1.2, orb.b*1.2
     
-    ax.set_xlim(-orb.a*2, orb.a*2)
-    ax.set_ylim(-orb.b*2, orb.b*2)
+    # ax.set_xlim(-orb.a*2, orb.a*2)
+    # ax.set_ylim(-orb.b*2, orb.b*2)
     
     # For PSRB periastron close-up
-    # ax.set_xlim(-0.5e14, 0.3e14)
-    # ax.set_ylim(-orb.b*1.2, orb.b*1.2)
+    ax.set_xlim(-0.5e14, 0.3e14)
+    ax.set_ylim(-orb.b*1.2, orb.b*1.2)
     
 
 ani = FuncAnimation(

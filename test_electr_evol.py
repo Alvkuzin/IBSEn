@@ -6,7 +6,7 @@ from matplotlib.animation import FuncAnimation
 from matplotlib.collections import LineCollection
 from matplotlib.colors import ListedColormap, Normalize
 from scipy.integrate import trapezoid
-from matplotlib.cm import get_cmap
+# from matplotlib.cm import get_cmap
 import importlib
 import ibsen
 importlib.reload(ibsen)

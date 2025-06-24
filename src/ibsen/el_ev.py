@@ -1,16 +1,17 @@
 import numpy as np
-from matplotlib import pyplot as plt
+# from matplotlib import pyplot as plt
 from numpy import pi, sin, cos, exp
 import astropy.units as u
 from astropy import constants as const
-from scipy.integrate import trapezoid, quad, cumulative_trapezoid, solve_ivp
-from scipy.interpolate import interp1d, RegularGridInterpolator
-import time
+from scipy.integrate import trapezoid, cumulative_trapezoid, solve_ivp
+from scipy.interpolate import interp1d
+# import time
 # from joblib import Parallel, delayed
+from .utils import  beta_from_g
 
 from ibsen.transport_solvers.transport_on_ibs_solvers import solve_for_n
-import xarray as xr
-from pathlib import Path
+# import xarray as xr
+# from pathlib import Path
 
 # from .orbit import Orbit
 from ibsen.ibs import IBS
@@ -192,7 +193,7 @@ def evolved_e_advection(s_, edot_func, f_inject_func,
         
         # extend_u = 10; extend_d = 10; 
         extend_u = 2; extend_d = 10; 
-        Ns, Ne = 201, 303 #!!!
+        Ns, Ne = 601, 603 #!!!
         # Ns, Ne = 201, 203 
         Ne_real = int( Ne * np.log10(extend_u * emax / extend_d / emin) / np.log10(emax / emin) )
         e_vals_sample = np.logspace(np.log10(emin / extend_d), np.log10(emax * extend_u), Ne_real)
@@ -201,7 +202,7 @@ def evolved_e_advection(s_, edot_func, f_inject_func,
         # will we solve the equation 
         ssmesh, emesh = np.meshgrid(s_, e_vals_sample, indexing='ij')
         f_sample = f_inject_func(ssmesh, emesh, *f_args)
-        f_sample_sed = f_sample[int(s_.size / 2.)] * e_vals_sample**2
+        f_sample_sed = f_sample[1, :] * e_vals_sample**2
         e_where_good = np.where(f_sample_sed > np.max(f_sample_sed) / 1e6 )
         s_vals = np.linspace(0, np.max(s_), Ns)
         e_vals = e_vals_sample[e_where_good]
@@ -344,10 +345,11 @@ class ElectronsOnIBS:
     
 """
     def __init__(self, Bp_apex, ibs: IBS, cooling=None, to_inject_e = 'ecpl',
-                 to_inject_theta = '3d', ecut = 1.e12, p_e = 2., norm_e = 1.,
-                 Bs_apex=0., eta_a = 1.,
+                 to_inject_theta = '3d', ecut = 1.e12, p_e = 2., norm_e = 1.e37,
+                 Bs_apex=0., eta_a = None,
                  eta_syn = 1., eta_ic = 1.,
-                 emin = 1e9, emax = 5.1e14, to_cut_e = True, to_cut_theta =  False,
+                 emin = 1e9, emax = 5.1e14, to_cut_e = True, 
+                 to_cut_theta =  False, 
                  where_cut_theta = pi/2):
         """
         We should provide the already initialized class ibs:IBS here with 
@@ -364,7 +366,7 @@ class ElectronsOnIBS:
         self.cooling = cooling
         self.allowed_coolings = ('no', 
                                  'stat_apex', 'stat_ibs', 'stat_mimic',
-                                 # 'leak_apex', 'leak_ibs', 'leak_mimic',
+                                  'leak_apex', 'leak_ibs', 'leak_mimic',
                                  'adv')
         
         self.Bp_apex = Bp_apex # pulsar magn field in apex
@@ -372,8 +374,11 @@ class ElectronsOnIBS:
         self.B_apex = Bp_apex + Bs_apex # total magn field in apex
         # self.u_g_apex = u_g_apex # photon energy density in apex
         
-        # self.r_sp = r_sp # orbital separation (for rescaling ibs)
-        self.eta_a = eta_a # to scale adiabatic time
+        if eta_a  is None:
+            self.eta_a = 1e20
+        else:
+            self.eta_a = eta_a # to scale adiabatic time
+
         self.eta_syn = eta_syn # to scale synchrotron losses
         self.eta_ic = eta_ic # to scale inverse compton losses
         
@@ -475,6 +480,8 @@ class ElectronsOnIBS:
                           eta_IC = self.eta_ic * _u_s)
 
     def f_inject(self, s_, e_): 
+        if s_.shape != e_.shape:
+            raise ValueError('in f_inject, `s`-shape should be == `e`-shape')
         thetas_here = self.ibs.s_interp(s_  = s_ / self.r_sp, what = 'theta')
         if self.to_inject_theta == '2d':
             thetas_part = np.zeros(thetas_here.shape) + 1. # uniform along theta
@@ -485,8 +492,8 @@ class ElectronsOnIBS:
             raise ValueError("I don't know this to_inject_theta. It should be 2d, 3d.")
             
         if self.to_cut_theta:
-            thetas_part[thetas_here >= self.where_cut_theta] = 0.
-            
+            thetas_part[np.abs(thetas_here) >= self.where_cut_theta] = 0.
+           
         if self.to_inject_e == 'ecpl':
             e_part = ecpl(e_, ind=self.p_e, ecut=self.ecut, norm=1.)
         elif self.to_inject_e == 'pl':
@@ -500,7 +507,23 @@ class ElectronsOnIBS:
             mask = (e_ < self.emin) | (e_ > self.emax)
             result = np.where(mask, 0.0, result)
         # return sin(thetas_here)
-        return result
+        
+        # now normalize the number of injected particles. I do it like this:
+        # I ensure that the total number per second: N(s) = \int n(s, E) dE 
+        # of electrons in  ONE horm in the forward hemisphere = 1/4 from norm:
+        # 2 pi \int_0^{pi/2} N(s(theta)) d theta = norm / 2
+        N_total = trapezoid(result, e_, axis = 1)
+        thetas_forward = thetas_here[:, 0][thetas_here[:, 0] < pi/2]
+        # print(N_total.shape)
+        # print(thetas_forward.shape)
+        N_total_forward = N_total[thetas_here[:, 0] < pi/2]
+        integral_forward = trapezoid(N_total_forward, thetas_forward)
+        #if integral_forward != 0:
+        overall_coef = self.norm_e / 8 / pi / integral_forward
+        #else:
+            # print('а какого хера')
+            # print(self.ibs.t_forbeta / DAY)
+        return result * overall_coef
     
     # def analyt_adv_Ntot_tomimic(self, s, e): 
     #     # s and e -- 2d meshgrid arrays, but the function returns 1d-array 
@@ -512,19 +535,20 @@ class ElectronsOnIBS:
     #     return f_integrated * self.r_sp / C_LIGHT * self.s_max_g/_ga * (2 * x__ + x__**2)**0.5
     
     def analyt_adv_Ntot(self, s_1d, f_inj_integrated):
-        ### s [cm] and f_inj_integrated --- 1-dimensional
+        ### s [dimless] and f_inj_integrated --- 1-dimensional
         gammas = self.ibs.gma(s = s_1d)
-        betas = self.ibs.beta_from_g(gammas)
+        betas = beta_from_g(gammas)
         res = cumulative_trapezoid(f_inj_integrated / betas, s_1d, initial=0) / C_LIGHT
         return res
     
-    def t_leak_test(self, s,e):
+    def t_leakage(self, s,e):
         f_ = ElectronsOnIBS.f_inject(self, s_=s, e_=e)
         f_integrated = trapezoid(f_, e, axis=1)
-        _s_1d = s[:, 0]
-        Ntot = ElectronsOnIBS.analyt_adv_Ntot(self, s_1D = _s_1d, f_inj_integrated = f_integrated)
-        gammas = self.ibs.gma(s = _s_1d)
-        betas = self.ibs.beta_from_g(gammas)
+        _s_1d = s[:, 0] # in cm
+        Ntot = ElectronsOnIBS.analyt_adv_Ntot(self, s_1d = _s_1d / self.r_sp,
+                                              f_inj_integrated = f_integrated)
+        gammas = self.ibs.gma(s = _s_1d / self.r_sp)
+        betas = beta_from_g(gammas)
         res = 1. /C_LIGHT * Ntot / np.gradient(Ntot, _s_1d, edge_order=2)/betas
         return res[:,None] * s / (1e-17 + s)
     
@@ -576,32 +600,36 @@ class ElectronsOnIBS:
                 if self.cooling in ('stat_ibs', 'stat_mimic'):
                     dNe_de_IBS[i_s, :] = stat_distr(e_vals, f_inj_se[i_s, :], edots_se[i_s, :])
 
-        # if self.cooling in ('leak_apex', 'leak_ibs', 'leak_mimic'):
-        #     e_vals = np.logspace(np.log10(emin), np.log10(emax), 987)
-        #     smesh, emesh = np.meshgrid(ss*r_SP, e_vals, indexing = 'ij')
-        #     f_inj_se = f_inject_func(smesh, emesh, *f_args)
-        #     edots_se = edot_func(smesh, emesh, *tot_loss_args)
-        #     dNe_de_IBS = np.zeros((ss.size, e_vals.size))
-        #     ts_leak = t_func(smesh, emesh, *t_args)
-        #     # f_inj_integr = trapezoid(f_inj_se, e_vals, axis=1)
-        #     # Ntot_s = analyt_adv_Ntot_tomimic(smesh, emesh, f_inj_func = f_inject_func,
-        #     #             f_inj_args = f_args, dorb=r_SP, s_max_g=4, Gamma=Gamma)
+        if self.cooling in ('leak_apex', 'leak_ibs', 'leak_mimic'):
+            e_vals = np.logspace(np.log10(self.emin), np.log10(self.emax), 381)
+            smesh, emesh = np.meshgrid(s_1d_dim, e_vals, indexing = 'ij')
+            if self.cooling == 'stat_mimic':
+                eta_fl_new = ElectronsOnIBS.eta_flow_mimic(self, smesh)
+                self.eta_a = eta_fl_new
+    
+            f_inj_se = ElectronsOnIBS.f_inject(self, smesh, emesh)
+            edots_se = ElectronsOnIBS.edot(self, smesh, emesh)
+            dNe_de_IBS = np.zeros((s_1d_dim.size, e_vals.size))
+            ts_leak = ElectronsOnIBS.t_leakage(self, smesh, emesh)
+            # f_inj_integr = trapezoid(f_inj_se, e_vals, axis=1)
+            # Ntot_s = analyt_adv_Ntot_tomimic(smesh, emesh, f_inj_func = f_inject_func,
+            #             f_inj_args = f_args, dorb=r_SP, s_max_g=4, Gamma=Gamma)
 
-        #     for i_s in range(ss.size):
-        #         if self.cooling == 'leak_ibs':
-        #             # dNe_de_IBS[i_s, :] = Stat_distr_with_leak_ivp(e  = e_vals,
-        #                 # q_func, edot_func, T_func, q_args, edot_args, T_args)
-        #             dNe_de_IBS[i_s, :] = stat_distr_with_leak(Es = e_vals,
-        #                 Qs = f_inj_se[i_s, :], Edots = edots_se[i_s, :], Ts = ts_leak[i_s, :],
-        #                 mode = 'analyt')
-        #         if self.cooling == 'leak_apex':
-        #             f_inj_av = trapezoid(f_inj_se, ss, axis=0) / np.max(ss)
-        #             dNe_de_IBS[i_s, :] = stat_distr_with_leak(Es = e_vals,
-        #                 Qs = f_inj_av, Edots = edots_se[0, :], Ts = ts_leak[0, :])
-        #         if self.cooling == 'leak_mimic':
-        #             dNe_de_IBS[i_s, :] = stat_distr_with_leak(Es = e_vals,
-        #                 Qs = f_inj_se[i_s, :], Edots = edots_se[i_s, :], 
-        #                 Ts = ts_leak[i_s, :], mode = 'analyt') 
+            for i_s in range(s_1d_dim.size):
+                if self.cooling == 'leak_ibs':
+                    # dNe_de_IBS[i_s, :] = Stat_distr_with_leak_ivp(e  = e_vals,
+                        # q_func, edot_func, T_func, q_args, edot_args, T_args)
+                    dNe_de_IBS[i_s, :] = stat_distr_with_leak(Es = e_vals,
+                        Qs = f_inj_se[i_s, :], Edots = edots_se[i_s, :], Ts = ts_leak[i_s, :],
+                        mode = 'analyt')
+                if self.cooling == 'leak_apex':
+                    f_inj_av = trapezoid(f_inj_se, s_1d_dim, axis=0) / np.max(s_1d_dim)
+                    dNe_de_IBS[i_s, :] = stat_distr_with_leak(Es = e_vals,
+                        Qs = f_inj_av, Edots = edots_se[0, :], Ts = ts_leak[0, :])
+                if self.cooling == 'leak_mimic':
+                    dNe_de_IBS[i_s, :] = stat_distr_with_leak(Es = e_vals,
+                        Qs = f_inj_se[i_s, :], Edots = edots_se[i_s, :], 
+                        Ts = ts_leak[i_s, :], mode = 'analyt') 
             
         if self.cooling == 'adv':
             edot_func = lambda s_, e_: ElectronsOnIBS.edot(self, s_, e_)

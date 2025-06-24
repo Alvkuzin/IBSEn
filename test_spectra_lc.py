@@ -1,13 +1,14 @@
 # main.py
 import matplotlib.pyplot as plt
-import matplotlib
+# import matplotlib
 from matplotlib import animation
 from matplotlib.animation import FuncAnimation
 from matplotlib.collections import LineCollection
 from matplotlib.colors import ListedColormap, Normalize
 from scipy.integrate import trapezoid
-from matplotlib.cm import get_cmap
+# from matplotlib.cm import get_cmap
 from joblib import Parallel, delayed
+from scipy.optimize import curve_fit
 
 import importlib
 import ibsen
@@ -15,13 +16,14 @@ importlib.reload(ibsen)
 from ibsen.orbit import Orbit
 from ibsen.ibs import IBS
 from ibsen.spec import SpectrumIBS
-# from pulsar.lc import LightCurve
-import ibsen.absorbtion.absorbtion as Absb
 from ibsen.el_ev import ElectronsOnIBS
 from ibsen.winds import Winds
 
 import numpy as np
 from numpy import sin, cos, pi
+
+def po(E, g, norm):
+    return norm * E**(-g)
 
 """
 This is a little script that animates the movement of the pulsar around the 
@@ -72,7 +74,7 @@ DAY = 86400.
 
 ### ----------------------------------------------------------------------- ###
 ### ----------------------------------------------------------------------- ###
-gamma = 2.15 # max bulk motion gamma at ibs
+gamma = 1.5 # max bulk motion gamma at ibs
 s_max = 1. # where to cut the ibs
 # s_max = 'bow'
 
@@ -89,9 +91,9 @@ f_d = 50 # disk
 # f_d = 0 # no disk
 # f_d = 1e3 # super strong disk
 
-f_p = 0.01
+f_p = 0.1
 
-delta = 0.02 # relative half-thickness of the disk (at r=Ropt)
+delta = 0.015 # relative half-thickness of the disk (at r=Ropt)
 
 
 ### ----------------------------------------------------------------------- ###
@@ -150,7 +152,7 @@ vec_disk1, vec_disk2 = winds.vectors_of_disk_passage
 orb_x, orb_y = orb.xtab, orb.ytab
 
 fps = 30
-duration = 10  # seconds
+duration = 3  # seconds
 num_frames = int(duration * fps)
 interval = 1000 / fps  # in milliseconds
 fig, ax = plt.subplots(nrows=2, ncols=2)
@@ -158,7 +160,9 @@ fig, ax = plt.subplots(nrows=2, ncols=2)
 if to_show=='whole':
     tanim = np.linspace(-orb.T/2, orb.T/2, num_frames) 
 if to_show=='near_per':
-    tanim = np.linspace(-40, 40, num_frames) * DAY    
+    # tanim = np.linspace(-200, 120, num_frames) * DAY    
+    tanim = np.linspace(-40, 50, num_frames) * DAY    
+    
 
 # tanim = np.linspace(-40, 110, num_frames) * DAY
 # tanim = np.linspace(-200, 110, num_frames) * DAY
@@ -174,7 +178,7 @@ betas_eff = winds.beta_eff(tanim)
     
 ### ---------------------- precalculate ibs and e ------------------------- ###
 
-Nibs = 15
+Nibs = 17
 # x_sh2d, y_sh2d, dopl2d, ntotinj2d, ntot2d, maxsed2d = [ np.zeros((tanim.size, 2*Nibs))*i for i in range(6) ]
 # evals2d = []
 # dNe_de_IBS_avg = []
@@ -191,16 +195,21 @@ def func_par(i):
               n=Nibs, one_horn=False, t_to_calculate_beta_eff=t
                )
     r = orb.r(t=t)
-    rsp = r - winds.dist_se_1d(t)
-    els = ElectronsOnIBS(Bp_apex=3. * 1e13/rsp, ibs=ibs,
-                         cooling='stat_mimic',
-                         # cooling='adv',
-                         p_e=1.7) # toy values for B and u_g, scaled for r
+    rpe = r - winds.dist_se_1d(t)
+    els = ElectronsOnIBS(Bp_apex=3. * 1e13/rpe, ibs=ibs,
+                         # cooling='stat_mimic',
+                         # cooling='no',
+                         cooling='adv',
+                         eta_a=1e20,
+                         p_e=1.7,
+                         to_cut_theta=False,
+                         norm_e = 1e37,
+                         where_cut_theta=180/180*pi) # toy values for B and u_g, scaled for r
     dNe_de_IBS, e_vals = els.calculate(to_return=True, to_set_onto_ibs=True)
     # print('1')
     # print(els.e_vals)
     
-    spec = SpectrumIBS(els=els, simple=True, syn_only=True)
+    spec = SpectrumIBS(els=els, simple=True, syn_only=False)
     
     ########## coordinates or the orbit in real coordinates at time t
     # print('2')
@@ -240,11 +249,23 @@ def func_par(i):
     
     #########  -------------- photon spec ----------------------------- #######
     # print('4')
-    sed_here = spec.calculate_sed_on_ibs(to_return=True, E = np.logspace(np.log10(250.), 4.1, 30.))
+    # E_ = np.concatenate((
+        # np.logspace(np.log10(250.), 4.1, 30),
+        # np.logspace(11, 14, 60),
+        # ))
+    E_ = np.logspace(2, 14, 500)
+    sed_here = spec.calculate_sed_on_ibs(to_return=True, 
+                                         E = E_
+                                         )
     e_ph_here = spec.e_ph
-    # seds.append(sed_here)
-    # e_phs.append(e_ph_here)
-    # lc.append(spec.flux())
+
+    where_fit = np.logical_and(e_ph_here > 3e3, e_ph_here < 1e4)
+    popt, pcov = curve_fit(f = po, xdata = e_ph_here[where_fit],
+                           ydata = sed_here[where_fit],
+                           p0=(1.3, 1e-6))
+    G_ind = popt[0] + 2 
+    emissiv_s = trapezoid(spec.sed_s/e_ph_here, e_ph_here, axis=1)
+    
     
     return [x_sh, y_sh, dopls, trapezoid(inj, es, axis=1), 
             trapezoid(dNe_de_IBS, e_vals, axis=1), e_vals, 
@@ -253,18 +274,18 @@ def func_par(i):
                 e_vals[np.argmax(dNe_de_IBS[i_s, :] *e_vals**2)]
                 for i_s in range(x_sh.size)
                 ]),
-            sed_here, e_ph_here, spec.flux()
+            sed_here, e_ph_here, spec.flux(), G_ind, emissiv_s
             ]
     
     
     
     
-res= Parallel(n_jobs=10)(delayed(func_par)(i) for i in range(0, len(tanim)))
+res= Parallel(n_jobs=15)(delayed(func_par)(i) for i in range(0, len(tanim)))
     
 (x_sh2d, y_sh2d, dopl2d, ntotinj2d, ntot2d, e_vals2d, dNe_de_IBS_avg, maxsed2d,
- seds, e_phs, lc) = zip(*res)
-x_sh2d, y_sh2d, dopl2d, ntotinj2d, ntot2d, maxsed2d, lc, e_phs, seds = [np.array(ar) 
-   for ar in (x_sh2d, y_sh2d, dopl2d, ntotinj2d, ntot2d, maxsed2d, lc, e_phs, seds)]
+ seds, e_phs, lc, ind, emissiv_s) = zip(*res)
+x_sh2d, y_sh2d, dopl2d, ntotinj2d, ntot2d, maxsed2d, lc, e_phs, seds, ind, emissiv_s = [np.array(ar) 
+   for ar in (x_sh2d, y_sh2d, dopl2d, ntotinj2d, ntot2d, maxsed2d, lc, e_phs, seds, ind, emissiv_s)]
 evals2d = list(e_vals2d)
 dNe_de_IBS_avg = list(dNe_de_IBS_avg)
 # seds = list(seds)
@@ -287,6 +308,7 @@ def init():
     xx2, yy2, zz2 = vec_disk2
     ax[0, 0].plot([xx1, xx2], [yy1, yy2], color='orange', ls='--')
     ax[1, 0].plot(tanim/DAY, lc, color='k')
+    ax[1, 0].set_title('Swift LC')
 # print(seds.shape)
 
 def update(i):
@@ -309,12 +331,17 @@ def update(i):
 
     x_sh, y_sh, dopls, ntot, maxsed = x_sh2d[i], y_sh2d[i], dopl2d[i], ntot2d[i], maxsed2d[i]
     
-    colored_param = np.log10(dopls)
+    # colored_param = np.log10(dopls)
+    colored_param = np.log10(emissiv_s[i])
 
     plot_with_gradient(fig, ax[0, 0], xdata=x_sh, ydata=y_sh, 
                        some_param=colored_param,
-                       minimum=np.min(np.log10(dopl2d)),
-                       maximum=np.max(np.log10(dopl2d)))
+                       # minimum=np.min(np.log10(dopl2d)),
+                       # maximum=np.max(np.log10(dopl2d))
+                       minimum=np.nanmin(np.log10(emissiv_s)),
+                       maximum=np.nanmax(np.log10(emissiv_s))
+                       
+                       )
   
     if to_show=='whole':
         ax[0, 0].set_xlim(-orb.a*2, orb.a*2)
@@ -322,6 +349,8 @@ def update(i):
     
     if to_show == 'near_per':
         ax[0, 0].set_xlim(-0.5e14, 0.3e14)
+        # ax[0, 0].set_xlim(-1.5e14, 0.3e14)
+        
         ax[0, 0].set_ylim(-orb.b*1.2, orb.b*1.2)
     
     ### for showing the number of particles VS s with color = e_max(sed)
@@ -331,22 +360,27 @@ def update(i):
     # evals, dNe_de_avg = evals2d[i], 
     
     sed_e_here = evals2d[i]**2 * dNe_de_IBS_avg[i]
-    ax[0, 1].plot(evals2d[i], sed_e_here)
+    
+    ax[0, 1].scatter(evals2d[i], sed_e_here, s=1)
     ax[0, 1].set_xscale('log')
     ax[0, 1].set_yscale('log')
     ax[0, 1].set_ylim(np.max(dNe_de_IBS_avg*evals2d[i]**2)/1e3, 
                    np.max(dNe_de_IBS_avg*evals2d[i]**2))
     ax[0, 1].set_xlim(1e9, 5.1e14)
+    ax[0, 1].set_title('electrons spec')
     
     
-    ax[1, 1].plot(e_phs[i], seds[i])
+    label_sed = f'Swift 3-10 keV index = {ind[i]:.2e}'
+    
+    ax[1, 1].scatter(e_phs[i], seds[i], label=label_sed, s=1)
     ax[1, 1].set_xscale('log')
     ax[1, 1].set_yscale('log')
-    ax[1, 1].set_ylim(1e-59, 1e-51)
+    ax[1, 1].set_ylim(1e-17, 1e-11)
     ax[1, 1].set_xlim(1e2, 1e14)
-    
+    ax[1, 1].set_title('photons observed spec')
     ax[1, 0].scatter(t/DAY, lc[i], color='r')
-
+    # ax[1, 0].set_yscale('log')
+    ax[1, 1].legend(loc='upper left')
     
 
 ani = FuncAnimation(
@@ -355,11 +389,11 @@ ani = FuncAnimation(
     interval=interval,
 )
 
-### To save the animation using Pillow as a gif
-writer = animation.PillowWriter(fps=30,
-                                metadata=dict(artist='Me'),
-                                bitrate=1800)
-ani.save('psrb_normal_statmimic.gif', writer=writer)
+# ## To save the animation using Pillow as a gif
+# writer = animation.PillowWriter(fps=30,
+#                                 metadata=dict(artist='Me'),
+#                                 bitrate=1800)
+# ani.save('psrb_simple_statmimic.gif', writer=writer)
 
 # 
 

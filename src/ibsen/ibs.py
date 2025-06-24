@@ -24,7 +24,7 @@ class IBS:
     with beta. 2nd: IBS_real, it would take winds and optional time and 
     return rescaled, rotated ibs.
     """
-    def __init__(self, beta, gamma_max, s_max, s_max_g=4., n=31, one_horn=True,  
+    def __init__(self, beta, s_max, gamma_max=None, s_max_g=4., n=31, one_horn=True,  
                  winds = None, t_to_calculate_beta_eff = None):
         self.beta = beta
         self.gamma_max = gamma_max
