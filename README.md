@@ -12,14 +12,14 @@ IBSEn: **I**ntra**B**inary **S**hock **E**mission **n**-**n**ot-mea**n**i**n**g-
 Install directly from GitHub:
 
 ```bash
-pip install git+https://github.com/your-username/your-repo-name.git
+pip install git+https://github.com/Alvkuzin/IBSEn
 ```
 
 Or clone and install manually. Normal installation
 
 ```bash
-git clone https://github.com/your-username/your-repo-name.git
-cd your-repo-name
+git clone https://github.com/Alvkuzin/IBSEn
+cd IBSEn
 pip install .
 ```
 
@@ -37,14 +37,11 @@ This project requires:
 
 ```bash
 pip install -r requirements.txt
-pip install naima
 ```
 
 **Note on Naima.** Naima, and if I understand correctly, requires Numpy v. < 2. But I had Numpy of the version 2...! So you can either downgrade Numpy to <2:
 ```bash
 pip install "numpy<2.0"
-
-
 ```
 
 or (what my best friend ChatGPT told me to do) create an environment with Numpy < 2 and Naima installed (and some other packages which do not seem to be in conflict with Numpy or Naima):
@@ -52,24 +49,29 @@ or (what my best friend ChatGPT told me to do) create an environment with Numpy 
 ```bash
 conda create -n myenv numpy<2.0 naima
 conda activate myenv
-
 ```
 
 If you follow the second way, ensure that you install IBSEn in myenv. 
 
-**But if you just want to use IBSEn for Orbit / Winds & Stars / IBS / electron evolution and NOT for specta / light curves, you're good to go installing Naima at all. **
+**But if you just want to use IBSEn for Orbit / Winds & Stars / IBS / electron evolution and NOT for specta / light curves, you're good to go installing Naima at all.** 
 
 
 ## Usage
 
-Scripts now are not suited for running from the command line... Try doing this:
+Scripts now are not suited for running from the command line... Try doing this in some Python script:
 ```python
 import ibsen
 from ibsen.orbit import Orbit
 
 orb = Orbit('psrb')
-print(orb.T/86400, orb.e, orb.M/2e33)
+print(orb.T/86400, orb.e, orb.mtot/2e33)
 ```
+You should get the output of
+
+```bash
+1236.724526 0.874 25.252805357865252
+```
+
 
 See tutorials in `tutorials` folder.
 
