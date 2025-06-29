@@ -15,7 +15,7 @@ import multiprocessing
 from scipy.interpolate import splev, splrep, interp1d
 from astropy import constants as const
 from ibsen.get_obs_data import get_parameters
-from .utils import loggrid
+from .utils import loggrid, trapz_loglog
 # import ibsen
 from ibsen.orbit import Orbit
 from ibsen.winds import Winds
@@ -430,46 +430,83 @@ class LightCurve:
         self.fluxes = fluxes
         self.indexes = indexes    
 
-    def plot_lc(self, ax=None, to_show=True, 
-                     to_save=None, save_format='png', 
+    def peek(self,
+                 ax=None, 
+                 show_index=False, 
+                     to_save=None, 
+                     save_format='png', 
                      to_show_legend=True, 
                      to_show_grid=True,
                      to_show_title=True,
-                     title=None,
-                     xlabel='Time (s)',
-                     ylabel='Flux (erg/s/cm^2)',
                      fontsize=12,
+                     ylog=False,
                      **kwargs):
         """
         Plot the light curve.
         """
         if ax is None:
             import matplotlib.pyplot as plt
-            fig, ax = plt.subplots(figsize=(10, 6))
+            if  show_index:
+                fig, ax = plt.subplots(nrows=2, ncols=1)
+            if not show_index:
+                fig, ax = plt.subplots(figsize=(10, 6))
         
+        if show_index:
+            ax_first = ax[0]
+        else:
+            ax_first = ax
+
         for i, band in enumerate(self.bands):
-            ax.plot(self.times, self.fluxes[:, i], label=f'{band[0]}-{band[1]} keV', **kwargs)
-        
+            log_lo = np.log10(band[0])
+            log_hi = np.log10(band[1])
+            ax_first.plot(self.times/DAY, 
+                        self.fluxes[:, i], 
+                        label=f'logE = {log_lo:.2}-{log_hi:.2} eV', **kwargs)
+            
+        if show_index:
+            for i, band in enumerate(self.bands_ind):
+                log_lo = np.log10(band[0])
+                log_hi = np.log10(band[1])
+                ax[1].plot(self.times/DAY, 
+                            self.indexes[:, i], 
+                            label=f'logE = {log_lo:.2}-{log_hi:.2} eV', **kwargs)
+            
+
         if to_show_legend:
-            ax.legend()
+            ax_first.legend()
+            if show_index:
+                ax[1].legend()
         
         if to_show_grid:
-            ax.grid()
-        
+            ax_first.grid()
+            if  show_index:
+                ax[1].grid()
+
         if to_show_title:
-            ax.set_title(title or self.sys_name or 'Light Curve')
+            ax_first.set_title('Light Curve')
+            if show_index:
+                ax[1].set_title('Index')
         
-        ax.set_xlabel(xlabel)
-        ax.set_ylabel(ylabel)
-        ax.tick_params(labelsize=fontsize)
+        if not show_index:
+            ax_first.set_xlabel('t, days')
+            ax_first.set_ylabel(r'$F$ erg s^-1 cm^-2')
+            ax_first.tick_params(labelsize=fontsize)
+        
+        if show_index:
+            ax[1].set_xlabel('t, days')
+            ax_first.set_ylabel(r'$F$ erg s^-1 cm^-2')
+            ax[1].set_ylabel(r'$\Gamma$')
+            ax_first.tick_params(labelsize=fontsize)
+            ax[1].tick_params(labelsize=fontsize)
+        
+        if ylog:
+            ax_first.set_yscale('log')
         
         if to_save:
             plt.savefig(to_save, format=save_format)
         
-        if to_show:
-            plt.show()
+        plt.show()
 
-    # def get_parameters(self, t):
 
 
 

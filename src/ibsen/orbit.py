@@ -2,6 +2,7 @@
 import numpy as np
 from numpy import pi, sin, cos
 from scipy.optimize import brentq
+import matplotlib.pyplot as plt
 
 from astropy import constants as const
 from astropy import units as u
@@ -102,15 +103,8 @@ class Orbit:
         """
         Eccentric anomaly as a function of time. t [s] (float or array).
         """
-        if isinstance(t, float):
-            func_to_solve = lambda E: E - self.e * np.sin(E) - Orbit.mean_motion(self, t)
-            try:
-                E = brentq(func_to_solve, -1e3, 1e3)
-                return E
-            except:
-                print('fuck smth wrong with Ecc(t): float')
-                return -1
-        else:
+
+        if isinstance(t, np.ndarray):
             E_ = np.zeros(t.size)
             for i in range(t.size):
                 func_to_solve = lambda E: E - self.e * np.sin(E) - Orbit.mean_motion(self, t[i])
@@ -120,6 +114,14 @@ class Orbit:
                     print('fuck smth wrong with Ecc(t): array')
                     E_[i] = np.nan
             return E_
+        else:
+            func_to_solve = lambda E: E - self.e * np.sin(E) - Orbit.mean_motion(self, t)
+            try:
+                E = brentq(func_to_solve, -1e3, 1e3)
+                return E
+            except:
+                print('fuck smth wrong with Ecc(t): float')
+                return np.nan
         
         
     def r(self, t):
@@ -130,6 +132,15 @@ class Orbit:
         ecc_ = Orbit.ecc_an(self, t)
         b_ = self.e / (1 + (1 - self.e**2)**0.5)
         return ecc_ + 2 * np.arctan(b_ * sin(ecc_) / (1 - b_ * cos(ecc_))) 
+    
+    @property
+    def t_los(self):
+        if abs(Orbit.true_an(self, self.T/2) - self.nu_los) < 1e-6:
+            return self.T/2
+        else:
+            to_solve = lambda t_: Orbit.true_an(self, t_) - self.nu_los
+            t_to_obs = brentq(to_solve, -self.T/2, self.T/2)
+            return t_to_obs
     
     def x(self, t):
         return self.a * (cos(Orbit.ecc_an(self, t)) - self.e)
@@ -147,11 +158,80 @@ class Orbit:
         return np.array([Orbit.x(self, t), Orbit.y(self, t), Orbit.z(self, t)])   
 
     def calculate(self):
-        t_tab = np.linspace(0, self.T, int(self.n))
+        t_tab = np.linspace(-self.T * 1.1, self.T * 1.1, int(self.n))
         self.xtab = Orbit.x(self, t_tab)
         self.ytab = Orbit.y(self, t_tab)
         self.ztab = Orbit.y(self, t_tab)    
+        self.ttab = t_tab
+        self.rtab = Orbit.r(self, t_tab)
+        self.nu_truetab = Orbit.true_an(self, t_tab)
+
+    def peek(self, ax=None,
+             showtime = None,
+             times_pos = (),
+             color='k',
+             xplot='time'):
+        if ax is None:
+            fig, ax = plt.subplots(nrows=1, ncols=3,
+                                   figsize=(12, 4))
+            
+        if showtime is None:
+            showtime = [-self.T/2, self.T/2]
+        show_cond  = np.logical_and(self.ttab > showtime[0], 
+                                    self.ttab < showtime[1])
+            
+        # ax[0].set_aspect('equal')
+        ax[0].plot(self.xtab[show_cond], self.ytab[show_cond], color=color) # plot the orbit
+        ax[0].scatter(x=0, y=0, color='r') # place an optical star in the center of coordinates
+        ax[0].plot([0, 3 * self.b * cos(self.nu_los)],
+                [0, 3 * self.b * sin(self.nu_los)],
+                color=color, ls='--') # plot a line from the optical star to the direction of an observer
+
+        if xplot=='time':
+            x_norma = DAY
+            xlabel_ = 't, days'
+        if xplot=='phase':
+            x_norma = self.T
+            xlabel_ = r'$t/T$'
+
+        ax[0].set_title('Orbit')
+        ax[1].set_title('r(t)')
+        ax[2].set_title(r'$\nu_\mathrm{true}(t)$')
+        
+        ax[1].plot(self.ttab[show_cond]/x_norma, self.rtab[show_cond], color=color)
+        ax[2].plot(self.ttab[show_cond]/x_norma, self.nu_truetab[show_cond] * 180. / pi, color=color)
+        ax[1].axvline(x=self.t_los/x_norma, color=color, alpha=0.3)
+        ax[2].axvline(x=self.t_los/x_norma, color=color, alpha=0.3)
+
+        ax[1].set_ylabel(r'$r_\mathrm{sp}$, cm')
+        ax[2].set_ylabel(r'$\nu_\mathrm{true}$, deg')
+        ax[1].set_xlabel(xlabel_)
+        ax[2].set_xlabel(xlabel_)
+        
+        
+        for t_pos in times_pos:
+            ax[0].scatter(x=Orbit.x(self, t_pos),
+                          y=Orbit.y(self, t_pos), color=color) # draw a point at time t_pos
+            
+            ax[1].scatter(x=t_pos/x_norma, y=Orbit.r(self, t_pos), color=color)
+            ax[2].scatter(x=t_pos/x_norma,
+                          y=Orbit.true_an(self, t_pos) * 180. / pi, color=color)
+            
+        
+
+        for ax_ in ax[1:]:
+            pos = ax_.get_position()        # get [left, bottom, width, height]
+            size = min(pos.width, pos.height)
+            # Make the axes square, preserving center
+            new_pos = [
+                pos.x0 + (pos.width - size) / 2,
+                pos.y0 + (pos.height - size) / 2,
+                size,
+                size,
+            ]
+            ax_.set_position(new_pos)
     
-    
+    plt.show()
+            
     
     

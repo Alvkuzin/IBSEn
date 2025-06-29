@@ -2,7 +2,7 @@
 import numpy as np
 from numpy import pi, sin, cos, exp
 
-from .utils import lor_trans_e_spec_iso, lor_trans_b_iso, lor_trans_ug_iso, loggrid
+from .utils import lor_trans_e_spec_iso, lor_trans_b_iso, lor_trans_ug_iso, loggrid, trapz_loglog
 from scipy.integrate import trapezoid
 import astropy.units as u
 from ibsen.get_obs_data import get_parameters
@@ -300,9 +300,9 @@ class SpectrumIBS:
             sed_spl_ = self.sed_spl
         except:
             raise ValueError('The specrum has not been set yet.')
-        _E = loggrid(e1, e2, n_dec = 50)
+        _E = loggrid(e1, e2, n_dec = 250)
         sed_here = sed_spl_(_E)
-        return trapezoid(sed_here / _E, _E)
+        return trapz_loglog(sed_here / _E, _E)
             
     
     def fluxes(self,  bands):

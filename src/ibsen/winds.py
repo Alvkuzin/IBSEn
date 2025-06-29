@@ -1,5 +1,5 @@
 import numpy as np
-from numpy import pi#, sin, cos
+from numpy import pi, sin, cos
 from scipy.optimize import brentq
 
 from astropy import constants as const
@@ -9,6 +9,7 @@ from astropy import constants as const
 from ibsen.get_obs_data import get_parameters
 from .utils import rotated_vector, mydot, mycross, n_from_v, absv
 from ibsen.orbit import Orbit
+import matplotlib.pyplot as plt
 
 
 G = float(const.G.cgs.value)
@@ -326,5 +327,122 @@ class Winds:
         return Winds.u_g_density(r_from_s = r_se,
                                  r_star = self.Ropt,
                                  T_star = self.Topt)
+    
+    def peek(self, ax=None,
+             showtime = None,
+             plot_rs = True,):
+        if ax is None:
+            if plot_rs:
+                fig, ax = plt.subplots(nrows=1, ncols=2)
+            else:
+                fig, ax = plt.subplots(nrows=1, ncols=1)
+
+        if plot_rs:  ax0 = ax[0]
+        else: ax0 = ax
+
+        if showtime is None:
+            showtime = [-self.orbit.T/2, self.orbit.T/2]
+            
+        _t = np.linspace(showtime[0], showtime[1], 307)
+ 
+            
+        show_cond  = np.logical_and(self.orbit.ttab > showtime[0], 
+                                    self.orbit.ttab < showtime[1])
         
+        ############# ------ disk passage related stuff ------- ###############
+
+        t1, t2 = self.times_of_disk_passage
+        # print('disk equator passage times [days]:')
+        # print(t1/DAY, t2/DAY)
+        vec_disk1, vec_disk2 = self.vectors_of_disk_passage
+
+        
+        orb_x, orb_y = self.orbit.xtab[show_cond], self.orbit.ytab[show_cond]
+        x_scale = np.max(np.array([
+            np.abs(np.min(orb_x)), np.abs(np.max(orb_x))
+            ]))
+        y_scale = np.max(np.array([
+                np.abs(np.min(orb_y)), np.abs(np.max(orb_y))            
+                ]))
+        
+        coord_scale = np.max(np.array([
+            np.min(orb_x), np.max(orb_x), np.min(orb_y), np.max(orb_y),
+            np.max( (orb_x**2 + orb_y**2)**0.5 )
+            ]))
+        ################### ------ drawing the orbit again ------- ################
+        ax0.plot(orb_x, orb_y)                                                    
+        ax0.scatter(0, 0, c='r')                                                  
+        ax0.plot([np.min(orb_x),
+                    np.max(orb_x)], [0, 0],
+                    color='k', ls='--')      
+        ax0.plot([0, coord_scale*cos(self.orbit.nu_los)],                            
+                [0, coord_scale*sin(self.orbit.nu_los)], color='g', ls='--')        
+        xx1, yy1, zz1 = vec_disk1                                                 
+        xx2, yy2, zz2 = vec_disk2                                                 
+        ax0.plot([xx1, xx2], [yy1, yy2], color='orange', ls='--', lw=2)    
+        # if display=='whole':                                                      
+        #     ax[0].set_xlim(-self.orbit.a*2, self.orbit.a*2)                                           
+        #     ax[0].set_ylim(-self.orbit.b*2, self.orbit.b*2)                                           
+                                                                                
+        # if display == 'near_per':                                                 
+
+        ############################################################################
+
+        # if display == 'whole':
+        #     x_forp = np.linspace(-self.orbit.a*2, self.orbit.a*2, 301)
+        #     y_forp = np.linspace(-self.orbit.b*2, self.orbit.b*2, 305)
+        # if display == 'near_per':
+        #     x_forp = np.linspace(-self.orbit.r_periastr*2, self.orbit.r_periastr*2, 301)
+        #     y_forp = np.linspace(-self.orbit.b*1.6, self.orbit.b*1.6, 305)
+        x_forp = np.linspace(np.min(orb_x)*3, np.max(orb_x)*4, 301)
+        y_forp = np.linspace(np.min(orb_y)*2, np.max(orb_y)*2, 201)
+        
+
+        XX, YY = np.meshgrid(x_forp, y_forp, indexing='ij')
+        disk_ps = np.zeros((x_forp.size, y_forp.size))
+        for ix in range(x_forp.size):
+            for iy in range(y_forp.size):
+                vec_from_s_ = np.array([x_forp[ix], y_forp[iy], 0])
+                r_ = (x_forp[ix]**2 + y_forp[iy]**2)**0.5
+                disk_ps[ix, iy] = (Winds.decr_disk_pressure(self, vec_from_s_) 
+                                +
+                                Winds.polar_wind_pressure(self, r_)
+                                )
+        disk_ps = np.log10(disk_ps)
+
+        # P_norm = (disk_ps - np.min(disk_ps)) / (np.max(disk_ps) - np.min(disk_ps))
+
+        from matplotlib.colors import ListedColormap, Normalize
+
+        ########### some magic for displaying the winds, never mind ################
+        orange_rgba = np.array([1.0, 0.5, 0.0, 1.0]) 
+        n_levels = 20
+        colors = np.tile(orange_rgba[:3], (n_levels, 1))  
+        alphas = np.linspace(0, 1, n_levels)           
+        colors = np.column_stack((colors, alphas))     
+        custom_cmap = ListedColormap(colors)
+        disk_ps[(XX**2 + YY**2)**0.5 < self.Ropt] = np.nan
+        disk_ps[disk_ps < np.nanmax(disk_ps)-4.5] = np.nan
+        # norm = Normalize(vmin=np.min(disk_ps), vmax=np.max(disk_ps))
+        ax0.contourf(XX, YY, disk_ps, levels=n_levels, cmap=custom_cmap)          
+
+        ax0.set_xlim(-1.2*x_scale, 1.2*min(x_scale, self.orbit.r_periastr) )
+        ax0.set_ylim(-1.2*y_scale, 1.2*y_scale) 
+        #######################################################################    
+        
+        if plot_rs:
+            dists_se = Winds.dist_se_1d(self, _t)
+            rs = self.orbit.r(_t)
+            ax[1].plot(_t/DAY, dists_se, label='se', ls='--')
+            ax[1].plot(_t/DAY, rs, label = 'sp', ls='-')
+            ax[1].plot(_t/DAY, rs-dists_se, label='pe', ls=':')
+            ax[1].axvline(x=t1/DAY, color='k', alpha=0.3)
+            ax[1].axvline(x=t2/DAY, color='k', alpha=0.3)
+            ax[1].axvline(x=self.orbit.t_los/DAY, color='g', ls='--', alpha=0.3)
+            
+            ax[0].set_title('overview')
+            ax[1].set_title(r'$r_\mathrm{SP}, r_\mathrm{SE}, r_\mathrm{PE}$')
+            ax[1].legend()
+        
+
         

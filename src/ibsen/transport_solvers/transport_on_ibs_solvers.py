@@ -381,7 +381,7 @@ def Denys_solver(t_evol, edot_func, Q_func, emin = 6e8, emax=5e14,
         if( dt < mindt): mindt = dt
         tt += dt
         all_times.append (tt)
-        if( ee<1e8): break # we dont care for low energies
+        if( ee<emin/6): break # we dont care for low energies
     all_times = np.array(all_times)
     all_energies = np.array( all_energies )
     # print('Denys method takes ---%s--- sec'%(time.time() - start_time))
@@ -394,7 +394,7 @@ def Denys_solver(t_evol, edot_func, Q_func, emin = 6e8, emax=5e14,
     # -------------------------------------------------------------------------
     
     # if not test_energies:
-    #     test_energies = np.logspace(np.log10(emax/10), np.log10(emax), 300)
+        # test_energies = np.logspace(np.log10(emax/10), np.log10(emax), 300)
     log_all_times = np.log(all_times)
     log_all_energies = np.log(all_energies) #all interpolation in log-space to keep precision
 
@@ -411,13 +411,14 @@ def Denys_solver(t_evol, edot_func, Q_func, emin = 6e8, emax=5e14,
     rates = np.zeros(des.shape)
     erates = np.zeros(des.shape)
     for ee in range(len(spec_energies)-1):
-        e1 = spec_energies[ee] / 1e12
-        e2 = spec_energies[ee+1]/1e12
-        rates[ee] = injection_rate*quad(Q, e1, e2, limit=10000)[0] *1e12 # electrons/s ;1e12 since injection_rate is /eV and quad is TeV
-        erates[ee] = injection_rate*quad(Q, e1, e2, limit=10000)[0] *1e12
-    E_Q = lambda e_tev: Q(e_tev) * e_tev
-    int_spec = quad(E_Q, spec_energies[0]/1e12, 
-                    spec_energies[-1]/1e12, limit=10000, epsabs=1e-10, 
+        e1 = spec_energies[ee] 
+        e2 = spec_energies[ee+1]
+        rates[ee] = injection_rate*quad(Q, e1, e2, limit=10000)[0]# electrons/s ;1e12 since injection_rate is /eV and quad is TeV
+        erates[ee] = injection_rate*quad(Q, e1, e2, limit=10000)[0]
+        
+    E_Q = lambda e_ev: Q(e_ev) * e_ev
+    int_spec = quad(E_Q, spec_energies[0], 
+                    spec_energies[-1], limit=10000, epsabs=1e-10, 
                     epsrel=1e-10) # TeV^2
     # print int_spec
     int_spec = int_spec[0] * injection_rate*1.6e12 # erg/s
@@ -449,6 +450,7 @@ def Denys_solver(t_evol, edot_func, Q_func, emin = 6e8, emax=5e14,
         t_offsets = np.exp( np.interp( np.log(injection_energies),
                                       log_all_energies[::-1], log_all_times[::-1] ) )
         norm = mindt_for_this_e*rates[eidx]
+        print(ninjections)
         evolve_for = t_offsets[eidx] + np.linspace(0, show_time, ninjections )  
         final_energies = np.exp( np.interp( np.log(evolve_for), log_all_times, log_all_energies) )
         vals, edgs = np.histogram(final_energies, bins=test_energies)
@@ -463,7 +465,7 @@ def Denys_solver(t_evol, edot_func, Q_func, emin = 6e8, emax=5e14,
             vals_here, edgs = Evolve1Energy(iii, t_evol)
             return vals_here
         # n_cores = multiprocessing.cpu_count()
-        res= Parallel(n_jobs=4)(delayed(Lesha_func)(iii) for iii in range(0, len(spec_energies)-1 ))
+        res= Parallel(n_jobs=10)(delayed(Lesha_func)(iii) for iii in range(0, len(spec_energies)-1 ))
         res=np.array(res)
         vals = np.sum(res, axis=0)
     if not parall:

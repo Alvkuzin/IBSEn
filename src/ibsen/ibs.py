@@ -13,6 +13,45 @@ from astropy import constants as const
 C_LIGHT = 2.998e10
 SIGMA_BOLTZ = float(const.sigma_sb.cgs.value)
 
+from matplotlib.collections import LineCollection
+from matplotlib.colors import ListedColormap, Normalize
+
+########## some helper function for drawing, whatev ############################ 
+####################################################################################
+####################################################################################
+def plot_with_gradient(fig, ax, xdata, ydata, some_param, colorbar=False, lw=2,
+                       ls='-', colorbar_label='grad', minimum=None, maximum=None):
+    """
+    to draw the plot (xdata, ydata) on the axis ax with color along the curve
+    marking some_param. The color changes from blue to red as some_param increases.
+    You may provide your own min and max values for some_param:
+    minimum and maximum, then the color will be scaled according to them.
+    """
+    # Prepare line segments
+    points = np.array([xdata, ydata]).T.reshape(-1, 1, 2)
+    segments = np.concatenate([points[:-1], points[1:]], axis=1)
+    
+    # Normalize some_p values to the range [0, 1] for colormap
+    vmin_here = minimum if minimum is not None else np.min(some_param)
+    vmax_here = maximum if maximum is not None else np.max(some_param)
+    
+    norm = Normalize(vmin=vmin_here, vmax=vmax_here)
+    
+    # Create the LineCollection with colormap
+    lc = LineCollection(segments, cmap='coolwarm', norm=norm)
+    lc.set_array(some_param[:-1])  # color per segment; same length as segments
+    lc.set_linewidth(lw)
+    
+    # Plot
+
+    line = ax.add_collection(lc)
+    
+    if colorbar:
+        fig.colorbar(line, ax=ax, label=colorbar_label)  # optional colorbar
+        
+    ax.set_xlim(xdata.min(), xdata.max())
+    ax.set_ylim(ydata.min(), ydata.max())
+
 ### --------------------- For shock front shape --------------------------- ###
 _here = Path(__file__).parent          # points to pulsar/
 _ibs_data_file = _here / "tab_data" / "Shocks4.nc"
@@ -20,7 +59,7 @@ ds_sh = xr.load_dataset(_ibs_data_file)
 
 class IBS:
     """
-    TODO: Should create 2 classes. 1st: IBS_dimentionless, without any winds, just 
+    TODO: Maybe create 2 classes. 1st: IBS_dimentionless, without any winds, just 
     with beta. 2nd: IBS_real, it would take winds and optional time and 
     return rescaled, rotated ibs.
     """
@@ -68,7 +107,7 @@ class IBS:
     
     
     def calculate(self):
-        if self.winds is not None:
+        if isinstance(self.winds, Winds):
             self.beta = self.winds.beta_eff(self.t_forbeta)
         (xp, yp, tp, rp, sp, t1p, r1p, tanp, theta_inf_,
          r_apex) = IBS.approx_IBS(self, full_output=True)
@@ -406,9 +445,9 @@ class IBS:
             return ibs_resc
 
         if not isinstance(self.winds, Winds):
-            print("""To rescale the IBS, you should provide winds:Winds.
-                     For now, just copying the class... """)
-            return IBS.rotate(self, phi=0)
+            raise ValueError("You should provide winds:Winds to rescale the IBS to "
+                             "the position of the pulsar. Use winds = Winds(...) "
+                             "to create the winds object.")
     
     @property
     def real_dopl(self):
@@ -424,10 +463,75 @@ class IBS:
         # _nu_tr = self.winds.orbit.true_an(self.t_forbeta)
         # return IBS.dopl(self, _nu_tr, nu_los=0)
         
+    
+    def peek(self, ax=None, show_winds=False,
+             ibs_color='k', to_label=True,
+             showtime=None):
         
+        if ax is None:
+            import matplotlib.pyplot as plt
+            fig, ax = plt.subplots(figsize=(8, 6))    
 
+        if to_label:
+            label = rf'$\beta = {self.beta}$'
+        else:
+            label = None
+
+        if ibs_color not in ('doppler', ):
+            ax.plot(self.x, self.y, color=ibs_color, label = label)
+            ax.axvline(x = self.x_apex, color=ibs_color, alpha = 0.3)
+
+        # find out if IBS is rescaled to the position of the pulsar
+        rescaled = False
+        if np.max(self.s) > 10: rescaled = True
+
+        if ibs_color == 'doppler':
+
+            if rescaled:
+                dopls = self.real_dopl
+            else:
+                raise ValueError("You should rescale the IBS to the position of the pulsar "
+                                 "before plotting the doppler factor. Use rescale_to_position() "
+                                 "method of IBS class. Note that for this you should " 
+                                 "provide winds:Winds to the IBS class.")
+            plot_with_gradient(fig=None, ax=ax, xdata=self.x, ydata=self.y,
+                               some_param=dopls, colorbar=False, lw=2, ls='-',
+                               colorbar_label='Doppler factor')
+        if show_winds:
+            if not isinstance(self.winds, Winds):
+                raise ValueError("You should provide winds:Winds to show the winds.")
+            self.winds.peek(ax=ax, showtime=showtime,
+                            plot_rs=False)
+
+        if not rescaled:
+            ax.scatter(1, 0, color='b') # star is in (1, 0)
+            ax.scatter(0, 0, color='r') # pulsar is in (0, 0)
+            ax.axhline(y=0, color='k', ls='--', alpha = 0.3)
+            ax.axvline(x=0, color='k', ls='--', alpha = 0.3)
+
+        if rescaled:
+            puls_vector = self.winds.orbit.vector_sp(self.t_forbeta)
+            _xp, _yp = puls_vector[0], puls_vector[1]
+            ax.scatter(_xp, _yp, color='b') # pulsaR
+            # ...and the star was alreay plotted in the winds.peek()
+            ax.plot( [1.5*_xp, 1.5*_yp], [0, 0], color='k', alpha=0.3, ls='--',)
+
+            ##################################################################################
+            show_cond  = np.logical_and(self.winds.orbit.ttab > showtime[0], 
+                                        self.winds.orbit.ttab < showtime[1])
+            orb_x, orb_y = self.winds.orbit.xtab[show_cond], self.winds.orbit.ytab[show_cond]
+            x_scale = np.max(np.array([
+                np.abs(np.min(orb_x)), np.abs(np.max(orb_x))
+                ]))
+            y_scale = np.max(np.array([
+                    np.abs(np.min(orb_y)), np.abs(np.max(orb_y))            
+                ]))
+            
+            ax.set_xlim(-1.2*x_scale, 1.2*min(x_scale, self.winds.orbit.r_periastr) )
+            ax.set_ylim(-1.2*y_scale, 1.2*y_scale) 
         
             
-            
+        ax.legend()
+ 
             
             
