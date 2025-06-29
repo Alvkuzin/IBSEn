@@ -310,7 +310,7 @@ class LightCurve:
                                 distance = self.distance,
                                 )
         if self.full_spec:
-            E_ = np.logspace(2, 14, 1000),
+            E_ = np.logspace(2, 14, 1000)
         else:
             E_ = []
             for band in self.bands:
@@ -431,30 +431,20 @@ class LightCurve:
         self.indexes = indexes    
 
     def peek(self,
-                 ax=None, 
-                 show_index=False, 
-                     to_save=None, 
-                     save_format='png', 
-                     to_show_legend=True, 
-                     to_show_grid=True,
-                     to_show_title=True,
-                     fontsize=12,
-                     ylog=False,
-                     **kwargs):
+                ax=None, 
+                **kwargs):
+        
+
         """
         Plot the light curve.
         """
         if ax is None:
             import matplotlib.pyplot as plt
-            if  show_index:
-                fig, ax = plt.subplots(nrows=2, ncols=1)
-            if not show_index:
-                fig, ax = plt.subplots(figsize=(10, 6))
+            fig, ax = plt.subplots(nrows=1, ncols=4,
+                                    figsize=(16, 4))
         
-        if show_index:
-            ax_first = ax[0]
-        else:
-            ax_first = ax
+        ax_first = ax[0]
+
 
         for i, band in enumerate(self.bands):
             log_lo = np.log10(band[0])
@@ -463,48 +453,49 @@ class LightCurve:
                         self.fluxes[:, i], 
                         label=f'logE = {log_lo:.2}-{log_hi:.2} eV', **kwargs)
             
-        if show_index:
-            for i, band in enumerate(self.bands_ind):
-                log_lo = np.log10(band[0])
-                log_hi = np.log10(band[1])
-                ax[1].plot(self.times/DAY, 
-                            self.indexes[:, i], 
-                            label=f'logE = {log_lo:.2}-{log_hi:.2} eV', **kwargs)
+        for i, band in enumerate(self.bands_ind):
+            log_lo = np.log10(band[0])
+            log_hi = np.log10(band[1])
             
+            ax[1].plot(self.times/DAY, 
+                        self.indexes[:, i], 
+                        label=f'logE = {log_lo:.2}-{log_hi:.2} eV', **kwargs)
+        
+        _nt = self.times.size
+        for i_t in (int(0.2*_nt), int(0.5*_nt), int(0.8*_nt)):
+            t_now_days = self.times[i_t] / DAY
+            ax[2].scatter(self.e_phots[i_t], self.seds[i_t],
+                        label=f't = {t_now_days:.2f} days',  **kwargs,
+                        )
+            ax[3].plot(self.ibs_classes[i_t].s, self.emiss_s[i_t],
+                        label=f't = {t_now_days:.2f} days', **kwargs)
 
-        if to_show_legend:
-            ax_first.legend()
-            if show_index:
-                ax[1].legend()
         
-        if to_show_grid:
-            ax_first.grid()
-            if  show_index:
-                ax[1].grid()
+        ax_first.grid()
+        for i in range(4):   
+            ax[i].legend()
+            ax[i].grid()
+            if i == 2: 
+                ax[i].set_xscale('log')
+                ax[i].set_yscale('log')
+            if i == 0:
+                ax[i].set_yscale('log')
 
-        if to_show_title:
-            ax_first.set_title('Light Curve')
-            if show_index:
-                ax[1].set_title('Index')
+        ax_first.set_title('Light Curve')
+        ax[1].set_title('Index')
+        ax[2].set_title('SED')
+        ax[3].set_title('Emissivity')
         
-        if not show_index:
-            ax_first.set_xlabel('t, days')
-            ax_first.set_ylabel(r'$F$ erg s^-1 cm^-2')
-            ax_first.tick_params(labelsize=fontsize)
+        ax_first.set_xlabel('t, days')
+        ax_first.set_ylabel(r'$F$ erg s^-1 cm^-2')
         
-        if show_index:
-            ax[1].set_xlabel('t, days')
-            ax_first.set_ylabel(r'$F$ erg s^-1 cm^-2')
-            ax[1].set_ylabel(r'$\Gamma$')
-            ax_first.tick_params(labelsize=fontsize)
-            ax[1].tick_params(labelsize=fontsize)
-        
-        if ylog:
-            ax_first.set_yscale('log')
-        
-        if to_save:
-            plt.savefig(to_save, format=save_format)
-        
+        ax[1].set_xlabel('t, days')
+        ax[2].set_xlabel('E, eV')
+        ax[3].set_xlabel(r'$s$')
+
+        maxsed = np.nanmax(self.seds)
+        ax[2].set_ylim(1e-3*maxsed, maxsed*1.5)
+
         plt.show()
 
 

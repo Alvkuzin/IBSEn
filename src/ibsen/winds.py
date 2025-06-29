@@ -286,12 +286,13 @@ class Winds:
         pres_d = lambda r_se: Winds.decr_disk_pressure(self, vec_r_from_s = nwind * r_se)
         pres_p = lambda r_se: Winds.pulsar_wind_pressure(self, r_from_p = np.abs(r_sp - r_se))
         to_solve = lambda r_se: pres_d(r_se) + pres_w(r_se) - pres_p(r_se)
-        rse = brentq(to_solve, self.Ropt, r_sp*(1-1e-6))
+        rse = brentq(to_solve, self.Ropt, r_sp*(1-1e-8))
         ### ---------------- test if the solution is good -------------------------
         p_ref = pres_p(rse)
         max_rel_err = np.max(to_solve(rse) / p_ref)
         if max_rel_err > 1e-3:
-            print('t = %s error is huge: %s'%(t/DAY, max_rel_err))  
+            raise ValueError(f'Huge relative error of {max_rel_err} in the solution of the '
+                          'disk-wind balance equation at {t/DAY}    days. ')
         return rse
     
     def dist_se_1d(self, t):   

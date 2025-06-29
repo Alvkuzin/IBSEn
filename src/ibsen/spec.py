@@ -269,20 +269,23 @@ class SpectrumIBS:
         sed_e_down = trapezoid(sed_s_e_down, s_1d_dim, axis=0) /  div
         
         sed_tot = sed_e_up + sed_e_down
-        # print(sed_tot.shape)
-        # print(sed_s_e_down.shape)
-        
-        if self.abs_photoel:
-            sed_tot = sed_tot * absb.abs_photoel(E=E, Nh = self.nh_tbabs)
-        if self.abs_gg:
-            if self._orb.name != 'psrb': 
-                print('Using gg-abs tabulated for psrb')
-            sed_tot = sed_tot * absb.abs_gg_tab(E=E,
-                nu_los = self._orb.nu_los, t = self._ibs.t_forbeta, Teff=_Topt)
-            
+
         sed_s_ = np.zeros((2 * s_1d_dim.size, E.size))
         sed_s_[:s_1d_dim.size, :] = sed_s_e_down[::-1, :]
         sed_s_[s_1d_dim.size : 2*s_1d_dim.size, :] = sed_s_e_up
+        
+        if self.abs_photoel:
+            _abs_ph = absb.abs_photoel(E=E, Nh = self.nh_tbabs)
+            sed_tot = sed_tot * _abs_ph
+            sed_s_ = sed_s_ * _abs_ph[None, :]
+        if self.abs_gg:
+            if self._orb.name != 'psrb': 
+                raise Warning('abs_gg is only implemented for psrb orbit. Using abs_gg for psrb orbit.')
+            _abs_gg = absb.abs_gg_tab(E=E,
+                nu_los = self._orb.nu_los, t = self._ibs.t_forbeta, Teff=_Topt)
+            sed_tot = sed_tot * _abs_gg
+            sed_s_ = sed_s_ * _abs_gg[None, :]
+            
 
         if to_set_onto_ibs:
             self.sed_s = sed_s_
@@ -333,5 +336,62 @@ class SpectrumIBS:
             indexes_.append(SpectrumIBS.index(self, e1, e2))
         return np.array(indexes_)
         
+
+    def peek(self, ax=None, 
+            to_label=True,
+        show_many = True,
+        **kwargs):
+    
+        if ax is None:
+            import matplotlib.pyplot as plt
+            fig, ax = plt.subplots(1, 2, figsize=(8, 4))    
+
+        if self.sed is None:
+            raise ValueError("You should call `calculate()` first to set SED")
+        
+        
+        emiss_s = trapezoid(self.sed_s, self.e_ph, axis=1)
+
+        ax[0].plot(self.e_ph, self.sed, label=None, **kwargs)
+        ax[1].plot(self._ibs.s, emiss_s/np.max(emiss_s), **kwargs)
+
+
+
+        if show_many:
+            _n = self._ibs.n
+            for i_s in (int(_n * 0.15),
+                        int(_n * 0.7),
+                        int(_n*1.3),
+                        int(_n*1.85),
+                    ):
+                ilo, ihi = int(i_s-_n/10), int(i_s+_n/10)
+                label_interval = f"{(self._ibs.s[ilo] / self._ibs.s_max) :.2f}-{(self._ibs.s[ihi] / self._ibs.s_max) :.2f}"
+                label_s = fr"$s = ({label_interval})~ s_\mathrm{{max}}$"
+                int_sed_here = (trapezoid(self.sed_s[ilo : ihi, :], self._ibs.s[ilo:ihi], axis=0) / 
+                                (self._ibs.s[ihi] - self._ibs.s[ilo]) 
+                                )
+   
+                ax[0].plot(self.e_ph, int_sed_here, alpha=0.3,
+                           label=label_s, **kwargs)
+
+            
+        if to_label:
+            ax[0].legend()
+            # ax[1].legend()
+        
+        ax[0].set_xscale('log')
+        ax[0].set_yscale('log')
+        ax[0].set_xlabel(r'$E_\gamma$ [eV]')
+        ax[0].set_ylabel(r'$E^2 dN/dE$ [erg cm$^{-2}$ s$^{-1}$]')
+        ax[0].set_title(r'SED')
+
+        ax[0].set_ylim(np.nanmax(self.sed) * 1e-3, np.nanmax(self.sed) * 2)
+        ax[1].set_ylim(1e-3, 1.4)
+        
+
+        ax[1].set_xlabel(r'$s$')
+        # ax[1].set_ylabel(r'Emissivity')
+        ax[1].set_yscale('log')
+        ax[1].set_title(r'Emissivity along IBS')
             
             

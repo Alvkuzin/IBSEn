@@ -659,10 +659,63 @@ class ElectronsOnIBS:
         if to_set_onto_ibs:
             self.dNe_de_IBS = dNe_de_IBS
             self.e_vals = e_vals
+            e_sed = np.array([ dNe_de_IBS[i_s, :] * e_vals**2 for i_s in range(dNe_de_IBS.shape[0])])
+            self.e_sed = e_sed
             # print('dNe_de_IBS and e_vals are set')
         if to_return:
             return dNe_de_IBS, e_vals
+        
+
+    def peek(self, ax=None, 
+             to_label=True,
+            show_many = True,
+            **kwargs):
     
+        if ax is None:
+            import matplotlib.pyplot as plt
+            fig, ax = plt.subplots(1, 2, figsize=(8, 6))    
+
+        if self.dNe_de_IBS is None or self.e_vals is None:
+            raise ValueError("You should call `calculate()` first to set dNe_de_IBS and e_vals")
+        
+        
+        Ne_tot_s = trapezoid(self.dNe_de_IBS, self.e_vals, axis=1)
+        e_sed_averageS = trapezoid(self.e_sed[self.ibs.n+1 : 2*self.ibs.n-1, :],
+                self.ibs.s[self.ibs.n+1 : 2*self.ibs.n-1], axis=0) / np.max(self.ibs.s)
+
+
+        ax[0].plot(self.e_vals, e_sed_averageS, label=f'{self.cooling}', **kwargs)
+        ax[1].plot(self.ibs.s, Ne_tot_s,  label=f'{self.cooling}', **kwargs)
+
+
+        if show_many:
+            _n = self.ibs.n
+            for i_s in (
+                        int(_n * (1+1/7)),
+                        int(_n*(1+1/2)),
+                        int(_n*(1+6/7))
+                    ):
+                label_s = fr"{self.cooling}, $s = {(self.ibs.s[i_s] / self.ibs.s_max) :.2f} s_\mathrm{{max}}$"
+   
+                ax[0].plot(self.e_vals, self.e_sed[i_s, :], alpha=0.3,
+                           label=label_s, **kwargs)
+
+            
+        if to_label:
+            ax[0].legend()
+            ax[1].legend()
+        
+        ax[0].set_xscale('log')
+        ax[0].set_yscale('log')
+        ax[0].set_xlabel(r'$E$ [eV]')
+        ax[0].set_ylabel(r'$E^2 dN/dE$ [eV]')
+        ax[0].set_title(r'$dN/dE$')
+
+        ax[0].set_ylim(np.nanmax(self.e_sed) * 1e-3, np.nanmax(self.e_sed) * 2)
+
+        ax[1].set_xlabel(r'$s$')
+        ax[1].set_ylabel(r'$N(s)$')
+        ax[1].set_title(r'$N(s)$')    
     
     
     

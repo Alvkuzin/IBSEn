@@ -130,14 +130,15 @@ class IBS:
     def s_interp(self, s_, what):
         """
         Returns the interpolated value of 'what' (x, y, ...) at the coordinate 
-        s_. Returned is the value for only one (upper) horn of the shock.
-        MIND THE DIMENSIONLESS! 
+        s_. Returned is the value for only one (upper) horn of the shock. That is,
+        the spline for the UPPER HORN will be created and then the value at s_ will be returned.
+        MIND THE DIMENSIONLESS! If 
  
         Parameters
         ----------
         s_ : np.ndarray
             The arclength along the upper horn of the IBS to find the value at.
-            Dimensionless.
+            Dimensionless (for non-scaled IBS) or in [cm] (for rescaled IBS).
 
         Returns
         -------
@@ -148,8 +149,8 @@ class IBS:
             data = getattr(self, what)
         except AttributeError:
             raise ValueError(f"No such attribute '{what}' in IBS.")
-        s_to_interp = self.s[self.y >= 0]
-        data_to_interp = data[self.y >= 0]
+        s_to_interp = self.s[self.theta >= 0]
+        data_to_interp = data[self.theta >= 0]
         interpolator = interp1d(s_to_interp, data_to_interp, kind='linear', 
                     bounds_error=False, fill_value='extrapolate')
         return interpolator(s_)
@@ -160,7 +161,7 @@ class IBS:
 
     
     def gma(self, s):
-        return 1. + (self.gamma_max - 1.) * s / self.s_max_g        
+        return 1. + (self.gamma_max - 1.) * np.abs(s) / self.s_max_g        
         # return self.gamma_max
 
         
@@ -362,7 +363,7 @@ class IBS:
             yp = np.concatenate((-yp[::-1], yp))
             tp = np.concatenate((-tp[::-1], tp))
             rp = np.concatenate((rp[::-1], rp))
-            sp = np.concatenate((sp[::-1], sp))
+            sp = np.concatenate((-sp[::-1], sp))
             t1p = np.concatenate((-t1p[::-1], t1p))
             r1p = np.concatenate((r1p[::-1], r1p))
             tanp = np.concatenate((-tanp[::-1], pi+tanp))
@@ -411,8 +412,8 @@ class IBS:
             if nu_los is not None: _nu_los = nu_los
                 
         
-        angs[self.y < 0] = _nu_los - nu_true - (self.tangent)[self.y < 0]
-        angs[self.y >= 0] = _nu_los - nu_true + (pi - self.tangent)[self.y >= 0]
+        angs[self.theta < 0] = _nu_los - nu_true - (self.tangent)[self.theta < 0]
+        angs[self.theta >= 0] = _nu_los - nu_true + (pi - self.tangent)[self.theta >= 0]
         
         return IBS.doppler_factor(g_vel = self.g, ang_ = angs)
     
