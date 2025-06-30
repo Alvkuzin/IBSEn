@@ -53,7 +53,7 @@ conda activate myenv
 
 If you follow the second way, ensure that you install IBSEn in myenv. 
 
-**But if you just want to use IBSEn for Orbit / Winds & Stars / IBS / electron evolution and NOT for specta / light curves, you're good to go installing Naima at all.** 
+**But if you just want to use IBSEn for Orbit / Winds & Stars / IBS / electron evolution and NOT for specta / light curves, you're good to go without installing Naima at all.** 
 
 Scripts now are not suited for running from the command line... To find out if the installation works, try doing this in some Python script:
 ```python
