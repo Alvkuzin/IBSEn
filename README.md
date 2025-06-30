@@ -55,12 +55,8 @@ If you follow the second way, ensure that you install IBSEn in myenv.
 
 **But if you just want to use IBSEn for Orbit / Winds & Stars / IBS / electron evolution and NOT for specta / light curves, you're good to go installing Naima at all.** 
 
-
-## Usage
-
-Scripts now are not suited for running from the command line... Try doing this in some Python script:
+Scripts now are not suited for running from the command line... To find out if the installation works, try doing this in some Python script:
 ```python
-import ibsen
 from ibsen.orbit import Orbit
 
 orb = Orbit('psrb')
@@ -72,6 +68,16 @@ You should get the output of
 1236.724526 0.874 25.252805357865252
 ```
 
+
+## Usage
+The package consists of six main classes, you can find their description and usage examples in ``tutorials``:
+ 
+ 1. ``Orbit`` (self-explanatory);
+ 2. ``Winds`` in which currently all information about NS, optical star, and their winds is stored. Here you can calculate the magnetic/photon fields in the random point from stars, winds pressure, or the position of the equilibrium between pulsar and optical stars winds as a function of time;
+ 3. ``IBS``: Intrabinary shock - an object with stuff about IBS geometry and the bulk motion along it;
+ 4. ``ElectronsOnIBS`` describes the population of ultra-relativistic electrons on the IBS, allows to calculate stationary e-spectra in each point of IBS;
+ 5. ``SpectrumIBS`` computes the non-thermal spectrum of the ultra-relativistic electrons;
+ 6. ``LightCurve`` performs the spectrum calculation for a number of moments of time calculating the light curve.
 
 See tutorials in `tutorials` folder.
 
