@@ -8,6 +8,7 @@ requires-python = ">=3.8"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
+include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -15,4 +16,10 @@ where = ["src"]
 [build-system]
 requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.package-data]
+"ibsen" = ["tab_data/*.nc",
+           "absorbtion/absorb_tab/*.txt",
+           "absorbtion/absorb_tab/*.nc"]
+
 

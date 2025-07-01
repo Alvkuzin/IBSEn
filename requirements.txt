@@ -2,8 +2,5 @@ numpy
 scipy
 astropy
 matplotlib
-pathlib
 joblib
-multiprocessing
-time
 xarray
