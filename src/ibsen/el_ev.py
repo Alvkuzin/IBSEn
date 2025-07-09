@@ -7,9 +7,9 @@ from scipy.integrate import trapezoid, cumulative_trapezoid, solve_ivp
 from scipy.interpolate import interp1d
 # import time
 # from joblib import Parallel, delayed
-from .utils import  beta_from_g
+from .utils import  beta_from_g, loggrid
 
-from ibsen.transport_solvers.transport_on_ibs_solvers import solve_for_n
+from ibsen.transport_solvers.transport_on_ibs_solvers import solve_for_n, nonstat_1zone_solver_new
 # import xarray as xr
 # from pathlib import Path
 
@@ -224,6 +224,38 @@ def evolved_e_advection(s_, edot_func, f_inject_func,
         dNe_de_IBS[dNe_de_IBS <= 0] = np.min(dNe_de_IBS[dNe_de_IBS>0]) / 3.14
         
         return dNe_de_IBS, e_vals
+    
+def evolved_e_nonstat_1zone(emin_grid, emax_grid, t_start, t_stop, edot_func,
+                            q_func, edot_args = (), q_args = (), n_dec_e=35,
+                            n_t=105, init='stat'):
+    e_grid = loggrid(x1 = emin_grid, x2 = emax_grid, n_dec = int(n_dec_e))
+    t_grid = np.linspace(t_start, t_stop, n_t)
+
+    _Q_func = lambda e_, t_: q_func(e_, t_, *q_args),
+    _T_func = lambda e_, t_: np.inf * e_ * t_,
+    _Edot_func = lambda e_, t_: edot_func(e_, t_, *edot_args),
+    
+    if init == 'zero':
+        _init_func = lambda e_: 0 * e_
+    elif init == 'stat':
+       _n_init = stat_distr(Es = e_grid,  
+                            Qs = _Q_func(e_grid, t_start),
+                            Edots = _Edot_func(e_grid, t_start)
+                            ) 
+       _spl_log_n_init = interp1d(x = np.log10(e_grid), y = np.log10(_n_init))
+       _init_func = lambda e_: 10**_spl_log_n_init(np.log10(e_))
+    else:
+        raise ValueError('init should be only zero or stat')
+        
+    n_ = nonstat_1zone_solver_new(e_grid=e_grid,
+                                  time_grid=t_grid,
+                                  Q_func = _Q_func,
+                                  T_func = _T_func,
+                                  Edot_func = _Edot_func,
+                                  n_e1 = lambda t_: 0 * t_,
+                                  n_e2 = lambda t_: 0 * t_,
+                                  n_t0 = _init_func)
+    return n_
     
 def evolved_e(cooling, r_SP, ss, rs, thetas, edot_func, f_inject_func,
               tot_loss_args, f_args, vel_func = None, v_args = None, emin = 1e9, 
@@ -716,8 +748,126 @@ class ElectronsOnIBS:
         ax[1].set_xlabel(r'$s$')
         ax[1].set_ylabel(r'$N(s)$')
         ax[1].set_title(r'$N(s)$')    
+        
+        
+class NonstatElectronEvol:
+    """
+    A class representing the non-stationary evolution of ultrarelativistic
+    electrons in one-zone model (this zone = apex of the IBS).
+"""
+    def __init__(self, winds, t_start, t_stop, n_t=105, 
+                     
+    to_inject_e = 'ecpl',   # el_ev
+    to_inject_theta = '3d', ecut = 1.e12, p_e = 2., norm_e = 1.e37,
+    eta_a = 1.,
+    eta_syn = 1., eta_ic = 1.,
+    emin = 1e9, emax = 5.1e14, to_cut_e = True, 
+    emin_grid=3e8, emax_grid=6e14,
+     n_dec_e=35, 
+
+     init_distr='stat',
+    ):
+       
+        self.t_start = t_start
+        self.t_stop = t_stop
+        self.n_t = 105
+        self.winds = winds
+
+        if eta_a  is None:
+            self.eta_a = 1e20
+        else:
+            self.eta_a = eta_a # to scale adiabatic time
+
+        self.eta_syn = eta_syn # to scale synchrotron losses
+        self.eta_ic = eta_ic # to scale inverse compton losses
+        
+        self.to_inject_e = to_inject_e # injection function along energies
+        self.to_inject_theta = to_inject_theta # injection function along theta
+        self.p_e = p_e  # injection function spectral index
+        self.ecut = ecut  # injection function cutoff energy
+        self.norm_e = norm_e # injection function normalization
+        self.emin = emin  # minimum energy for the injection function
+        self.emax = emax  # maximum energy for the injection function
     
+        self.to_cut_e = to_cut_e # whether to leave only the part emin < e < emax
+  
+        self.emin_grid = emin_grid
+        self.emax_grid = emax_grid
+        self.n_dec_e = n_dec_e
+        self.init_distr = init_distr
+        
+        self.dNe_de_IBS = None
+        self.e_vals = None
+        
+            
+    def _set_grids(self):
+        self.e_grid = loggrid(x1 = self.emin_grid, 
+                              x2 = self.emax_grid, 
+                              n_dec = int(self.n_dec_e)
+                              )
+        self.t_grid = np.linspace(self.t_start, self.t_stop, self.n_t)
     
+    def edot_apex(self, e_, t_): 
+        r_sa = self.winds.dist_se_1d(t_)
+        B_p_apex, B_s_apex = self.winds.magn_fields_apex(t_)
+        return total_loss(ee = e_, 
+                          B = B_p_apex + B_s_apex, 
+                          Topt = self.ibs.winds.Topt,
+                          Ropt=self.ibs.winds.Ropt,
+                          dist = r_sa, 
+                          eta_flow = self.eta_a, 
+                          eta_syn = self.eta_syn,
+                          eta_IC = self.eta_ic)
+
+    def f_inject(self, e_, t_): 
+
+        if self.to_inject_e == 'ecpl':
+            e_part = ecpl(e_, ind=self.p_e, ecut=self.ecut, norm=1.)
+        elif self.to_inject_e == 'pl':
+            e_part = pl(e_, ind=self.p_e, norm=1)
+        else:
+            raise ValueError("I don't know this to_inject_theta. It should be pl or ecpl.")
+            
+            
+        ### if we assume that the `emission zone` is the forward hemisphere,
+        ### then the NUMBER of e don't change with time. The density changes,
+        ### of course
+        
+        result = e_part * self.norm_e 
+        
+        if self.to_cut_e:
+            mask = (e_ < self.emin) | (e_ > self.emax)
+            result = np.where(mask, 0.0, result)
+        
+        # now normalize the number of injected particles. I do it like this:
+        # I ensure that the total number per second: N(s) = \int n(s, E) dE 
+        # of electrons is half the Normalization
+        N_total = trapezoid(result, e_)
+        overall_coef = self.norm_e / 2 / N_total
+        return result * overall_coef
+    
+    def stat_distr_at_time(self, t_):
+        return stat_distr(Es = self.e_grid,  
+                    Qs = NonstatElectronEvol.f_inject(self, self.e_grid, t_),
+                    Edots = NonstatElectronEvol.edot_apex(self, self.e_grid, t_)
+                             )
     
     
 
+    def calculate(self, to_return=False):
+        _edot_func = lambda e_, t_: NonstatElectronEvol.edot_apex(self, e_, t_)
+        _q_func = lambda e_, t_:  NonstatElectronEvol.f_inject(self, e_, t_)
+        
+        dNe_de = evolved_e_nonstat_1zone(emin_grid=self.min_grid,
+                                     emax_grid=self.emax_grid,
+                                     t_start=self.t_start, t_stop=self.t_stop,
+                                     edot_func = _edot_func,
+                                    q_func = _q_func, n_dec_e=self.n_dec_e,
+                                    n_t=self.n_t, init=self.init_distr)
+        self.dNe_de = dNe_de
+        self.ntot = trapezoid(dNe_de, self.e_grid, axis=1)
+        self.dNe_de_avg = ( trapezoid(dNe_de, self.t_grid, axis=0) / 
+                           (np.max(self.t_grid) - np.min(self.t_grid)) 
+                           )
+        if to_return:
+            return dNe_de

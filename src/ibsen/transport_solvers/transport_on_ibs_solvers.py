@@ -488,5 +488,208 @@ def Denys_solver(t_evol, edot_func, Q_func, emin = 6e8, emax=5e14,
     dxx = ( test_energies[1:] - test_energies[:-1])
     return xx, vals / dxx #E   and   dN/dE
     
+
+def nonstat_1zone_solver(
+    time_grid,
+    e_grid,
+    Edot,
+    T_func,
+    Q_func,
+    n_e1,
+    n_e2
+):
+    """
+    Solve the non-stationary transport equation:
+        dn/dt + d(Edot * n)/de + n/T = Q
+    using Crank–Nicolson (2nd-order in time) with an upwind finite-volume
+    discretization on a non-uniform energy grid.
+
+    Parameters
+    ----------
+    time_grid : array_like, shape (Nt,)
+        Monotonic time points.
+    e_grid : array_like, shape (Ne,)
+        Energy grid centers (non-uniform).
+    Edot : callable
+        Edot(e, t) -> (Ne,) array of energy-loss rates.
+    T_func : callable
+        T_func(e, t) -> (Ne,) array of decay timescales.
+    Q_func : callable
+        Q_func(e, t) -> (Ne,) array of source terms.
+
+    Returns
+    -------
+    n : ndarray, shape (Nt, Ne)
+        Particle distribution at all times and energies.
+    """
+    # Arrays
+    t_arr = np.asarray(time_grid)
+    e_arr = np.asarray(e_grid)
+    Nt, Ne = len(t_arr), len(e_arr)
+
+    # Non-uniform cell widths (finite-volume)
+    de_plus = np.empty(Ne)
+    de_minus = np.empty(Ne)
+    de_plus[:-1] = e_arr[1:] - e_arr[:-1]
+    de_plus[-1] = de_plus[-2]
+    de_minus[1:] = de_plus[:-1]
+    de_minus[0] = de_minus[1]
+    # Control volume width
+    de_center = 0.5 * (de_plus + de_minus)
+
+    # Initialize solution
+    n = np.zeros((Nt, Ne))
+
+    # Identity
+    I = sp.eye(Ne, format='csc')
+
+    # Time-stepping
+    for j in range(Nt - 1):
+        dt = t_arr[j+1] - t_arr[j]
+        t0, t1 = t_arr[j], t_arr[j+1]
+        tm = 0.5 * (t0 + t1)
+
+        # Evaluate mid-step source
+        Qm = Q_func(e_arr, tm)
+
+        def build_A(t):
+            # Build tridiagonal A such that A @ n = d(Edot*n)/de + n/T
+            main = np.zeros(Ne)
+            upper = np.zeros(Ne-1)
+
+            E = Edot(e_arr, t)
+            Tval = T_func(e_arr, t)
+
+            # Interior cells
+            for i in range(1, Ne-1):
+                # face-centered Edot
+                E_im = 0.5 * (E[i-1] + E[i])
+                E_ip = 0.5 * (E[i] + E[i+1])
+                # divergence: (E_ip * n_{i+1} - E_im * n_i) / Δe_i
+                main[i] = -E_im / de_center[i] + 1.0 / Tval[i]
+                upper[i] = E_ip / de_center[i]
+
+            # Boundary rows: enforce n=0
+            main[0] = main[-1] = 1.0
+            # Assemble sparse
+            return sp.diags(
+                diagonals=[main, upper, np.zeros(Ne-1)],
+                offsets=[0, 1, -1],
+                format='csc'
+            )
+
+        A0 = build_A(t0)
+        A1 = build_A(t1)
+
+        # Crank–Nicolson matrices
+        LHS = I + 0.5 * dt * A1
+        RHS = I - 0.5 * dt * A0
+
+        # RHS vector
+        b = RHS.dot(n[j]) + dt * Qm
+        b[0] = n_e1(t1)
+        b[-1] = n_e2(t1)
+
+        # Advance
+        n[j+1] = spla.spsolve(LHS, b)
+
+    return n
     
-    
+def nonstat_1zone_solver_new(e_grid, time_grid, Q_func, T_func, Edot_func,
+                    n_e1, n_e2, n_t0):
+    """
+    Solve dn/dt + d(Edot*n)/de + n/T = Q using backward-Euler in time (implicit) and
+    second-order central differences on a non-uniform energy grid, leveraging sparse
+    linear solves for efficiency.
+
+    Parameters
+    ----------
+    e_grid : 1D array of floats, non-uniform energy grid of length Ne
+    t_grid : 1D array of floats, uniform time grid of length Nt
+    Q : function Q(e, t) -> array_like or scalar
+    T : function T(e, t) -> array_like or scalar
+    Edot : function Edot(e, t) -> array_like or scalar
+    n_e1 : function n_e1(t) -> Dirichlet BC at e_grid[0]
+    n_e2 : function n_e2(t) -> Dirichlet BC at e_grid[-1]
+    n_t0 : function n_t0(e) -> initial condition at t_grid[0]
+
+    Returns
+    -------
+    n : 2D array of shape (Nt, Ne)
+        solution values n[t_index, e_index]
+    """
+    Ne = len(e_grid)
+    Nt = len(time_grid)
+    dt = time_grid[1] - time_grid[0]
+
+    # Precompute spacings
+    h_minus = np.empty(Ne)
+    h_plus  = np.empty(Ne)
+    for i in range(1, Ne):
+        h_minus[i] = e_grid[i] - e_grid[i-1]
+    for i in range(0, Ne-1):
+        h_plus[i] = e_grid[i+1] - e_grid[i]
+
+    # Allocate solution array and set IC
+    n = np.zeros((Nt, Ne), dtype=float)
+    n[0, :] = n_t0(e_grid)
+
+    # Time-stepping
+    for m in range(Nt-1):
+        t_new = time_grid[m+1]
+        n0_new = n_e1(t_new)
+        nN_new = n_e2(t_new)
+
+        # Nint = Ne - 2
+        data = []
+        rows = []
+        cols = []
+        rhs = np.zeros(Ne)
+
+        for idx in range(Ne):
+            if idx == 0:
+                # Dirichlet BC at e_min
+                rows.append(0)
+                cols.append(0)
+                data.append(1.0)
+                rhs[0] = n0_new
+            elif idx == Ne - 1:
+                # Dirichlet BC at e_max
+                rows.append(Ne - 1)
+                cols.append(Ne - 1)
+                data.append(1.0)
+                rhs[-1] = nN_new
+            else:
+                hm = h_minus[idx]
+                hp = h_plus[idx]
+
+                Qi = Q_func(e_grid[idx], t_new)
+                Ti = T_func(e_grid[idx], t_new)
+                Edoti = Edot_func(e_grid[idx], t_new)
+
+                ai = -hp / (hm * (hm + hp))
+                bi = (hp - hm) / (hm * hp)
+                ci = hm / (hp * (hm + hp))
+
+                Aii = 1.0 / dt + 1.0 / Ti + bi * Edoti
+                Aim1 = ai * Edot_func(e_grid[idx - 1], t_new)
+                Aip1 = ci * Edot_func(e_grid[idx + 1], t_new)
+
+                # Fill matrix row for idx
+                rows += [idx, idx, idx]
+                cols += [idx - 1, idx, idx + 1]
+                data += [Aim1, Aii, Aip1]
+
+                rhs[idx] = Qi + n[m, idx] / dt
+
+
+        # build sparse matrix (size Nint x Nint)
+        A = sp.csr_matrix((data, (rows, cols)), shape=(Ne, Ne))
+
+        # solve
+        n_new = spla.spsolve(A, rhs)
+
+        # assign
+        n[m+1, :] = n_new
+
+    return n
