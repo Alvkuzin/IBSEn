@@ -3,8 +3,10 @@ from scipy.integrate import solve_ivp
 from joblib import Parallel, delayed
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
-from scipy.integrate import quad
-
+from scipy.integrate import quad, cumulative_trapezoid
+from scipy.interpolate import interp1d
+from ibsen.utils import loggrid, interplg
+from math import ceil
 
 def solveTransport(a1, a2, Q, x_grid, y_grid,
                      xcond = 0, ycond = 0, parall = False,
@@ -338,25 +340,91 @@ def solve_for_n(v_func, edot_func, f_func, v_args, edot_args, f_args,
         a1_args = (), a2_args = (), Q_args = f_args,    
             x_grid = s_grid, y_grid = e_grid, conserv = True, bound = bound)
         return nsmall
+    
+    
+    
 
 def Denys_solver(t_evol, edot_func, Q_func, emin = 6e8, emax=5e14,
-                 overshoot_time = 1e5, step_shortest_cool_time = 1e-3,
+                 overshoot_time = 1e5, step_shortest_cool_time = 1e-1,
                  edot_args = (), Q_args = (),
-                 injection_rate = 3e32, test_energies = False, parall = False):
+                 injection_rate = 3e32, test_energies = None, parall = False):
     """
-    Should write the  documentation here
+    A code for solving the time-dependent energy transfer equation
+    dn/dt + d(Edot n)/dt = Q.
+    The idea is the following. 
+    
+    Stage 1: for ONE electron with maximum energy,
+    solve the equation dE/dt = Edot and find the solution E(t). This solution
+    can be inverted to yield a function t_evol(E).
+    
+    Stage 2: to find how ONE energy bin of energy E0 with N0 particles evolve,
+    we first evolve all N0 particles from max energy to E0 for a time 
+    t_evol(E0). Then we evolve it for aonther real evolution time t_evol, while
+    at the same time injecting particles with a rate Q, constant for t_evol
+    (so that the number of injected particles is simply growing linearly with
+     time from 0 to t_evol). Thus, for one energy bin, we obtain a histogram 
+    of (N0 + Q(E0) * t_evol) particles distributed along some energies.
+    
+    Stage 3: We perform Stage 2 for all energies. 
+    
+    For now, we start with zero initial conditions: n(t=0, E) = 0.
+    
+    Functions edot and Q are ONLY e-dependent! That is, edot=edot(e, *edot_args),
+    Q = Q(e, q_args).
+    
+
+    Parameters
+    ----------
+    t_evol : float
+        For what time to evolve.
+    edot_func : callable
+        An energy loss [eV/s] function edot_func(1d-arr, *edot_args) -> 1d-arr.
+    Q_func : TYPE
+        An injection [1/s] function Q_func(1d-arr, *Q_args) -> 1d-arr.
+    emin : float, optional
+        Min energy [eV] for creating test_energeis is it's not provided.
+        The default is 6e8.
+    emax : float, optional
+        Max energy [eV] for creating test_energeis is it's not provided.
+        The default is 5e14.
+    overshoot_time : float, optional
+        The time for which the one-electron dependence E(t) should be 
+        tabulated. The default is 1e5.
+    step_shortest_cool_time : float, optional
+        The multiplicator for the shortest cooling time. The default is 1e-1.
+    edot_args : tuple, optional
+        Optional arguments for Edot-function. The default is ().
+    Q_args : tuple, optional
+        Optional arguments for Q-function. The default is ().
+    injection_rate : float, optional
+        Multiplicator for Q-function, should you need it. The default is 3e32.
+    test_energies : 1d-array, optional
+        DESCRIPTION. The default is None.
+    parall : Bool, optional
+        Whether to parallel calculations. The default is False.
+
+    Returns
+    -------
+    TYPE
+        ee [eV], dN/de [1/eV]: energies of bin centres and spectrum.
+
     """
-    edot = lambda e_: edot_func(e_, *edot_args)
-    Q = lambda e_: Q_func(e_, *Q_args)
+    # edot = lambda e_: edot_func(e_, *edot_args)
+    # Q = lambda e_: Q_func(e_, *Q_args)
+    edot = edot_func
+    Q = Q_func
     if overshoot_time < 1.05 * t_evol:
         overshoot_time = 1.05 * t_evol
     # -------------------------------------------------------------------------
     #                               Stage 1
     # -------------------------------------------------------------------------
     
+    if test_energies is None:
+        test_energies = loggrid(x1 = emin, x2 = emax, n_dec = 61)
+    
     # injection_rate : electron @emin: electrons/s/eV
-    ee = emax
-    tcool_beginning = - emax / edot(emax) 
+    ee = np.max(test_energies)
+    tcool_beginning = - np.min( test_energies / edot(test_energies) )
     #first step
     tt = 0
     dt = min( [step_shortest_cool_time * tcool_beginning,
@@ -384,19 +452,26 @@ def Denys_solver(t_evol, edot_func, Q_func, emin = 6e8, emax=5e14,
         if( ee<emin/6): break # we dont care for low energies
     all_times = np.array(all_times)
     all_energies = np.array( all_energies )
-    # print('Denys method takes ---%s--- sec'%(time.time() - start_time))
-    # mindt_realmin = mindt
-    # mindt = all_times * step_shortest_cool_time*10 # here mindt is overwritten, now, it's an array
-    # mindt = mindt + mindt_realmin
     
+    # logspl_t_e = interp1d(np.log10(all_times), np.log10(all_energies))
+    # logspl_back_e_t = interp1d(np.log10(all_energies[::-1]), np.log10(all_times[::-1]))
+    
+    
+
     # -------------------------------------------------------------------------
-    #                           Stage 2: Two Towers
+    #                           Stage 2: 
     # -------------------------------------------------------------------------
     
-    # if not test_energies:
-        # test_energies = np.logspace(np.log10(emax/10), np.log10(emax), 300)
+
     log_all_times = np.log(all_times)
     log_all_energies = np.log(all_energies) #all interpolation in log-space to keep precision
+
+    func_t_e = lambda t_: np.exp( np.interp( np.log(t_), log_all_times, log_all_energies) )
+    func_e_t = lambda e_:  np.exp( np.interp( 
+                                  np.log(e_),
+                                  log_all_energies[::-1], log_all_times[::-1] 
+                                  ) 
+                       )
 
     #evolve whole spectrum
     spec_energies = test_energies[np.logical_and(test_energies> emin, test_energies<emax) ] #energies at which electrons spectrum is defined
@@ -409,27 +484,13 @@ def Denys_solver(t_evol, edot_func, Q_func, emin = 6e8, emax=5e14,
     # LESHA::::::: it's we just calculating the flux (for e!) in each band???...
     # LESHA::::::: basically, to know the histogram of how much particles are in a band
     rates = np.zeros(des.shape)
-    erates = np.zeros(des.shape)
+    # erates = np.zeros(des.shape)
     for ee in range(len(spec_energies)-1):
         e1 = spec_energies[ee] 
         e2 = spec_energies[ee+1]
         rates[ee] = injection_rate*quad(Q, e1, e2, limit=10000)[0]# electrons/s ;1e12 since injection_rate is /eV and quad is TeV
-        erates[ee] = injection_rate*quad(Q, e1, e2, limit=10000)[0]
-        
-    E_Q = lambda e_ev: Q(e_ev) * e_ev
-    int_spec = quad(E_Q, spec_energies[0], 
-                    spec_energies[-1], limit=10000, epsabs=1e-10, 
-                    epsrel=1e-10) # TeV^2
-    # print int_spec
-    int_spec = int_spec[0] * injection_rate*1.6e12 # erg/s
-    # int_spec1 = np.ma.sum(erates)
-    
-    # sed_init_e = rates*injection_energies**2/des
-    # N_init_e = trapezoid(sed_init_e / injection_energies**2, injection_energies) #integral of dN/dE
-    
-    # -------------------------------------------------------------------------
-    #                          Stage 3 and final
-    # -------------------------------------------------------------------------
+        # erates[ee] = injection_rate*quad(Q, e1, e2, limit=10000)[0]
+
     
     def Evolve1Energy(eidx, show_time):
         """ 
@@ -446,15 +507,29 @@ def Denys_solver(t_evol, edot_func, Q_func, emin = 6e8, emax=5e14,
         # mindt_for_this_e = np.exp( np.interp(np.log(injection_energies[eidx]),
                                       # log_all_energies[::-1], np.log(mindt)[::-1] ) )
         mindt_for_this_e = mindt        
-        ninjections = int( show_time / mindt_for_this_e) 
-        t_offsets = np.exp( np.interp( np.log(injection_energies),
-                                      log_all_energies[::-1], log_all_times[::-1] ) )
+        ninjections = ceil( show_time / mindt_for_this_e) 
+        # t_offsets = np.exp( np.interp( 
+        #                               np.log(injection_energies),
+        #                               log_all_energies[::-1], log_all_times[::-1] 
+        #                               ) 
+        #                    )
+        t_offsets = func_e_t(injection_energies)
+        # t_offsets = interplg(x = injection_energies, xdata = all_energies[::-1],
+                             # ydata = all_times[::-1])
+        # t_offsets = 10**logspl_back_e_t(np.log10(injection_energies))
         norm = mindt_for_this_e*rates[eidx]
-        print(ninjections)
+        # print(ninjections)
         evolve_for = t_offsets[eidx] + np.linspace(0, show_time, ninjections )  
-        final_energies = np.exp( np.interp( np.log(evolve_for), log_all_times, log_all_energies) )
+        # final_energies = np.exp( np.interp( np.log(evolve_for), log_all_times, log_all_energies) )
+        final_energies = func_t_e(evolve_for)
+        # final_energies = interplg(x = evolve_for, xdata = all_times, ydata=all_energies)
+        # final_energies = 10**logspl_t_e(np.log10(evolve_for))
         vals, edgs = np.histogram(final_energies, bins=test_energies)
         return norm*vals, edgs #evolved spectrum of delta-function continuously injected at spec_energies[eidx]
+
+    # -------------------------------------------------------------------------
+    #                          Stage 3 and final
+    # -------------------------------------------------------------------------
 
     """
     just for our conveniance, I leave an option of paralleling the
@@ -468,7 +543,7 @@ def Denys_solver(t_evol, edot_func, Q_func, emin = 6e8, emax=5e14,
         res= Parallel(n_jobs=10)(delayed(Lesha_func)(iii) for iii in range(0, len(spec_energies)-1 ))
         res=np.array(res)
         vals = np.sum(res, axis=0)
-    if not parall:
+    else:
         first = True
         all_rates = [] #E^2 dN/dE/dt for electrons
         all_eavs = []
@@ -489,14 +564,17 @@ def Denys_solver(t_evol, edot_func, Q_func, emin = 6e8, emax=5e14,
     return xx, vals / dxx #E   and   dN/dE
     
 
+# def Denys_solver_continuous()
+
 def nonstat_1zone_solver(
     time_grid,
     e_grid,
-    Edot,
+    Edot_func,
     T_func,
     Q_func,
     n_e1,
-    n_e2
+    n_e2,
+    n_t0
 ):
     """
     Solve the non-stationary transport equation:
@@ -539,7 +617,10 @@ def nonstat_1zone_solver(
 
     # Initialize solution
     n = np.zeros((Nt, Ne))
-
+    
+    # Set initial conditions
+    n[0, :] = n_t0(e_arr)
+    
     # Identity
     I = sp.eye(Ne, format='csc')
 
@@ -557,7 +638,7 @@ def nonstat_1zone_solver(
             main = np.zeros(Ne)
             upper = np.zeros(Ne-1)
 
-            E = Edot(e_arr, t)
+            E = Edot_func(e_arr, t)
             Tval = T_func(e_arr, t)
 
             # Interior cells
@@ -595,101 +676,207 @@ def nonstat_1zone_solver(
 
     return n
     
-def nonstat_1zone_solver_new(e_grid, time_grid, Q_func, T_func, Edot_func,
-                    n_e1, n_e2, n_t0):
+# def nonstat_1zone_solver_new(e_grid, time_grid, Q_func, T_func, Edot_func,
+#                     n_e1, n_e2, n_t0):
+#     """
+#     Solve dn/dt + d(Edot*n)/de + n/T = Q using backward-Euler in time (implicit) and
+#     second-order central differences on a non-uniform energy grid, leveraging sparse
+#     linear solves for efficiency.
+
+#     Parameters
+#     ----------
+#     e_grid : 1D array of floats, non-uniform energy grid of length Ne
+#     t_grid : 1D array of floats, uniform time grid of length Nt
+#     Q : function Q(e, t) -> array_like or scalar
+#     T : function T(e, t) -> array_like or scalar
+#     Edot : function Edot(e, t) -> array_like or scalar
+#     n_e1 : function n_e1(t) -> Dirichlet BC at e_grid[0]
+#     n_e2 : function n_e2(t) -> Dirichlet BC at e_grid[-1]
+#     n_t0 : function n_t0(e) -> initial condition at t_grid[0]
+
+#     Returns
+#     -------
+#     n : 2D array of shape (Nt, Ne)
+#         solution values n[t_index, e_index]
+#     """
+#     Ne = len(e_grid)
+#     Nt = len(time_grid)
+#     dt = time_grid[1] - time_grid[0]
+
+#     # Precompute spacings
+#     h_minus = np.empty(Ne)
+#     h_plus  = np.empty(Ne)
+#     for i in range(1, Ne):
+#         h_minus[i] = e_grid[i] - e_grid[i-1]
+#     for i in range(0, Ne-1):
+#         h_plus[i] = e_grid[i+1] - e_grid[i]
+
+#     # Allocate solution array and set IC
+#     n = np.zeros((Nt, Ne), dtype=float)
+#     n[0, :] = n_t0(e_grid)
+
+#     # Time-stepping
+#     for m in range(Nt-1):
+#         t_new = time_grid[m+1]
+#         n0_new = n_e1(t_new)
+#         nN_new = n_e2(t_new)
+
+#         # Nint = Ne - 2
+#         data = []
+#         rows = []
+#         cols = []
+#         rhs = np.zeros(Ne)
+#         Qi_new_arr = Q_func(e_grid, t_new)
+#         Ti_new_arr = T_func(e_grid, t_new)
+#         Edoti_new_arr = Edot_func(e_grid, t_new)
+
+#         for idx in range(Ne):
+#             if idx == 0:
+#                 # Dirichlet BC at e_min
+#                 rows.append(0)
+#                 cols.append(0)
+#                 data.append(1.0)
+#                 rhs[0] = n0_new
+#             elif idx == Ne - 1:
+#                 # Dirichlet BC at e_max
+#                 rows.append(Ne - 1)
+#                 cols.append(Ne - 1)
+#                 data.append(1.0)
+#                 rhs[-1] = nN_new
+#             else:
+#                 hm = h_minus[idx]
+#                 hp = h_plus[idx]
+
+#                 Qi = Qi_new_arr[idx]
+#                 Ti = Ti_new_arr[idx]
+#                 Edoti = Edoti_new_arr[idx]
+
+#                 ai = -hp / (hm * (hm + hp))
+#                 bi = (hp - hm) / (hm * hp)
+#                 ci = hm / (hp * (hm + hp))
+
+#                 Aii = 1.0 / dt + 1.0 / Ti + bi * Edoti
+#                 Aim1 = ai * Edoti_new_arr[idx-1]
+#                 Aip1 = ci * Edoti_new_arr[idx+1]
+
+#                 # Fill matrix row for idx
+#                 rows += [idx, idx, idx]
+#                 cols += [idx - 1, idx, idx + 1]
+#                 data += [Aim1, Aii, Aip1]
+
+#                 rhs[idx] = Qi + n[m, idx] / dt
+
+
+#         # build sparse matrix (size Nint x Nint)
+#         A = sp.csr_matrix((data, (rows, cols)), shape=(Ne, Ne))
+
+#         # solve
+#         n_new = spla.spsolve(A, rhs)
+
+#         # assign
+#         n[m+1, :] = n_new
+# 
+    # return n
+
+
+def nonstat_characteristic_solver(t_evol, test_energies,
+                          edot_func, Q_func,                          
+                          init_cond = 0.):
     """
-    Solve dn/dt + d(Edot*n)/de + n/T = Q using backward-Euler in time (implicit) and
-    second-order central differences on a non-uniform energy grid, leveraging sparse
-    linear solves for efficiency.
+    Solve dn/dt + d(Edot*n)/dE = Q via method of characteristics,
+    for time-independent Edot(E) and Q(E), some given initial cond.
 
-    Parameters
-    ----------
-    e_grid : 1D array of floats, non-uniform energy grid of length Ne
-    t_grid : 1D array of floats, uniform time grid of length Nt
-    Q : function Q(e, t) -> array_like or scalar
-    T : function T(e, t) -> array_like or scalar
-    Edot : function Edot(e, t) -> array_like or scalar
-    n_e1 : function n_e1(t) -> Dirichlet BC at e_grid[0]
-    n_e2 : function n_e2(t) -> Dirichlet BC at e_grid[-1]
-    n_t0 : function n_t0(e) -> initial condition at t_grid[0]
+    Same signature as Denys_solver, but uses analytic characteristic integration:
 
-    Returns
-    -------
-    n : 2D array of shape (Nt, Ne)
-        solution values n[t_index, e_index]
+
+    Returns:
+    --------
+    xx : mid-energy of bins (len = len(test_energies)-1)
+    n     : dN/dE at each bin center, shape (len(xx),)
     """
-    Ne = len(e_grid)
-    Nt = len(time_grid)
-    dt = time_grid[1] - time_grid[0]
+    # 1. define energy grid
 
-    # Precompute spacings
-    h_minus = np.empty(Ne)
-    h_plus  = np.empty(Ne)
-    for i in range(1, Ne):
-        h_minus[i] = e_grid[i] - e_grid[i-1]
-    for i in range(0, Ne-1):
-        h_plus[i] = e_grid[i+1] - e_grid[i]
+    # bin centers and edges
+    edges = test_energies
+    centers = np.sqrt(edges[:-1] * edges[1:])
 
-    # Allocate solution array and set IC
-    n = np.zeros((Nt, Ne), dtype=float)
-    n[0, :] = n_t0(e_grid)
-
-    # Time-stepping
-    for m in range(Nt-1):
-        t_new = time_grid[m+1]
-        n0_new = n_e1(t_new)
-        nN_new = n_e2(t_new)
-
-        # Nint = Ne - 2
-        data = []
-        rows = []
-        cols = []
-        rhs = np.zeros(Ne)
-
-        for idx in range(Ne):
-            if idx == 0:
-                # Dirichlet BC at e_min
-                rows.append(0)
-                cols.append(0)
-                data.append(1.0)
-                rhs[0] = n0_new
-            elif idx == Ne - 1:
-                # Dirichlet BC at e_max
-                rows.append(Ne - 1)
-                cols.append(Ne - 1)
-                data.append(1.0)
-                rhs[-1] = nN_new
-            else:
-                hm = h_minus[idx]
-                hp = h_plus[idx]
-
-                Qi = Q_func(e_grid[idx], t_new)
-                Ti = T_func(e_grid[idx], t_new)
-                Edoti = Edot_func(e_grid[idx], t_new)
-
-                ai = -hp / (hm * (hm + hp))
-                bi = (hp - hm) / (hm * hp)
-                ci = hm / (hp * (hm + hp))
-
-                Aii = 1.0 / dt + 1.0 / Ti + bi * Edoti
-                Aim1 = ai * Edot_func(e_grid[idx - 1], t_new)
-                Aip1 = ci * Edot_func(e_grid[idx + 1], t_new)
-
-                # Fill matrix row for idx
-                rows += [idx, idx, idx]
-                cols += [idx - 1, idx, idx + 1]
-                data += [Aim1, Aii, Aip1]
-
-                rhs[idx] = Qi + n[m, idx] / dt
+    # 2. build fine E-grid for tau and characteristic
+    # use edges as nodes
 
 
-        # build sparse matrix (size Nint x Nint)
-        A = sp.csr_matrix((data, (rows, cols)), shape=(Ne, Ne))
+    # # 3. compute tau(E) = integral from E[0] to E of dE'/speed
+    
+    E = edges
+    speed = np.abs(edot_func(E))
+    # reverse the grid so that cumulative_trapezoid integrates from E_max → E_min
+    tau_rev =cumulative_trapezoid(1./speed[::-1], E[::-1], initial=0)
+    # then flip back:
+    tau = tau_rev[::-1]
+    tau_max = tau[-1]
 
-        # solve
-        n_new = spla.spsolve(A, rhs)
+    # 4. build inverse mapping E_of_tau
 
-        # assign
-        n[m+1, :] = n_new
+    # 5. compute Q(E) along characteristic
+    Q_E = Q_func(E)
+    Edot_E = edot_func(E)
+    # Q vs tau: Q(tau_i) = Q(E_i)
 
-    return n
+    # 6. cumulative integral G(tau)= \int_0^tau Q d tau'
+    G = np.concatenate(([0.0], cumulative_trapezoid(Q_E * Edot_E, tau))) 
+    G_of_tau = interp1d(tau, G, kind='linear',# fill_value=(0.0, G[-1]), 
+                        assume_sorted=True)
+
+    # 7. compute n at bin centers: for each center energy E_c
+    # tau_c = tau(E_c) via interpolation
+    tau_of_E = interp1d(E, tau, kind='linear', 
+                        #fill_value='extrapolate',
+                        assume_sorted=True)
+    E_of_tau = interp1d(tau, E, kind='linear',
+                        #fill_value='extrapolate', 
+                        assume_sorted=True)
+ 
+        
+
+    tau_c = tau_of_E(centers)
+    tau_end = tau_c + t_evol
+    # clamp to tau_max
+    tau_end = np.minimum(tau_end, tau_max)
+
+    # n(E_c) = injection_rate * [G(tau_end) - G(tau_c)]
+    G_inject = (G_of_tau(tau_end) - G_of_tau(tau_c))
+    # n_vals = injection_rate * G_
+    
+    if isinstance(init_cond, float):
+        e0_grid = edges
+        n0_grid = np.zeros(edges.size) + init_cond
+    elif (isinstance(init_cond, tuple) or isinstance(init_cond, list)):
+        # print('im here')
+        e0_grid, n0_grid = init_cond
+    else: 
+        raise ValueError('not suitable init cond: should be either float OR (e0_grid, n0_grid)')
+    
+    n0_of_E   = interp1d(e0_grid, n0_grid,
+                     kind='linear', fill_value=0.0,
+                     bounds_error=False)
+
+    # 1) ages at current centers
+    tau_c = tau_of_E(centers)       
+    tau0  = tau_c + t_evol
+    
+    # 2) only those with tau0 <= tau_max have an IC contribution
+    ic_mask = tau0 <= tau_max
+    
+    # 3) back‐track to initial energy E0
+    E0 = np.empty_like(centers)
+    E0[ic_mask] = E_of_tau(tau0[ic_mask])
+    
+    # 4) compute IC term in numerator
+    G_init = np.zeros_like(centers)
+    G_init[ic_mask] = (edot_func(E0[ic_mask])
+                     * n0_of_E(E0[ic_mask]))
+    
+    # 5) total solution
+    n_vals = (G_init + G_inject) / edot_func(centers)
+
+        
+    return centers, n_vals 

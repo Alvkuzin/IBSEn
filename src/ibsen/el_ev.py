@@ -7,9 +7,9 @@ from scipy.integrate import trapezoid, cumulative_trapezoid, solve_ivp
 from scipy.interpolate import interp1d
 # import time
 # from joblib import Parallel, delayed
-from .utils import  beta_from_g, loggrid
+from ibsen.utils import  beta_from_g, loggrid, t_avg_func
 
-from ibsen.transport_solvers.transport_on_ibs_solvers import solve_for_n, nonstat_1zone_solver_new
+from ibsen.transport_solvers.transport_on_ibs_solvers import solve_for_n, nonstat_characteristic_solver
 # import xarray as xr
 # from pathlib import Path
 
@@ -193,7 +193,7 @@ def evolved_e_advection(s_, edot_func, f_inject_func,
         
         # extend_u = 10; extend_d = 10; 
         extend_u = 2; extend_d = 10; 
-        Ns, Ne = 601, 603 #!!!
+        Ns, Ne = 601, 603 
         # Ns, Ne = 201, 203 
         Ne_real = int( Ne * np.log10(extend_u * emax / extend_d / emin) / np.log10(emax / emin) )
         e_vals_sample = np.logspace(np.log10(emin / extend_d), np.log10(emax * extend_u), Ne_real)
@@ -213,7 +213,7 @@ def evolved_e_advection(s_, edot_func, f_inject_func,
                             f_args = f_args,
                             s_grid = s_vals, e_grid = e_vals, 
                             method = 'FDM_cons', bound = 'neun')
-        # #### Only leave the part of the solution between emin < e < emax #!!!
+        # #### Only leave the part of the solution between emin < e < emax 
         ind_int = np.logical_and(e_vals <= emax, e_vals >= emin)
         e_vals = e_vals[ind_int]
         dNe_de = dNe_de[:, ind_int]
@@ -225,37 +225,204 @@ def evolved_e_advection(s_, edot_func, f_inject_func,
         
         return dNe_de_IBS, e_vals
     
-def evolved_e_nonstat_1zone(emin_grid, emax_grid, t_start, t_stop, edot_func,
-                            q_func, edot_args = (), q_args = (), n_dec_e=35,
-                            n_t=105, init='stat'):
-    e_grid = loggrid(x1 = emin_grid, x2 = emax_grid, n_dec = int(n_dec_e))
-    t_grid = np.linspace(t_start, t_stop, n_t)
+def evolved_e_nonstat_1zone(t_start, t_stop,  
+                            q_func, edot_func, 
+                          init='stat',
+                          e_grid=None,
+                          emin=1e9, emax=5.1e14, coef_down=10, ne_dec=101,
+                          eps_big=3e-3, eps_small=1e-3, dt_min=1e-2*DAY,
+                          dt_max=5*DAY, dt_first=None, adaptive_dt=False):
+    """
+    A solver for a non-stationary equation of electrons population cooling n(e, t):
+    dn/dt + d(edot_func(e, t) * n)/de = q_func(e, t). It uses the solver for the equation
+    with stationary edot and q, and then applies it multiple times.
 
-    _Q_func = lambda e_, t_: q_func(e_, t_, *q_args),
-    _T_func = lambda e_, t_: np.inf * e_ * t_,
-    _Edot_func = lambda e_, t_: edot_func(e_, t_, *edot_args),
-    
-    if init == 'zero':
-        _init_func = lambda e_: 0 * e_
-    elif init == 'stat':
-       _n_init = stat_distr(Es = e_grid,  
-                            Qs = _Q_func(e_grid, t_start),
-                            Edots = _Edot_func(e_grid, t_start)
-                            ) 
-       _spl_log_n_init = interp1d(x = np.log10(e_grid), y = np.log10(_n_init))
-       _init_func = lambda e_: 10**_spl_log_n_init(np.log10(e_))
-    else:
-        raise ValueError('init should be only zero or stat')
+    Please note: the energy grid e_grid that you provide OR the energy grid
+    that is calculated from emin, emax, coef_down, ne_dec is used to calculate
+    the EDGES of energy bins, while the solution is calulated on the
+    CENTRES of the bins (these centre energies are returned as e_bins).
+
+    Parameters
+    ----------
+    t_start : float
+        Start time of evolution.
+    t_stop : float
+        End time of evolution.
+    q_func : callable
+        Injection function [1/s], of signature q_func(e, t).
+    edot_func : callable
+        Cooling function [eV/s], of signature edot_func(e, t).
+    init :  optional
+        Desctibes the initial distribution n(e, t=t_start). You can set it to:
+        - 'zero' -- n(e, t=t_start) = 0
+        - 'stat' -- n(e, t=t_start) = stationary distribution at t=t_start
+        - tuple (e, n0) -- where e is a grid of energies and n0 is the initial spectrum
+        The default is 'stat'.
+    e_grid : 1d-array, optional
+        The energy grid to calculate the evolution on. The default is None.
+    emin : float, optional
+        If e_grid is not set, this is used as the maximum energy. The default is 1e9.
+    emax : float, optional
+        If e_grid is not set, this is used as the minimum energy OF INTEREST. The default is 5.1e14.
+    coef_down : float, optional
+        If e_grid is not set, this is used to calculate the REAL minimum
+        energy: emin_real = emin/coef_down. The default is 10.
+    ne_dec : int, optional
+        If e_grid is not set, this is used as a number of energy nods
+        per decade. The default is 101.
+    eps_big : float, optional
+        If adaptive_dt=True, this is treated as the critical relative error
+        to refine a time step dt. The default is 3e-3.
+    eps_small : float, optional
+        If adaptive_dt=True, this is treated as the critical relative error
+        to increase a time step dt. Should be < eps_big (not forced).
+        The default is 1e-3.
+    dt_min : floor, optional
+        If adaptive_dt=True, this is treated as the floor for a time step dt.
+        Should be < dt_max (not forced).
+          If adaptive_dt=False, this is the constant time step.
+            The default is 1e-2*DAY.
+    dt_max : floor, optional
+        If adaptive_dt=True, this is treated as the ceiling for a time step dt.
+         Should be > dt_min (not forced). The default is 5*DAY.
+    dt_first : float, optional
+        The first time step. Caution: you should not make it too large, it should
+        be << t_stop-t_start.
+          The default is None (which sets actual dt_first=dt_min).
+    adaptive_dt : bool, optional
+        If False, the time evolution proceeds with a constant dt=dt_min.
+         If True, the adaptive time step is chosen by comparing the solution
+        of the equation with one step dt and two half-steps dt/2.
+             The default is False.
+
+    Raises
+    ------
+    ValueError
+        DESCRIPTION.
+
+    Returns
+    -------
+    ts : np. 1d-array 
+        The time grid of evolution.
+    e_bins : np. 1d-array 
+        The energy grid of evolution (energy bins CENTRES).
+    dNe_des : np. 2d-array 
+        The 2d-array of electron spectra n(e, t) at each time step
+        (energy bins CENTRES).
+        dNe_des[i, j] = n(e_bins[j], ts[i]).
+    edots_avg : np. 2d-array 
+        average cooling function at each time step (on energy bins EDGES).
+    q_avg : np. 2d-array 
+        average injection function at each time step (on energy bins EDGES).
+
+    """
+    if e_grid is None:
+        e_grid = loggrid(emin/coef_down, emax, ne_dec)
         
-    n_ = nonstat_1zone_solver_new(e_grid=e_grid,
-                                  time_grid=t_grid,
-                                  Q_func = _Q_func,
-                                  T_func = _T_func,
-                                  Edot_func = _Edot_func,
-                                  n_e1 = lambda t_: 0 * t_,
-                                  n_e2 = lambda t_: 0 * t_,
-                                  n_t0 = _init_func)
-    return n_
+    if isinstance(init, str):
+        if init == 'zero':
+            _n_prev =  0 * e_grid
+        elif init == 'stat':
+           _n_prev = stat_distr(Es = e_grid,  
+                                Qs = q_func(e_grid, t_start),
+                                Edots = edot_func(e_grid, t_start)
+                                ) 
+        e_prev = e_grid
+    elif isinstance(init, tuple) or isinstance(init, list):
+        e_prev, _n_prev = init
+    else:
+        raise ValueError('init should be only zero or stat or tuple (e, n0)')
+        
+    tt_now = t_start
+    # as initial dt, take 1/3rd of max evolving time
+    # dt = np.max(-e_grid/edot_func(e_grid, t_start)) / 3. 
+    if dt_first is None:
+        dt_first = dt_min
+    dt = dt_first
+    dNe_des = [  ]
+    ts = [  ]
+    edots_avg = []
+    q_avg = []
+    
+    while tt_now < t_stop:
+        # print(tt_now/DAY)
+        #### first, let's do one step
+        _edot_e_1 = t_avg_func(edot_func, tt_now, tt_now+dt, 3)
+        _q_e_1 = t_avg_func(q_func, tt_now, tt_now+dt, 3)
+
+        e_bins, n_1step = nonstat_characteristic_solver(t_evol=dt,
+                        test_energies=e_grid,
+                        edot_func=_edot_e_1,
+                        Q_func = _q_e_1,
+                        init_cond = (e_prev, _n_prev),
+                        )
+        if not adaptive_dt:
+            tt_now += dt
+            # e_grids.append(e_bins)
+            dNe_des.append(n_1step)
+            ts.append(tt_now)
+            e_prev, _n_prev = e_bins, n_1step
+            edots_avg.append(_edot_e_1(e_grid))
+            q_avg.append(_q_e_1(e_grid))
+
+        if adaptive_dt:
+            ##### if adaprive t-step, do two half-steps and compare with 
+            ##### the result from 1 whole step
+            _edot_e_1of2 = t_avg_func(edot_func, tt_now, tt_now+dt/2, 3)
+            _edot_e_2of2 = t_avg_func(edot_func, tt_now+dt/2, tt_now+dt,3)
+            _q_e_1of2 = t_avg_func(q_func, tt_now, tt_now+dt/2, 3)
+            _q_e_2of2 = t_avg_func(q_func, tt_now+dt/2, tt_now+dt, 3)
+            
+            e_bins1of2, n_1of2step = nonstat_characteristic_solver(t_evol=dt/2,
+                            test_energies=e_grid,
+                            edot_func=_edot_e_1of2,
+                            Q_func = _q_e_1of2,
+                            init_cond = (e_prev, _n_prev),)
+            
+            e_bins2of2, n_2of2step = nonstat_characteristic_solver(t_evol=dt/2,
+                            test_energies=e_grid,
+                            edot_func=_edot_e_2of2,
+                            Q_func = _q_e_2of2,
+                            init_cond = (e_bins1of2, n_1of2step),)
+            
+            # #### now compare e-SEDs (in 1 step) with n (in 2 half-steps )
+            e_mask = (e_bins2of2 > emin) | (e_bins2of2 < emax)
+            xarr = e_bins2of2[e_mask] # cut the edges just in case
+            char_value = np.max(n_2of2step[e_mask] * xarr**2)
+            # logsed2 = np.log10()
+            _norm_diff = (
+                (
+                trapezoid( (n_2of2step[e_mask] * xarr**2 - n_1step[e_mask] * xarr**2)**2,
+                                   xarr
+                          ) 
+                )**0.5 / (np.max(xarr) - np.min(xarr)) 
+                )
+            _norm_n2step = ( (trapezoid( (n_2of2step[e_mask] * xarr**2)**2, xarr) 
+                              )**0.5 / (np.max(xarr) - np.min(xarr)) 
+                            )
+    
+            eps_here = _norm_diff / (_norm_n2step + 1e-20 * char_value)
+            # print(eps_here)
+            
+            if (eps_here >= eps_big) and dt > dt_min:
+                dt = max(dt/2, dt_min)
+                continue
+            else:
+                tt_now += dt
+                # e_grids.append(e_bins)
+                dNe_des.append(n_1step)
+                ts.append(tt_now)
+                e_prev, _n_prev = e_bins2of2, n_2of2step
+                edots_avg.append(_edot_e_1(e_grid))
+                q_avg.append(_q_e_1(e_grid))
+                if eps_here <= eps_small:
+                    dt = min(dt * 1.3, dt_max)
+                    
+                
+    ts, dNe_des, edots_avg, q_avg = [np.array(ar_) for ar_ in (ts, dNe_des,
+                                                            edots_avg, q_avg)]
+    
+    return ts, e_bins, dNe_des, edots_avg, q_avg
     
 def evolved_e(cooling, r_SP, ss, rs, thetas, edot_func, f_inject_func,
               tot_loss_args, f_args, vel_func = None, v_args = None, emin = 1e9, 
@@ -331,7 +498,7 @@ def evolved_e(cooling, r_SP, ss, rs, thetas, edot_func, f_inject_func,
             
     return dNe_de_IBS, e_vals
     
-class ElectronsOnIBS:
+class ElectronsOnIBS: #!!!
     """
     A class representing the electrons on the IBS.
     
@@ -705,7 +872,7 @@ class ElectronsOnIBS:
     
         if ax is None:
             import matplotlib.pyplot as plt
-            fig, ax = plt.subplots(1, 2, figsize=(8, 6))    
+            fig, ax = plt.subplots(1, 3, figsize=(8, 6))    
 
         if self.dNe_de_IBS is None or self.e_vals is None:
             raise ValueError("You should call `calculate()` first to set dNe_de_IBS and e_vals")
@@ -750,7 +917,15 @@ class ElectronsOnIBS:
         ax[1].set_title(r'$N(s)$')    
         
         
-class NonstatElectronEvol:
+        edot_apex = ElectronsOnIBS.edot(self, 0, self.e_vals)
+        ax[2].plot(self.e_vals, -self.e_vals / edot_apex)
+        ax[2].set_xlabel('e, eV')
+        ax[2].set_title('t cooling [s] VS e')
+        ax[2].set_xscale('log')
+        ax[2].set_yscale('log')
+        
+        
+class NonstatElectronEvol: #!!!
     """
     A class representing the non-stationary evolution of ultrarelativistic
     electrons in one-zone model (this zone = apex of the IBS).
@@ -762,15 +937,18 @@ class NonstatElectronEvol:
     eta_a = 1.,
     eta_syn = 1., eta_ic = 1.,
     emin = 1e9, emax = 5.1e14, to_cut_e = True, 
-    emin_grid=3e8, emax_grid=6e14,
+    emin_grid=3e8, emax_grid=6e14, coef_down=10,
      n_dec_e=35, 
 
-     init_distr='stat',
+     init_distr='stat', 
+     eps_small = 1e-3, eps_big = 3e-3,
+     adaptive_dt = False,
+     dt_min = 1e-2 * DAY, dt_max = 5 * DAY, dt_first=None
     ):
        
         self.t_start = t_start
         self.t_stop = t_stop
-        self.n_t = 105
+        self.n_t = n_t
         self.winds = winds
 
         if eta_a  is None:
@@ -793,27 +971,39 @@ class NonstatElectronEvol:
   
         self.emin_grid = emin_grid
         self.emax_grid = emax_grid
+        self.coef_down = coef_down
         self.n_dec_e = n_dec_e
         self.init_distr = init_distr
         
         self.dNe_de_IBS = None
         self.e_vals = None
         
+        # self.n_t_avg = n_t_avg
+        self.eps_small = eps_small
+        self.eps_big = eps_big
+        self.adaptive_dt = adaptive_dt
+        self.dt_min = dt_min
+        self.dt_max = dt_max
+        self.dt_first = dt_first
+
+        
+        # self._set_grids()
+        
             
-    def _set_grids(self):
-        self.e_grid = loggrid(x1 = self.emin_grid, 
-                              x2 = self.emax_grid, 
-                              n_dec = int(self.n_dec_e)
-                              )
-        self.t_grid = np.linspace(self.t_start, self.t_stop, self.n_t)
+    # def _set_grids(self):
+    #     self.e_grid = loggrid(x1 = self.emin_grid, 
+    #                           x2 = self.emax_grid, 
+    #                           n_dec = int(self.n_dec_e)
+    #                           )
+        # self.t_grid = np.linspace(self.t_start, self.t_stop, self.n_t)
     
     def edot_apex(self, e_, t_): 
         r_sa = self.winds.dist_se_1d(t_)
         B_p_apex, B_s_apex = self.winds.magn_fields_apex(t_)
         return total_loss(ee = e_, 
                           B = B_p_apex + B_s_apex, 
-                          Topt = self.ibs.winds.Topt,
-                          Ropt=self.ibs.winds.Ropt,
+                          Topt = self.winds.Topt,
+                          Ropt=self.winds.Ropt,
                           dist = r_sa, 
                           eta_flow = self.eta_a, 
                           eta_syn = self.eta_syn,
@@ -846,10 +1036,12 @@ class NonstatElectronEvol:
         overall_coef = self.norm_e / 2 / N_total
         return result * overall_coef
     
-    def stat_distr_at_time(self, t_):
-        return stat_distr(Es = self.e_grid,  
-                    Qs = NonstatElectronEvol.f_inject(self, self.e_grid, t_),
-                    Edots = NonstatElectronEvol.edot_apex(self, self.e_grid, t_)
+    def stat_distr_at_time(self, t_, e_=None):
+        if e_ is None:
+            e_ = self.e_grid
+        return stat_distr(Es = e_,  
+                    Qs = NonstatElectronEvol.f_inject(self, e_, t_),
+                    Edots = NonstatElectronEvol.edot_apex(self, e_, t_)
                              )
     
     
@@ -858,16 +1050,147 @@ class NonstatElectronEvol:
         _edot_func = lambda e_, t_: NonstatElectronEvol.edot_apex(self, e_, t_)
         _q_func = lambda e_, t_:  NonstatElectronEvol.f_inject(self, e_, t_)
         
-        dNe_de = evolved_e_nonstat_1zone(emin_grid=self.min_grid,
-                                     emax_grid=self.emax_grid,
-                                     t_start=self.t_start, t_stop=self.t_stop,
-                                     edot_func = _edot_func,
-                                    q_func = _q_func, n_dec_e=self.n_dec_e,
-                                    n_t=self.n_t, init=self.init_distr)
-        self.dNe_de = dNe_de
-        self.ntot = trapezoid(dNe_de, self.e_grid, axis=1)
-        self.dNe_de_avg = ( trapezoid(dNe_de, self.t_grid, axis=0) / 
-                           (np.max(self.t_grid) - np.min(self.t_grid)) 
-                           )
+        
+        ts, e_bins, dNe_des, edots_avg, q_avg = \
+              evolved_e_nonstat_1zone(t_start=self.t_start,
+                                       t_stop = self.t_stop,  
+                            q_func=_q_func,
+                              edot_func= _edot_func, 
+                          init=self.init_distr,
+                          e_grid=None,
+                          emin=self.emin_grid,
+                            emax=self.emax_grid,
+                              coef_down=1., 
+                              ne_dec=self.n_dec_e,
+                          eps_big=self.eps_big,
+                            eps_small=self.eps_small,
+                              dt_min=self.dt_min,
+                          dt_max=self.dt_max,
+                            dt_first=self.dt_first,
+                              adaptive_dt=self.adaptive_dt,)
+        self.e_edg = loggrid(x1 = self.emin_grid, 
+                                  x2 = self.emax_grid, 
+                                  n_dec = int(self.n_dec_e))
+        self.dNe_des = dNe_des
+        self.ts = ts
+        self.edots_avg = edots_avg
+        self.q_avg = q_avg
+        self.dn_de_spl = interp1d(self.ts, self.dNe_des, axis=0)
+        self.e_c = e_bins
+        
+        nstat = []
+        for t_ in ts:
+            nstat.append(NonstatElectronEvol.stat_distr_at_time(self, t_=t_,
+                                                                e_=e_bins))
+        nstat=np.array(nstat)
+        self.nstat=nstat
+        self.dnstat_de_spl = interp1d(self.ts, self.nstat, axis=0)
+        
+        
         if to_return:
-            return dNe_de
+            return ts, e_bins, dNe_des
+        
+    def dn_de(self, t):
+        if self.dNe_des is None:
+            raise ValueError('you should calculate() first')
+        return self.dn_de_spl(t)
+    
+    def dnstat_de(self, t):
+        if self.dNe_des is None:
+            raise ValueError('you should calculate() first')
+        return self.dnstat_de_spl(t)
+    
+    
+    def n_tot(self, t, emin=None, emax=None):
+        if emin is None:
+            emin = self.emin
+        if emax is None:
+            emax = self.emax
+        mask = np.logical_and(self.e_c >= emin, self.e_c <= emax)
+        return trapezoid(self.dn_de(t)[:, mask], self.e_c[mask], axis=1)
+
+    def nstat_tot(self, t, emin=None, emax=None):
+        if emin is None:
+            emin = self.emin
+        if emax is None:
+            emax = self.emax
+        mask = np.logical_and(self.e_c >= emin, self.e_c <= emax)
+        return trapezoid(self.dnstat_de(t)[:, mask], self.e_c[mask], axis=1)
+    
+    
+    
+    
+    
+if __name__ == '__main__':
+    import matplotlib.pyplot as plt
+    from ibsen.orbit import Orbit
+    from ibsen.winds import Winds
+    from ibsen.ibs import IBS
+    import time
+
+    sys_name = 'psrb' 
+    orb = Orbit(sys_name = sys_name, n=1003)
+    winds_full = Winds(orbit=orb, sys_name = sys_name, alpha=-10/180*pi, incl=23*pi/180,
+                f_d=165, f_p=0.1, delta=0.015, np_disk=3, rad_prof='pl', r_trunk=None,
+                height_exp=0.25,
+                    ns_field_model = 'linear', ns_field_surf = 0.2, ns_r_scale = 1e13,
+                    opt_field_model = 'linear', opt_field_surf = 0, opt_r_scale = 1e13,)
+    # winds_full.peek(showtime=(-100*DAY, 100*DAY))
+
+
+    el = NonstatElectronEvol(winds=winds_full, t_start=-100*DAY, t_stop=100*DAY,
+                            emin=1e9, emax=1e13, emin_grid=1e8, emax_grid=1e13,
+                            p_e=1.7, init_distr='zero', eps_big=5e-3, eps_small=3e-3,
+                            n_dec_e=201, dt_min=0.01*DAY, dt_first=None,
+                            adaptive_dt=True, eta_a=1e20)
+    start = time.time()
+    ts, es, ns = el.calculate(to_return=True)
+    # e_ = es[1, :]
+    e_ = el.e_c
+    print(time.time() - start)
+
+    plt.subplot(1, 3, 1)
+    print(el.ts.shape)
+    print(el.dNe_des.shape)
+    print(type(el.ts))
+    print(type(el.dNe_des))
+    plt.plot(e_, el.dn_de(-70*DAY)*e_**2, color='r', label='-60 days')
+    plt.plot(e_, el.stat_distr_at_time(-70*DAY, e_)*e_**2, ls='--', color='r')
+    
+    plt.plot(e_, el.dn_de(-15*DAY)*e_**2, color='g', label='-15 days')
+    plt.plot(e_, el.stat_distr_at_time(-15*DAY, e_)*e_**2, ls='--', color='g')
+    
+    
+    plt.plot(e_, el.dn_de(0)*e_**2, color='k', label='0 days')
+    plt.plot(e_, el.stat_distr_at_time(0, e_)*e_**2, ls='--', color='k')
+
+    plt.plot(e_, el.dn_de(15*DAY)*e_**2, color='m', label='20 days')
+    plt.plot(e_, el.stat_distr_at_time(15*DAY, e_)*e_**2, ls='--', color='m')
+
+    plt.plot(e_, el.dn_de(70*DAY)*e_**2, color='b', label='70 days')
+    plt.plot(e_, el.stat_distr_at_time(70*DAY, e_)*e_**2, ls='--', color='b')
+
+    plt.xscale('log')
+    plt.yscale('log')
+    plt.xlabel('e, eV')
+    plt.ylim(1e45, 5e49)
+    plt.legend(fontsize=10)
+    plt.title('e-SED')
+
+
+    plt.subplot(1, 3, 2)
+    Ntot = el.n_tot(ts)
+    Ntot_stat = el.nstat_tot(ts)
+    plt.plot(ts/DAY, Ntot, label='nonstat')
+    plt.plot(ts/DAY, Ntot_stat, label='stat')
+    
+    plt.xlabel('t, days')
+    plt.title('total Ne in [emin, emax]')
+    plt.legend()
+    
+    plt.subplot(1, 3, 3)
+    dt = ts[1:] - ts[:-1]
+    plt.plot(ts[1:]/DAY, dt/DAY)
+    plt.title('time step (d)')
+    plt.xlabel('t, days')
+    plt.yscale('log')

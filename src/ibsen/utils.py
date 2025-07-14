@@ -151,6 +151,20 @@ def loggrid(x1, x2, n_dec):
     n_points = int( np.log10(x2 / x1) * n_dec)
     return np.logspace(np.log10(x1), np.log10(x2), n_points)
 
+def logrep(xdata, ydata):
+    asc = np.argsort(xdata)
+    xdata, ydata = xdata[asc], ydata[asc] 
+    return interp1d(np.log10(xdata), np.log10(ydata))
+
+def logev(x, logspl):
+    return 10**( logspl( np.log10(x) ) )
+
+def interplg(x, xdata, ydata):
+    asc = np.argsort(xdata)
+    xdata, ydata = xdata[asc], ydata[asc] 
+    spl_ = interp1d(np.log10(xdata), np.log10(ydata))
+    return 10**( spl_( np.log10(x) ) )
+
 
 def trapz_loglog(y, x, axis=-1, intervals=False):
     """
@@ -225,6 +239,52 @@ def trapz_loglog(y, x, axis=-1, intervals=False):
     ret = np.add.reduce(trapzs, axis) * x_unit * y_unit
 
     return ret
+
+def rotated_vector(alpha, incl):
+    return np.array([  cos(alpha) * sin(incl),
+                     - sin(alpha) * sin(incl),
+                       cos(incl)
+                       ])
+
+def t_avg_func(func, t1, t2, n_t):
+    """
+    Averages function func(e, t) over a time period t = [t1, t2],
+
+    Parameters
+    ----------
+    func : Callable
+        A function func = func(e, t)
+    t1 : float
+        min time for averaging.
+    t2 : float
+        max time for averaging.
+    n_t_points : int
+        A number of points to span on the t-array.
+
+    Returns
+    -------
+    Function \tilde func(e).
+
+    """
+    # t_grid = np.linspace(t1, t2, n_t)
+
+    def func_avg(e):
+        # # ensure e is array for broadcasting
+        # e_arr = np.atleast_1d(e)
+        # # evaluate Edot on full (e, t) mesh: shape (len(e), len(t))
+        # vals = func(e_arr[:, None], t_grid[None, :])
+        # # integrate over t for each e
+        # integral = np.trapz(vals, t_grid, axis=1)
+        # # normalize by interval length
+        # avg = integral / (t2 - t1)
+        # # if user passed scalar, return scalar
+        # return avg.item() if np.isscalar(e) else avg
+        return 0.5 * (func(e, t1) + func(e, t2)) #/ (t2 - t1)
+
+    return func_avg
+
+def l2_norm(xarr, yarr):
+    return ( trapezoid(yarr**2, xarr) )**0.5
 
 # def Get_PSRB_params(orb_p = 'psrb'):
 #     """
@@ -360,11 +420,6 @@ def trapz_loglog(y, x, axis=-1, intervals=False):
 #                   Z_coord(t, Torb_, e_, Mtot_))
 #     return np.array([x_, y_, z_])
 
-def rotated_vector(alpha, incl):
-    return np.array([  cos(alpha) * sin(incl),
-                     - sin(alpha) * sin(incl),
-                       cos(incl)
-                       ])
 
 # def Dist_to_disk(rvec, alpha, incl):
 #     return mydot(rvec, rotated_vector(alpha, incl))
