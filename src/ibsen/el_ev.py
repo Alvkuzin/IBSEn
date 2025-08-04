@@ -13,9 +13,8 @@ from ibsen.transport_solvers.transport_on_ibs_solvers import solve_for_n, nonsta
 # import xarray as xr
 # from pathlib import Path
 
-# from .orbit import Orbit
-from ibsen.ibs import IBS
 
+from ibsen.ibs import IBS
 
 
 G = float(const.G.cgs.value)
@@ -76,6 +75,10 @@ def ecpl(E, ind, ecut, norm):
 
 def pl(E, ind, norm):
     return norm * E**(-ind)
+
+def secpl(E, ind, ecut, beta_e, norm):
+    return norm * E**(-ind) * exp(- (E / ecut)**beta_e )
+
 
 
 def total_loss(ee, B, Topt, Ropt, dist, eta_flow, eta_syn, eta_IC):
@@ -544,7 +547,8 @@ class ElectronsOnIBS: #!!!
     
 """
     def __init__(self, Bp_apex, ibs: IBS, cooling=None, to_inject_e = 'ecpl',
-                 to_inject_theta = '3d', ecut = 1.e12, p_e = 2., norm_e = 1.e37,
+                 to_inject_theta = '3d', 
+                 ecut = 1.e12, p_e = 2., norm_e = 1.e37, beta_e=1,
                  Bs_apex=0., eta_a = None,
                  eta_syn = 1., eta_ic = 1.,
                  emin = 1e9, emax = 5.1e14, to_cut_e = True, 
@@ -585,6 +589,7 @@ class ElectronsOnIBS: #!!!
         self.to_inject_theta = to_inject_theta # injection function along theta
         self.p_e = p_e  # injection function spectral index
         self.ecut = ecut  # injection function cutoff energy
+        self.beta_e = beta_e # index for super-exponential cutoff PL
         self.norm_e = norm_e # injection function normalization
         self.emin = emin  # minimum energy for the injection function
         self.emax = emax  # maximum energy for the injection function
@@ -662,12 +667,7 @@ class ElectronsOnIBS: #!!!
 
 
     def edot(self, s_, e_): 
-        # r_to_p = self.ibs.s_interp(s_ = s_ / self.r_sp, what = 'r') # dimless
-        # r_to_s = self.ibs.s_interp(s_ = s_ / self.r_sp, what = 'r1') # dimless
         r_sa = (1. - self.ibs.x_apex)
-        # B_on_shock = (self.Bp_apex * self.ibs.x_apex / r_to_p + 
-        #               self.Bs_apex * r_sa / r_to_s)
-        # eta_ic_on_shock = self.eta_ic * r_sa**2 / r_to_s**2
         _b_s, _u_s = ElectronsOnIBS.b_and_u_s(self, s_ = s_)
         return total_loss(ee = e_, 
                           B = _b_s * self.B_apex, 
@@ -686,7 +686,6 @@ class ElectronsOnIBS: #!!!
             thetas_part = np.zeros(thetas_here.shape) + 1. # uniform along theta
         elif self.to_inject_theta == '3d':
             thetas_part = sin(thetas_here) # \propto sin(th) how it should be in 3d
-            # thetas_part = s_ / np.max(s_)
         else:
             raise ValueError("I don't know this to_inject_theta. It should be 2d, 3d.")
             
@@ -697,8 +696,11 @@ class ElectronsOnIBS: #!!!
             e_part = ecpl(e_, ind=self.p_e, ecut=self.ecut, norm=1.)
         elif self.to_inject_e == 'pl':
             e_part = pl(e_, ind=self.p_e, norm=1)
+        elif self.to_inject_e == 'secpl':
+            e_part = secpl(e_, ind=self.p_e, ecut=self.ecut, norm=1.,
+                          beta_e = self.beta_e)
         else:
-            raise ValueError("I don't know this to_inject_theta. It should be pl or ecpl.")
+            raise ValueError("I don't know this to_inject_e. It should be pl or ecpl or secpl.")
             
         result = thetas_part * e_part * self.norm_e
         

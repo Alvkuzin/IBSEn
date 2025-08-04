@@ -11,6 +11,25 @@ import astropy.units as u
 G = 6.67e-8
 DAY = 86400.
 AU = 1.5e13
+def is_list_of_vecs(x):
+    return isinstance(x, list) and all(isinstance(xx, np.ndarray) for xx in x)
+
+def vectorize_func(func_simple):
+    def wrapper(*args):
+        if all(isinstance(x, np.ndarray) for x in args):
+            return func_simple(*args)
+        for x in args:
+            if isinstance(x, list):
+                n = len(x)
+                break
+        else:
+            raise ValueError("No list argument found!")
+        result = []
+        for i in range(n):
+            new_args = [x[i] if isinstance(x, list) else x for x in args]
+            result.append(func_simple(*new_args))
+        return result
+    return wrapper    
 
 def unpack(query, dictat):
     markers = query.split()
@@ -19,33 +38,79 @@ def unpack(query, dictat):
         list_.append(dictat[name])
     return list_
 
-def mydot(a, b):
+def mydot_novec(a, b):
     xa, ya, za = a
     xb, yb, zb = b
     return xa * xb +  ya * yb + za * zb
 
-def mycross(a, b):
+mydot = vectorize_func(mydot_novec)
+
+def mycross_novec(a, b):
     xa, ya, za = a
     xb, yb, zb = b
     return np.array([xa * zb - za * yb, za * xb - xa * zb, xa * yb - ya * xb])
 
-def absv(Vec):
+mycross = vectorize_func(mycross_novec)
+
+def absv_novec(Vec):
     return (mydot(Vec, Vec))**0.5
 
-def n_from_v(some_vector):
+absv = vectorize_func(absv_novec)
+
+
+def n_from_v_novec(some_vector):
     return some_vector / absv(some_vector)
+
+n_from_v = vectorize_func(n_from_v_novec)
+
+
+def g_from_beta(beta_vel):
+    return 1 / np.sqrt(1 - beta_vel**2)
 
 def beta_from_g(g_vel):
     if isinstance(g_vel, np.ndarray):
         res = np.zeros_like(g_vel)
-        cond = (g_vel > 1.0) 
+        cond = (g_vel > 1.0+1e-7) 
         res[cond] = ((g_vel[cond]-1.0) * (g_vel[cond]+1.0))**0.5 / g_vel[cond]
     else:
-        if g_vel > 1.0:
+        if g_vel > 1.0+1e-7:
             res =  ((g_vel-1.0) * (g_vel+1.0))**0.5 / g_vel
         else:
             res = 0.0
     return res 
+
+def lor_trans_angle(angle, gamma):
+    """
+    Lorentz transformed angle (between the direction of the frame
+                with lorentz-factor gamma and the direction of interest)
+
+    Parameters
+    ----------
+    angle : np.ndarray
+        angle in radians between some direction and moving frame. 
+        Should be non-negative value, between 0 and pi.
+    gamma : np.ndarray
+        lorentz-factor of the moving frame.
+
+    Returns
+    -------
+    np.ndarray or float
+        Lorentz-transformed angle in radians.
+
+    """
+    angle = np.asarray(angle)
+    gamma = np.asarray(gamma)
+    if isinstance(angle, float):
+        if angle < 0 or angle > np.pi:
+            raise ValueError("angle should be between 0 and pi")
+    if isinstance(angle, np.ndarray):
+        if not np.all( (angle >= 0.0) & (angle <= np.pi) ):
+            raise ValueError("All angles should be between 0 and pi")
+    _betas = beta_from_g(gamma)
+    _mu = np.cos(angle)
+    _mu_prime = (_mu - _betas) / (1.0 - _mu * _betas)
+    _mu_prime = np.clip(_mu_prime, -1.0, 1.0)
+    return np.arccos(_mu_prime)
 
 
 def lor_trans_b_iso(B_iso, gamma):
@@ -57,6 +122,102 @@ def lor_trans_b_iso(B_iso, gamma):
 def lor_trans_ug_iso(ug_iso, gamma): # Relativistic jets... eq. (2.57)
     # delta_doppl = d_boost(gamma, ang_beta_obs)
     return ug_iso * gamma**2 * (3 + beta_from_g(gamma)) / 3.
+
+def lor_trans_vec_novec(vec_n, vec_beta):
+    """
+    Lorentz tranformes a spatial unit vector vec_n (in lab frame) into \
+    a system moving with vec_beta.
+    
+
+    Parameters
+    ----------
+    vec_n : np.array([n_x, n_y, n_z])
+        A unit vector in lab frame to transform. Should be a np.array with \
+        three coordinates
+        x, y, and z.
+    vec_beta : np.array([beta_x, beta_y, beta_z])
+        A vector beta = v/c of the co-moving system in lab frame. Should be \
+        a np.array with three coordinates x, y, and z.
+
+    Returns
+    -------
+    np.array([n_prime_x, n_prime_y, n_prime_z])
+        The unit vector in a co-moving system.
+
+    """
+    vec_norm = n_from_v(vec_n) # just making sure that it is, indeed, a unit vector
+    beta_norm = n_from_v(vec_beta)
+    _gamma = g_from_beta(absv(vec_beta))
+    _nbeta = mydot(vec_norm, vec_beta) # scalar product (n * beta)
+    vec_norm_parall = _nbeta / absv(vec_beta)  * beta_norm
+    vec_norm_perp = vec_norm - vec_norm_parall
+    vec_norm_parall_prime = (vec_norm_parall - vec_beta) / (1 - _nbeta)
+    vec_norm_perp_prime = vec_norm_perp / _gamma  / (1 - _nbeta)
+    return vec_norm_parall_prime + vec_norm_perp_prime
+
+lor_trans_vec = vectorize_func(lor_trans_vec_novec)
+
+def vector_angle_nonvec(n1, n2, vec_beta=np.zeros(3), lor_trans=False):
+    """
+    Calculates the angle between two UNIT vectors either in lab system, where \
+        they are given, or in a system co-moving with velosity vec_beta.
+
+    Parameters
+    ----------
+    n1 : my vector 
+        1st vector in a lab system.
+    n2 : my vector 
+        2nd vector in a lab system.
+    vec_beta : my vector, optional
+        Vector of the beta (=v/c) of the other lorentz frame where you want to 
+        calculate an angle. The default is np.zeros(3).
+    lor_trans : bool, optional
+        Whether to perform a lorentz boost (True) or to calculate in a lab
+        frame (False). The default is False.
+
+    Returns
+    -------
+    float
+        Angle between vectors (always 0 <= angle <= pi).
+
+    """
+    ######### making sure they are indeed unit vectors. If not, well, you should
+    ######### have read the documentation.
+    n1_ = n_from_v(n1)
+    n2_ = n_from_v(n2)
+    if np.all(vec_beta == 0) or (not lor_trans):
+        return np.arccos( mydot(n1_, n2_) )
+    else:    
+        n1_prime = lor_trans_vec(n1_, vec_beta)
+        n2_prime = lor_trans_vec(n2_, vec_beta)
+        return np.arccos( mydot(n1_prime, n2_prime) 
+                         / absv(n1_prime) / absv(n2_prime) )
+    
+vector_angle = vectorize_func(vector_angle_nonvec)    
+
+# def vector_angle(n1, n2, vec_beta=np.zeros(3), lor_trans=False):
+#     # If all are vectors, just operate directly
+#     if isinstance(n1, np.ndarray) and isinstance(n2, np.ndarray) and isinstance(vec_beta, np.ndarray):
+#         return vector_angle_nonvec(n1, n2, vec_beta, lor_trans)
+    
+#     # If any is a list, broadcast element-wise
+#     # Get length of first list found
+#     for x in [n1, n2, vec_beta]:
+#         if is_list_of_vecs(x, list):
+#             n = len(x)
+#             break
+#     else:
+#         raise ValueError("Inputs are not all arrays or lists of arrays!")
+    
+#     # Build elementwise args
+#     result = []
+#     for i in range(n):
+#         nn1 = n1[i] if isinstance(n1, list) else n1
+#         nn2 = n2[i] if isinstance(n2, list) else n2
+#         vecvecb = vec_beta[i] if isinstance(vec_beta, list) else vec_beta
+#         result.append(vector_angle_nonvec(nn1, nn2, vecvecb, lor_trans))
+#     return result
+
 
 def lor_trans_e_spec_iso(E_lab, dN_dE_lab, gamma, E_comov=None, n_mu=101):
     """
@@ -246,6 +407,17 @@ def rotated_vector(alpha, incl):
                        cos(incl)
                        ])
 
+def rotate_z(vec, phi):
+    """
+    rotates vector vec=np.array([x, y, z]) around z-axis in a positive direction
+    """
+    
+    _x, _y, _z = vec
+    c_, s_ = cos(phi), sin(phi)
+    x_rotated_ = c_ * _x - s_ * _y
+    y_rotated_ = s_ * _x + c_ * _y
+    return np.array([x_rotated_, y_rotated_, _z])
+
 def t_avg_func(func, t1, t2, n_t):
     """
     Averages function func(e, t) over a time period t = [t1, t2],
@@ -279,7 +451,7 @@ def t_avg_func(func, t1, t2, n_t):
         # avg = integral / (t2 - t1)
         # # if user passed scalar, return scalar
         # return avg.item() if np.isscalar(e) else avg
-        return 0.5 * (func(e, t1) + func(e, t2)) #/ (t2 - t1)
+        return 0.5 * (func(e, t1) + func(e, t2)) 
 
     return func_avg
 
@@ -459,4 +631,50 @@ def l2_norm(xarr, yarr):
 #     ndisk = rotated_vector(alpha, incl)
 #     return mycross(ndisk, n_indisk)
 
+if __name__ == "__main__":
+    import matplotlib.pyplot as plt 
+    # n1 = [np.array([0, -1, 0.0]),  np.array([1, 0, 0.0])]
+    # n1 = n_from_v(n1)
+    # n2 = [np.array([1, -1, 0.0]), np.array([1, -1, 0.0])]
+    # n2 = n_from_v(n2)
+    # gamma = 2.23
+    # b_ = beta_from_g(gamma)
+    # gamma1 = 3.23
+    # b1_ = beta_from_g(gamma1)
+    
+    # beta = [np.array([1, 0, 0]) * b_, np.array([1, 0, 0]) * b1_]
+    # print('n1 = ', n1)
+    # print('n2 = ', n2)
+    
+    # print(b_)
+    # print(lor_trans_vec( n1, beta))
+    # # print([ (1/2**0.5-b_)/(1-b_/2**0.5), 1/2**0.5/gamma/(1-b_/2**0.5), 0 ])
+    
+    
 
+    # print(lor_trans_vec( n2, beta))
+    
+    # print(np.array(vector_angle(n1, n2, beta, True))/np.pi)
+    # print('between 0 and 90', np.arccos(-b_)/np.pi) # between 0 and 90
+    # print('between 0 and 45', np.arccos( (1/2**0.5-b_)/(1-b_/2**0.5))/np.pi) # between 0 and 45
+    # print('between 45 and 90', np.arccos(-b_)/np.pi-np.arccos( (1/2**0.5-b_)/(1-b_/2**0.5))/np.pi) # between 45 and 90
+    
+    # print('between 0 and 90 new', np.arccos(-b1_)/np.pi) # between 0 and 90
+    # print('between 0 and 45 new', np.arccos( (1/2**0.5-b1_)/(1-b1_/2**0.5))/np.pi) # between 0 and 45
+    # print('between 45 and 90 new', np.arccos(-b1_)/np.pi-np.arccos( (1/2**0.5-b1_)/(1-b1_/2**0.5))/np.pi) # between 45 and 90
+    
+    for ang1 in (0, 30, 45, 60, 90, 120):
+        diff = np.linspace(0, 180-ang1, 100) / 180 * np.pi
+        ang1 = ang1  / 180 * np.pi
+
+        vec0 = np.array([cos(ang1), sin(ang1), 0])
+        beta_vec = 0.86 * np.array([1, 0, 0])
+        vecs = []
+        for d_ in diff:
+            vecs.append(np.array([cos(ang1 + d_), sin(ang1 + d_), 0 ]))
+        angs = np.array(vector_angle(vecs, vec0, beta_vec, True))
+        plt.plot(diff*180/pi, diff*180/pi, color='k', ls='--')
+        plt.plot(diff*180/pi, angs*180/pi, label = f'diff = {ang1 * 180 / np.pi}')
+        plt.legend()
+        
+    
