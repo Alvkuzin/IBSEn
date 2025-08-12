@@ -1,21 +1,18 @@
 # pulsar/lightcurve.py
 import numpy as np
-# from naima.models import ExponentialCutoffPowerLaw, Synchrotron, InverseCompton
 import astropy.units as u
-# import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
 from scipy.integrate import trapezoid
-from scipy.optimize import brentq#, root, fsolve, least_squares, minimize
-from scipy.optimize import curve_fit
 # from pathlib import Path
 from numpy import pi, sin, cos
 from joblib import Parallel, delayed
 import multiprocessing
 # import time
 # import matplotlib.animation as animation
-from scipy.interpolate import splev, splrep, interp1d
+# from scipy.interpolate import splev, splrep, interp1d
 from astropy import constants as const
 from ibsen.get_obs_data import get_parameters
-from .utils import loggrid, trapz_loglog
+from ibsen.utils import loggrid#, trapz_loglog
 # import ibsen
 from ibsen.orbit import Orbit
 from ibsen.winds import Winds
@@ -118,9 +115,9 @@ class LightCurve:
                 eta_a = 1.,
                 eta_syn = 1., eta_ic = 1.,
                 emin = 1e9, emax = 5.1e14, to_cut_e = True, 
+                emin_grid=1e8, emax_grid=5.1e14,
                 to_cut_theta =  False, 
                 where_cut_theta = pi/2,
-                             # 1 = B_p = B_p_surf * (ns_r_scale / r_pe)
 
                 ns_field_model = 'linear', ns_field_surf = 1, ns_r_scale = 1e13,
                 ns_L_spindown = None, ns_sigma_magn = None,
@@ -128,8 +125,8 @@ class LightCurve:
                              
                              
                 delta_power=4, lorentz_boost=True, simple=False,          # spec
-                abs_photoel=True, abs_gg=False, nh_tbabs=0.8, syn_only=False,
-
+                abs_photoel=True, abs_gg=False, nh_tbabs=0.8,
+                ic_ani=False, apex_only=False, mechanisms=['syn', 'ic'],
                  
                 ):
         ####################################################################
@@ -180,6 +177,9 @@ class LightCurve:
         self.eta_ic = eta_ic
         self.emin = emin
         self.emax = emax
+        self.emin_grid = emin_grid
+        self.emax_grid = emax_grid
+        
         self.to_cut_e = to_cut_e
         self.to_cut_theta = to_cut_theta
         self.where_cut_theta = where_cut_theta
@@ -199,7 +199,10 @@ class LightCurve:
         self.abs_photoel = abs_photoel
         self.abs_gg = abs_gg
         self.nh_tbabs = nh_tbabs
-        self.syn_only = syn_only
+        self.ic_ani = ic_ani
+        self.apex_only = apex_only
+        self.mechanisms = mechanisms
+        # self.syn_only = syn_only
         ####################################################################
         self.orbit = None
         self.winds = None
@@ -262,7 +265,7 @@ class LightCurve:
         return: r_sp, r_pe, r_se, Bp_apex, Bopt_apex, ibs, els, dNe_de_IBS, e_vals,
         spec, E_ph, sed_tot, sed_s, fluxes, indexes, emissiv
         """
-        ibs_now = IBS( beta=None,
+        ibs_now_nonscaled = IBS( beta=None,
                     winds=self.winds, 
                     gamma_max=self.gamma_max, 
                     s_max=self.s_max, 
@@ -271,15 +274,17 @@ class LightCurve:
                     one_horn=False, 
                     t_to_calculate_beta_eff=t,
                 )
+        ibs_now = ibs_now_nonscaled.rescale_to_position()
         r_sp_now = self.orbit.r(t=t)
         r_se_now = self.winds.dist_se_1d(t=t)
         r_pe_now = r_sp_now - r_se_now
         nu_true = self.orbit.true_an(t=t)
         Bp_apex_now, Bopt_apex_now = self.winds.magn_fields_apex(t)
-        dopl_factors_now = ibs_now.dopl(nu_true = nu_true)
+        # print(Bp_apex_now, Bopt_apex_now)
+        dopl_factors_now = ibs_now.real_dopl
 
 
-        els_now = ElectronsOnIBS(ibs = ibs_now,
+        els_now = ElectronsOnIBS(ibs = ibs_now_nonscaled,
                             Bp_apex = Bp_apex_now,
                             Bs_apex = Bopt_apex_now,   
                             cooling=self.cooling,
@@ -293,12 +298,14 @@ class LightCurve:
                             norm_e = self.norm_e,
                             emin = self.emin,
                             emax = self.emax,
+                            emin_grid = self.emin_grid,
+                            emax_grid = self.emax_grid,
                             to_cut_e = self.to_cut_e,
                             to_cut_theta = self.to_cut_theta,
                             where_cut_theta = self.where_cut_theta,
                             ) 
 
-        dNe_de_IBS_now, e_vals_now = els_now.calculate(to_return=True, to_set_onto_ibs=True)
+        dNe_de_IBS_now, e_vals_now = els_now.calculate(to_return=True)
         spec_now = SpectrumIBS(els=els_now,
                                 delta_power = self.delta_power,
                                 lorentz_boost = self.lorentz_boost,
@@ -306,7 +313,10 @@ class LightCurve:
                                 abs_photoel = self.abs_photoel,
                                 abs_gg = self.abs_gg,
                                 nh_tbabs = self.nh_tbabs,
-                                syn_only = self.syn_only,
+                                # syn_only = self.syn_only,
+                                mechanisms=self.mechanisms,
+                                apex_only=self.apex_only,
+                                ic_ani=self.ic_ani,
                                 distance = self.distance,
                                 )
         if self.full_spec:
@@ -314,7 +324,10 @@ class LightCurve:
         else:
             E_ = []
             for band in self.bands:
-                E_in_band = loggrid(band[0], band[1], 30)
+                E_in_band = loggrid(band[0]/1.1, band[1]*1.1, 67)
+                # print(np.min(E_in_band))
+                # print(np.max(E_in_band))
+                
                 E_.append(E_in_band)
             E_ = np.concatenate(E_)
 
@@ -353,6 +366,7 @@ class LightCurve:
         
         if not self.to_parall:
             for i_t, t in enumerate(self.times):
+               
 
                 (r_sp_now, r_pe_now, r_se_now, Bp_apex_now, Bopt_apex_now,
                     ibs_now, els_now, dNe_de_IBS_now, e_vals_now, spec_now,
@@ -367,6 +381,7 @@ class LightCurve:
                 B_opt_apexs[i_t] = Bopt_apex_now 
                 ###################################
                 els_classes.append(els_now)
+                ibs_classes.append(ibs_now)
                 dNe_des.append(dNe_de_IBS_now)
                 e_es.append(e_vals_now)
                 ####################################
@@ -391,7 +406,7 @@ class LightCurve:
                     E_ph_now, sed_tot_now, sed_s_now, fluxes_now, indexes_now, 
                     emissiv_now,
                     )
-            n_jobs = multiprocessing.cpu_count() - 5
+            n_jobs = max(multiprocessing.cpu_count() - 5, 1)
             res= Parallel(n_jobs=n_jobs)(delayed(func_to_parall)(i_t)
                                  for i_t in range(0, len(self.times)))
 
@@ -399,8 +414,8 @@ class LightCurve:
             dNe_des, e_es, spec_classes, e_phots, seds, seds_s, \
             fluxes, indexes, emiss_s = zip(*res)
 
-            r_sps, r_pes, r_ses, nu_trues, B_p_apexs, B_opt_apexs, fluxes, indexes = [np.array(ar) 
-                for ar in (r_sps, r_pes, r_ses, nu_trues, B_p_apexs, B_opt_apexs, fluxes, indexes)]
+            r_sps, r_pes, r_ses, B_p_apexs, B_opt_apexs, fluxes, indexes = [np.array(ar) 
+                for ar in (r_sps, r_pes, r_ses, B_p_apexs, B_opt_apexs, fluxes, indexes)]
             ibs_classes = list(ibs_classes)
             els_classes = list(els_classes)
             dNe_des = list(dNe_des)
@@ -459,7 +474,7 @@ class LightCurve:
             
             ax[1].plot(self.times/DAY, 
                         self.indexes[:, i], 
-                        label=f'logE = {log_lo:.2}-{log_hi:.2} eV', **kwargs)
+                        label=f'logE = {log_lo:.2f}-{log_hi:.2f} eV', **kwargs)
         
         _nt = self.times.size
         for i_t in (int(0.2*_nt), int(0.5*_nt), int(0.8*_nt)):
@@ -498,7 +513,91 @@ class LightCurve:
 
         plt.show()
 
+if __name__ == "__main__":
 
+# from ibsen.lc import LightCurve
+    t1 = np.linspace(-650, -40, 40) * DAY
+    t2 = np.linspace(-40, 90, 70) * DAY
+    # t2 = np.linspace(-15, -15, 1) * DAY
+    t3 = np.linspace(100, 650, 40) * DAY
+    #ts = np.concatenate((t1, t2, t3))
+    ts=t2
+    lc = LightCurve(sys_name = 'psrb',
+                    n_ibs = 31,
+                    p_e = 1.7, 
+                    times = ts,
+                    bands = ([3e2, 1e4], [4e11, 1e13],
+                             ),
+                    bands_ind = ([3e3, 1e4],),
+                    full_spec = False,
+                    to_parall = True, 
+                    f_d = 150,
+                    mechanisms=['syn', 'ic'],
+                    apex_only=False,
+                    ic_ani=False,
+                    simple = True,
+                    alpha_deg = -8.,
+                    s_max = 1,
+                    gamma_max=1.2,
+                    delta=0.01,
+                    cooling='stat_mimic',
+                    eta_a=1, # you may want to set that to 1e20 if cooling='adv'
+                    ns_field_surf=1,
+                    
+                    
+                    abs_gg=False
+                   )
+    import time
+    start = time.time()
+    lc.calculate()
+    print(f'LC done in {time.time() - start}')
+    # lc.peek()
+    fig, ax = plt.subplots(nrows=3, sharex=True)
+    # DAY=86400
+    Ne_e=[]
+    Ninj = []
+    edots = []
+    i_show = 0
+    for i_t in range(lc.times.size):
+        e_cl_ =  lc.els_classes[i_t]
+        n_ = e_cl_.ibs.n
+        Ne_e.append( np.sum(trapezoid(lc.dNe_des[i_t], lc.e_es[i_t], axis=1)) )
+        # Ne_e.append( lc.dNe_des[i_t][16, 101] )
+        # print(e_cl_.ibs.s.size)
+        smesh, emesh = np.meshgrid(e_cl_.ibs.s_dimless[n_:2*n_]*e_cl_.r_sp, e_cl_.e_vals, indexing='ij')
+        f_inj_now = e_cl_.f_inject(smesh, emesh)
+        edot_a_now = e_cl_.edot(smesh, emesh)[n_-1, :]
+        
+        Ninj.append(np.sum(trapezoid(f_inj_now, e_cl_.e_vals)))
+        edots.append((e_cl_.e_vals / edot_a_now)[0])
+    # Ninjected = np.array([ np.sum(trapezoid(lc.dNe_des[i], lc.e_es[i], axis=1))
+                          # 
+                          # for i in range(lc.times.size)])
+    # Ne_e = np.array([ (trapezoid((trapezoid(lc.dNe_des[i], lc.e_es[i], axis=1)), lc.ibs_classes[i].s ) /
+    #                    trapezoid(np.ones(lc.ibs_classes[i].n), lc.ibs_classes[i].s[lc.ibs_classes[i].n:2*lc.ibs_classes[i].n] )) 
+    #                  for i in range(lc.times.size)])
+    Ne_e = np.array(Ne_e)
+    Ninj = np.array(Ninj)
+    edots = np.array(edots)
+    ax[0].plot(lc.times/DAY, lc.fluxes)
+    # print(lc.fluxes)
+    ax[1].plot(lc.times/DAY, Ne_e)
+    # if i_t == 1:
+    print(lc.times[i_show]/DAY)
+    ax[2].plot(lc.times/DAY, edots)    
+    # ax[2].plot(lc.spec_classes[i_show].e_ph, lc.spec_classes[i_show].sed)
+    # ax[2].set_xscale('log')
+    # ax[2].set_yscale('log')
+        
+    # ax[1].plot(lc.times/DAY, lc.r_pes/lc.orbit.r_periastr)
+    # ax[1].plot(lc.times/DAY, lc.r_ses/lc.orbit.r_periastr)
+    
+    # ax[1].plot(lc.times/DAY, lc.B_p_apexs)
+    # ax[1].plot(lc.times/DAY, lc.B_opt_apexs)
+    
+    
+    ax[0].set_yscale('log')
+    
 
 
 

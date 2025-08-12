@@ -66,7 +66,7 @@ class IBS:
     return rescaled, rotated ibs.
     """
     def __init__(self, beta, s_max, gamma_max=None, s_max_g=4., n=31, one_horn=False,  
-                 winds = None, t_to_calculate_beta_eff = None):
+                 winds = None, t_to_calculate_beta_eff = None, to_rescale=True):
         self.beta = beta
         self.gamma_max = gamma_max
         self.s_max = s_max
@@ -74,17 +74,27 @@ class IBS:
         self.n = n
         self.one_horn = one_horn
         self.winds = winds
+        self.t_forbeta = t_to_calculate_beta_eff
+        self.to_rescale = to_rescale
+        ##### ----------------------------------------------------------- #####
+        ##### --- I just want to declare everything before assigning ---- #####
         self.x = None
         self.y = None
         self.theta = None
         self.r = None
+        self.r_dimless = None
+        
         self.s = None
+        self.s_dimless = None
+        
         self.theta1 = None
         self.r1 = None
+        self.r1_dimless = None
+        
         self.tangent = None
         self.thetainf = None
         self.x_apex = None
-        self.t_forbeta = t_to_calculate_beta_eff
+        self.x_apex_dimless = None
         
         self.unit_r = None # unit vector from P to IBS point
         self.unit_r1 = None # unit vector from S to IBS point
@@ -98,68 +108,65 @@ class IBS:
         self.calculate()
     
     
-    # @staticmethod    
-    # def beta_from_g(g_vel):
-    #     if isinstance(g_vel, np.ndarray):
-    #         res = np.zeros_like(g_vel)
-    #         cond = (g_vel > 1.0) 
-    #         res[cond] = np.sqrt((g_vel[cond]-1.0) * (g_vel[cond]+1.0)) / g_vel[cond]
-    #     else:
-    #         if g_vel > 1.0:
-    #             res =  np.sqrt((g_vel-1.0) * (g_vel+1.0)) / g_vel
-    #         else:
-    #             res = 0.0
-    #     return res 
-    
     @staticmethod
     def vel_from_g(g_vel):
         return C_LIGHT * beta_from_g(g_vel) 
     
     
-    
     def calculate(self):
         if isinstance(self.winds, Winds):
             self.beta = self.winds.beta_eff(self.t_forbeta)
-            self.unit_los = np.array([cos(self.winds.orbit.nu_los),
-                                 sin(self.winds.orbit.nu_los),
-                                 0])
+
         (xp, yp, tp, rp, sp, t1p, r1p, tanp, theta_inf_,
          r_apex) = IBS.approx_IBS(self, full_output=True)
         self.x = xp
         self.y = yp
         self.theta = tp
         self.r = rp
+        self.r_dimless = rp
+        
         self.s = sp
+        self.s_dimless = sp
+        
         self.theta1 = t1p
         self.r1 = r1p
+        self.r1_dimless = r1p
+        
         self.tangent = tanp
         self.thetainf = theta_inf_
         self.x_apex = r_apex 
+        self.x_apex_dimless = r_apex 
+        
         norms_r = []
         norms_r1 = []
         tans_= []
-        vec_rsp = self.winds.orbit.vector_sp(self.t_forbeta)
-        unit_rsp = n_from_v(vec_rsp)
-        for x_, y_, th_, tan_ in zip(xp, yp, tp, tanp):
-            n_ = np.array([x_, y_, 0])
-            n_r_ = n_from_v(n_)
-            n_r1_ = unit_rsp + n_r_
-            norms_r.append(n_r_)
-            norms_r1.append(n_r1_)
-            
-            if th_ < 0: # if lower horn
-                tang_vec = -np.array([cos(tan_), sin(tan_), 0])
-            else: # if upper horn
-                tang_vec = np.array([cos(tan_), sin(tan_), 0])
-            tans_.append(n_from_v(tang_vec))
+        if isinstance(self.winds, Winds):
+
+            self.unit_los = np.array([cos(self.winds.orbit.nu_los),
+                                 sin(self.winds.orbit.nu_los),
+                                 0])
+            vec_rsp = self.winds.orbit.vector_sp(self.t_forbeta)
+            unit_rsp = n_from_v(vec_rsp)
+            for x_, y_, th_, tan_ in zip(xp, yp, tp, tanp):
+                n_ = np.array([x_, y_, 0])
+                n_r_ = n_from_v(n_)
+                n_r1_ = unit_rsp + n_r_
+                norms_r.append(n_r_)
+                norms_r1.append(n_r1_)
                 
-        self.unit_r = norms_r
-        self.unit_r1 = norms_r1
-        self.unit_rsp = unit_rsp
-        self.r_sp = absv(vec_rsp)
-        self.unit_beta = tans_
-        beta_vecs = [x * y for x, y in zip(tans_, beta_from_g(self.g))]
-        self.vec_beta = beta_vecs
+                if th_ < 0: # if lower horn
+                    tang_vec = -np.array([cos(tan_), sin(tan_), 0])
+                else: # if upper horn
+                    tang_vec = np.array([cos(tan_), sin(tan_), 0])
+                tans_.append(n_from_v(tang_vec))
+                    
+            self.unit_r = norms_r
+            self.unit_r1 = norms_r1
+            self.unit_rsp = unit_rsp
+            self.r_sp = absv(vec_rsp)
+            self.unit_beta = tans_
+            beta_vecs = [x * y for x, y in zip(tans_, beta_from_g(self.g))]
+            self.vec_beta = beta_vecs
         
         
 
@@ -168,15 +175,14 @@ class IBS:
     def s_interp(self, s_, what):
         """
         Returns the interpolated value of 'what' (x, y, ...) at the coordinate 
-        s_. Returned is the value for only one (upper) horn of the shock. That is,
-        the spline for the UPPER HORN will be created and then the value at s_ will be returned.
-        MIND THE DIMENSIONLESS! If 
+        s_. 
+        MIND THE DIMENSIONLESS! 
  
         Parameters
         ----------
         s_ : np.ndarray
             The arclength along the upper horn of the IBS to find the value at.
-            Dimensionless (for non-scaled IBS) or in [cm] (for rescaled IBS).
+            Dimensionless (for non-scaled IBS).
 
         Returns
         -------
@@ -187,9 +193,13 @@ class IBS:
             data = getattr(self, what)
         except AttributeError:
             raise ValueError(f"No such attribute '{what}' in IBS.")
-        s_to_interp = self.s[self.theta >= 0]
-        data_to_interp = data[self.theta >= 0]
-        interpolator = interp1d(s_to_interp, data_to_interp, kind='linear', 
+        ##### here I set fill_value='extrapolate' instead of raising an error
+        ##### or like filling with NaNs, cause the values at the ends of an 
+        ##### IBS sometimes behave weirdly, and we DO need these values. So
+        ##### since this is the internal function that should not be used
+        ##### by an external user, we put `extrapolate` and use it VERY
+        ##### cautiously!!!
+        interpolator = interp1d(self.s_dimless, data, kind='linear', 
                     bounds_error=False, fill_value='extrapolate')
         return interpolator(s_)
     
@@ -206,6 +216,11 @@ class IBS:
     @property
     def g(self):
         return IBS.gma(self, s = self.s)
+    
+    @property
+    def f_(self):
+        return self.x_apex / self.x_apex_dimless
+    
     
     
     @property
@@ -508,55 +523,19 @@ class IBS:
         """
         The angle between the velocity and the LoS direction.
         """
-        # angs = np.zeros((self.s).size)
-        # _nu_los = self.winds.orbit.nu_los
-        # _up = np.where(self.theta>0)
-        # _low = np.where(self.theta<=0)
-        # # angs[_up] = (self.tangent)[self.theta > 0] - _nu_los
-        # # angs[_low] = -_nu_los  + (self.tangent)[self.theta <= 0] + pi
-
-        # angs[_up] = _nu_los - (self.tangent)[_up] + 2*pi
-        # angs[_low] = _nu_los  - (self.tangent)[_low] + pi
-        # for i_s in range((self.s).size):
         angs = np.array(vector_angle(self.unit_los, self.unit_beta))
-
         return angs
     
     
     @property
     def real_dopl(self):
         """Only for the rotated ibs!"""
-                
-        # angs = np.zeros((self.s).size)
-        # _nu_los = self.winds.orbit.nu_los
-        
-        # angs[self.theta > 0] = (self.tangent)[self.theta > 0] - _nu_los
-        # angs[self.theta <= 0] = -_nu_los  + (self.tangent)[self.theta <= 0] + pi
-        
         return IBS.doppler_factor(g_vel = self.g, ang_ = self.real_dopl_angle)
-        # _nu_tr = self.winds.orbit.true_an(self.t_forbeta)
-        # return IBS.dopl(self, _nu_tr, nu_los=0)
-        
+
     @property
     def scattering_angle(self):
-        # angs = np.zeros((self.s).size)
-        # _nu_true = self.winds.orbit.true_an(self.t_forbeta)
-        # del_dopl = self.real_dopl_angle   
-        # _up = np.where(self.theta>0)
-        # _low = np.where(self.theta<=0)
-        # _low_one = del_dopl[_low]
-        # _low_two = np.pi - (self.tangent)[_low] - np.abs(self.theta[_low]) + _nu_true
-        # _up_one = del_dopl[_up]
-        # _up_two = self.tangent[_up] - np.abs(self.theta[_up]) - _nu_true
-        # angs[_up] = _up_one - _up_two
-        # angs[_low] = _low_one + _low_two
         if isinstance(self.winds, Winds):
-            
-            # _r_sp_vec = self.winds.orbit.vector_sp(self.t_forbeta)
-            # _r_sp = absv(_r_sp_vec)
-            # _r_s_ibs = []
             angs = np.array(vector_angle(self.unit_r1, self.unit_los))
-            
         if not isinstance(self.winds, Winds):
             raise ValueError("You should provide winds:Winds to rescale the IBS to "
                              "the position of the pulsar. Use winds = Winds(...) "
@@ -568,17 +547,6 @@ class IBS:
         """
         The scattering angle in the comoving frame of the IBS.
         """
-        # angs = np.zeros((self.s).size)
-        # del_dopl = self.real_dopl_angle   
-        # _up = np.where(self.theta>0)
-        # _low = np.where(self.theta<=0)
-        # _g_up = self.g[_up]
-        # _g_low = self.g[_low]
-        # angs[_up] = (lor_trans_angle(del_dopl[_up], _g_up) -
-        #     lor_trans_angle(np.pi - self.tangent[_up] - self.theta[_up], _g_up) )
-                      
-        # angs[_low] = (lor_trans_angle(del_dopl[_low], _g_low)
-        #                + lor_trans_angle(self.tangent[_low] - self.theta[_low], _g_low))
         angs = np.array(vector_angle(self.unit_r1, self.unit_los,
                                      self.vec_beta, True))
         return angs
@@ -682,6 +650,9 @@ if __name__ == "__main__":
     # ax[1].plot(ibs1.s, ibs1.y, label='y(s)')
     
     ax[1].plot(ibs1.s, ibs1.scattering_angle/np.pi, label='scattering / pi')
+    ax[1].plot(ibs1.s, ibs1.scattering_angle_comoving/np.pi, label='scattering comov / pi')
+    
+    ax[1].plot(ibs1.s, ibs1.scattering_angle_comoving/np.pi, label='scattering comov / pi')
     ax[1].plot(ibs1.s, ibs1.scattering_angle_comoving/np.pi, label='scattering comov / pi')
     
     # ax[1].plot(ibs1.s, ibs1.real_dopl_angle/np.pi, label='dopl angle rad')

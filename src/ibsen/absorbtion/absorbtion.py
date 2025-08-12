@@ -25,7 +25,7 @@ sigma_t = 8/3 * pi * (e_char**2 / MC2E)**2
 
 
 
-_here = Path(__file__).parent          # points to pulsar/
+_here = Path(__file__).parent          
 _tabdata = _here / "absorb_tab" 
 ### ----------------- For photoelectric absorbtion ------------------------ ###
 # file_phel = Path(Path.cwd(), 'TabData', 'sgm_tbabs_new.txt')

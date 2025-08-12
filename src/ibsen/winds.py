@@ -271,7 +271,7 @@ class Winds:
         vert = np.exp(-r_to_d**2 / 2 / z0**2)
         if self.rad_prof == 'pl':
             rad = (self.Ropt / r_in_d)**self.np_disk
-        if self.rad_prof == 'broken_pl':
+        if self.rad_prof == 'bkpl':
             if r_in_d < self.r_trunk:
                 rad = (self.Ropt / r_in_d)**self.np_disk
             if r_in_d >= self.r_trunk:

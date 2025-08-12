@@ -123,6 +123,11 @@ def lor_trans_ug_iso(ug_iso, gamma): # Relativistic jets... eq. (2.57)
     # delta_doppl = d_boost(gamma, ang_beta_obs)
     return ug_iso * gamma**2 * (3 + beta_from_g(gamma)) / 3.
 
+def lor_trans_Teff_iso(Teff_iso, gamma): # assuming u ~ T^4
+    # delta_doppl = d_boost(gamma, ang_beta_obs)
+    return Teff_iso * (gamma**2 * (3 + beta_from_g(gamma)) / 3.)**0.25
+
+
 def lor_trans_vec_novec(vec_n, vec_beta):
     """
     Lorentz tranformes a spatial unit vector vec_n (in lab frame) into \
@@ -309,7 +314,7 @@ def lor_trans_e_spec_iso(E_lab, dN_dE_lab, gamma, E_comov=None, n_mu=101):
 
 
 def loggrid(x1, x2, n_dec):
-    n_points = int( np.log10(x2 / x1) * n_dec)
+    n_points = int( np.log10(x2 / x1) * n_dec) + 1
     return np.logspace(np.log10(x1), np.log10(x2), n_points)
 
 def logrep(xdata, ydata):

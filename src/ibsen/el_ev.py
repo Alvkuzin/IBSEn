@@ -7,7 +7,8 @@ from scipy.integrate import trapezoid, cumulative_trapezoid, solve_ivp
 from scipy.interpolate import interp1d
 # import time
 # from joblib import Parallel, delayed
-from ibsen.utils import  beta_from_g, loggrid, t_avg_func
+from ibsen.utils import  beta_from_g, loggrid, t_avg_func, loggrid
+import matplotlib.pyplot as plt
 
 from ibsen.transport_solvers.transport_on_ibs_solvers import solve_for_n, nonstat_characteristic_solver
 # import xarray as xr
@@ -187,8 +188,8 @@ def stat_distr_with_leak(Es, Qs, Edots, Ts, mode = 'ivp'):
     
     
 def evolved_e_advection(s_, edot_func, f_inject_func,
-              tot_loss_args, f_args, vel_func, v_args, emin = 1e9, 
-              emax = 5.1e14):  
+              tot_loss_args, f_args, vel_func, v_args, emin_grid = 1e9, 
+              emax_grid = 5.1e14):  
         # s -- in [cm] !!!
         
         # we calculate it on e-grid emin / extend_d < e <  emax * extend_u
@@ -196,17 +197,19 @@ def evolved_e_advection(s_, edot_func, f_inject_func,
         
         # extend_u = 10; extend_d = 10; 
         extend_u = 2; extend_d = 10; 
-        Ns, Ne = 601, 603 
+        Ns, Ne_dec = 601, 123 
         # Ns, Ne = 201, 203 
-        Ne_real = int( Ne * np.log10(extend_u * emax / extend_d / emin) / np.log10(emax / emin) )
-        e_vals_sample = np.logspace(np.log10(emin / extend_d), np.log10(emax * extend_u), Ne_real)
+        # Ne_real = int( Ne * np.log10(extend_u * emax_grid / extend_d / emin_grid) / np.log10(emax_grid / emin_grid) )
+        # e_vals_sample = np.logspace(np.log10(emin / extend_d), np.log10(emax * extend_u), Ne_real)
+        e_vals_sample = loggrid(emin_grid / extend_d, emax_grid * extend_u,
+                                Ne_dec)
         
         # now we'll look where the f_inject is not negligible and only there
         # will we solve the equation 
         ssmesh, emesh = np.meshgrid(s_, e_vals_sample, indexing='ij')
         f_sample = f_inject_func(ssmesh, emesh, *f_args)
         f_sample_sed = f_sample[1, :] * e_vals_sample**2
-        e_where_good = np.where(f_sample_sed > np.max(f_sample_sed) / 1e6 )
+        e_where_good = np.where(f_sample_sed > np.max(f_sample_sed) / (-1e6) )
         s_vals = np.linspace(0, np.max(s_), Ns)
         e_vals = e_vals_sample[e_where_good]
         dNe_de = solve_for_n(v_func = vel_func, edot_func = edot_func,
@@ -217,7 +220,7 @@ def evolved_e_advection(s_, edot_func, f_inject_func,
                             s_grid = s_vals, e_grid = e_vals, 
                             method = 'FDM_cons', bound = 'neun')
         # #### Only leave the part of the solution between emin < e < emax 
-        ind_int = np.logical_and(e_vals <= emax, e_vals >= emin)
+        ind_int = np.logical_and(e_vals <= emax_grid, e_vals >= emin_grid)
         e_vals = e_vals[ind_int]
         dNe_de = dNe_de[:, ind_int]
         
@@ -438,7 +441,7 @@ def evolved_e(cooling, r_SP, ss, rs, thetas, edot_func, f_inject_func,
                            'leak_mimic', 'adv')
         print('setting cooling = \'no\' ')
         cooling = 'no'
-        
+    # e_vals = loggrid(emin, emax, n_dec)
     if cooling == 'no':
         # For each s, --> injected distribution
         e_vals = np.logspace(np.log10(emin), np.log10(emax), 977)
@@ -551,7 +554,9 @@ class ElectronsOnIBS: #!!!
                  ecut = 1.e12, p_e = 2., norm_e = 1.e37, beta_e=1,
                  Bs_apex=0., eta_a = None,
                  eta_syn = 1., eta_ic = 1.,
-                 emin = 1e9, emax = 5.1e14, to_cut_e = True, 
+                 emin = 1e9, emax = 5.1e14,
+                 emin_grid=1e8, emax_grid=5.1e14,
+                 to_cut_e = True, 
                  to_cut_theta =  False, 
                  where_cut_theta = pi/2):
         """
@@ -593,6 +598,9 @@ class ElectronsOnIBS: #!!!
         self.norm_e = norm_e # injection function normalization
         self.emin = emin  # minimum energy for the injection function
         self.emax = emax  # maximum energy for the injection function
+        self.emin_grid = emin_grid  # minimum energy for e-energy grid
+        self.emax_grid = emax_grid  # maximum energy for e-energy grid
+        
         
         self.to_cut_e = to_cut_e # whether to leave only the part emin < e < emax
         self.to_cut_theta = to_cut_theta # whether to inject only at theta < where_cut_theta
@@ -618,24 +626,66 @@ class ElectronsOnIBS: #!!!
         except:
             raise ValueError(""""Your ibs:IBS should contain ibs.winds""")
                              
+    # def b_and_u_s(self, s_):
+    #     r_to_p = self.ibs.s_interp(s_ = s_ / self.r_sp, what = 'r') # dimless
+    #     r_to_s = self.ibs.s_interp(s_ = s_ / self.r_sp, what = 'r1') # dimless
+    #     r_sa = (1. - self.ibs.x_apex)
+    #     B_on_shock = (self.Bp_apex * self.ibs.x_apex / r_to_p + 
+    #                   self.Bs_apex * r_sa / r_to_s)
+    #     u_g_on_shock = r_sa**2 / r_to_s**2
+    #     # return B_on_shock / (self.B_apex), u_g_on_shock
+    #     return r_to_p, r_to_s
     def b_and_u_s(self, s_):
-        r_to_p = self.ibs.s_interp(s_ = s_ / self.r_sp, what = 'r') # dimless
-        r_to_s = self.ibs.s_interp(s_ = s_ / self.r_sp, what = 'r1') # dimless
-        r_sa = (1. - self.ibs.x_apex)
-        B_on_shock = (self.Bp_apex * self.ibs.x_apex / r_to_p + 
+        """
+        
+
+        Parameters
+        ----------
+        s_ : TYPE
+            in cm.
+
+        Returns
+        -------
+        TYPE
+            DESCRIPTION.
+        u_g_on_shock : TYPE
+            DESCRIPTION.
+
+        """
+        f_ =  self.ibs.f_
+        r_to_p = self.ibs.s_interp(s_ = s_ / self.r_sp, what = 'r')/f_ # dimless
+        r_to_s = self.ibs.s_interp(s_ = s_ / self.r_sp, what = 'r1')/f_ # dimless
+        r_sa = (1. - self.ibs.x_apex_dimless)
+        B_on_shock = (self.Bp_apex * self.ibs.x_apex_dimless / r_to_p + 
                       self.Bs_apex * r_sa / r_to_s)
         u_g_on_shock = r_sa**2 / r_to_s**2
         return B_on_shock / (self.B_apex), u_g_on_shock
+        # return r_to_p, r_to_s
+    
     
     def u_g_density(self, r_from_s):      
+        """
+        The energy density of the optical star at the distance r_from_s.
+
+        Parameters
+        ----------
+        r_from_s : np.ndarray
+            Distance from the point on the IBS to the star [cm].
+
+        Returns
+        -------
+        u_dens : np.ndarray
+            The energy density of the optical star at the distance r_from_s.
+
+        """
         factor = 2. * (1. - (1. - (self.ibs.winds.Ropt / r_from_s)**2)**0.5 )
         u_dens = SIGMA_BOLTZ * self.ibs.winds.Topt**4 / C_LIGHT * factor
         return u_dens
     
     def _set_b_and_u_ibs(self):
-        b_onibs, u_onibs = ElectronsOnIBS.b_and_u_s(self, s_ = self.ibs.s * self.r_sp)
+        b_onibs, u_onibs = ElectronsOnIBS.b_and_u_s(self, s_ = self.ibs.s_dimless * self.r_sp)
         self.u_g_apex = ElectronsOnIBS.u_g_density(self,
-                        r_from_s = (1. - self.ibs.x_apex) * self.r_sp)
+                        r_from_s = (1. - self.ibs.x_apex_dimless) * self.r_sp)
         self._b = b_onibs
         self._u = u_onibs
 
@@ -667,11 +717,20 @@ class ElectronsOnIBS: #!!!
 
 
     def edot(self, s_, e_): 
-        r_sa = (1. - self.ibs.x_apex)
+        r_sa = (1. - self.ibs.x_apex_dimless)
         _b_s, _u_s = ElectronsOnIBS.b_and_u_s(self, s_ = s_)
+        # if isinstance(self.eta_a, float):
+        #     _eta_a = self.eta_a
+        # else:
+        #     # print((self.ibs.s_dimless*self.ibs.f_).shape)
+        #     # print((self.eta_a).shape)
+        #     s_ibs = (self.ibs.s_dimless*self.r_sp)[self.ibs.n:2*self.ibs.n]
+        #     _eta_a_spl = interp1d(s_ibs, self.eta_a,
+        #                           axis=0)
+        #     _eta_a = _eta_a_spl(s_)
         return total_loss(ee = e_, 
                           B = _b_s * self.B_apex, 
-                          Topt = self.ibs.winds.Topt,
+                          Topt = self.ibs.winds.Topt * _u_s**0.25,
                           Ropt=self.ibs.winds.Ropt,
                           dist = self.r_sp * r_sa, 
                           eta_flow = self.eta_a, 
@@ -682,10 +741,13 @@ class ElectronsOnIBS: #!!!
         if s_.shape != e_.shape:
             raise ValueError('in f_inject, `s`-shape should be == `e`-shape')
         thetas_here = self.ibs.s_interp(s_  = s_ / self.r_sp, what = 'theta')
+        # print(thetas_here)
         if self.to_inject_theta == '2d':
-            thetas_part = np.zeros(thetas_here.shape) + 1. # uniform along theta
+            integral_over_theta_quater = pi/2.
+            thetas_part = np.ones(thetas_here.shape) # uniform along theta
         elif self.to_inject_theta == '3d':
-            thetas_part = sin(thetas_here) # \propto sin(th) how it should be in 3d
+            integral_over_theta_quater = 1.
+            thetas_part = np.abs(sin(thetas_here)) # \propto sin(th) how it should be in 3d
         else:
             raise ValueError("I don't know this to_inject_theta. It should be 2d, 3d.")
             
@@ -702,28 +764,21 @@ class ElectronsOnIBS: #!!!
         else:
             raise ValueError("I don't know this to_inject_e. It should be pl or ecpl or secpl.")
             
-        result = thetas_part * e_part * self.norm_e
+        result = thetas_part * e_part 
         
         if self.to_cut_e:
             mask = (e_ < self.emin) | (e_ > self.emax)
             result = np.where(mask, 0.0, result)
-        # return sin(thetas_here)
-        
+            
         # now normalize the number of injected particles. I do it like this:
         # I ensure that the total number per second: N(s) = \int n(s, E) dE 
         # of electrons in  ONE horm in the forward hemisphere = 1/4 from norm:
         # 2 pi \int_0^{pi/2} N(s(theta)) d theta = norm / 2
-        N_total = trapezoid(result, e_, axis = 1)
-        thetas_forward = thetas_here[:, 0][thetas_here[:, 0] < pi/2]
-        # print(N_total.shape)
-        # print(thetas_forward.shape)
-        N_total_forward = N_total[thetas_here[:, 0] < pi/2]
-        integral_forward = trapezoid(N_total_forward, thetas_forward)
-        #if integral_forward != 0:
-        overall_coef = self.norm_e / 8 / pi / integral_forward
+
+        integral_over_e = trapezoid(e_part[0, :], e_[0, :])        
+        overall_coef = self.norm_e / 4. / integral_over_e / integral_over_theta_quater / self.ibs.n #!!!
         #else:
             # print('а какого хера')
-            # print(self.ibs.t_forbeta / DAY)
         return result * overall_coef
     
     # def analyt_adv_Ntot_tomimic(self, s, e): 
@@ -760,36 +815,37 @@ class ElectronsOnIBS: #!!!
         which Gamma is reached, dorb is an
         orbital separation"""
         _ga = self.ibs.gamma_max - 1.
-        _x = _ga * s / self.ibs.s_max_g / self.r_sp
-        return self.ibs.s_max_g / _ga * ( (1. + _x)**2 - 1.)**0.5
+        s_max_g_dimless = self.ibs.s_max_g / self.ibs.f_
+        _x = _ga * s / s_max_g_dimless / self.r_sp
+        res_ = s_max_g_dimless / _ga * ( (1. + _x)**2 - 1.)**0.5
+        floor_eta_a_ = 1e-2
+        res_[res_ < floor_eta_a_] = floor_eta_a_
+        return res_
     
-    def calculate(self, to_set_onto_ibs=True, to_return=False):
+    def calculate(self, to_return=False):
         ### we use the symmetry of ibs: calculate dNe_de only for 1 horn
         if self.ibs.one_horn:
-            s_1d_dim = self.ibs.s * self.r_sp
-        if not self.ibs.one_horn:
-            s_1d_dim = self.ibs.s[self.ibs.n : 2*self.ibs.n] * self.r_sp
+            raise ValueError('IBS should be two-horned!')
+        s_1d_dim = self.ibs.s_dimless[self.ibs.n : 2*self.ibs.n] * self.r_sp
         
         if self.cooling not in self.allowed_coolings:
             print('cooling should be one of these options:')
             print(self.allowed_coolings)
             print('setting cooling = \'no\'... ')
             self.cooling = 'no'
-            
+        ndec_e = 101 if self.cooling in ('leak_apex', 'leak_ibs', 'leak_mimic') else 301
+        e_vals = loggrid(self.emin_grid, self.emax_grid, ndec_e)
+        smesh, emesh = np.meshgrid(s_1d_dim, e_vals, indexing = 'ij')
         if self.cooling == 'no':
-            # For each s, --> injected distribution
-            e_vals = np.logspace(np.log10(self.emin), np.log10(self.emax), 977)
-            s2d, e2d = np.meshgrid(s_1d_dim, e_vals, indexing = 'ij')
-            dNe_de_IBS = ElectronsOnIBS.f_inject(self, s2d, e2d)
+            # For each s, --> injected distributions_dimless
+            dNe_de_IBS = ElectronsOnIBS.f_inject(self, smesh, emesh)
             
-        if self.cooling in ('stat_apex', 'stat_ibs', 'stat_mimic'):
+        elif self.cooling in ('stat_apex', 'stat_ibs', 'stat_mimic'):
             # For each s, --> stationary distribution
-            e_vals = np.logspace(np.log10(self.emin), np.log10(self.emax), 979)
-            smesh, emesh = np.meshgrid(s_1d_dim, e_vals, indexing = 'ij')
             if self.cooling == 'stat_mimic':
                 eta_fl_new = ElectronsOnIBS.eta_flow_mimic(self, smesh)
                 self.eta_a = eta_fl_new
-    
+                
             f_inj_se = ElectronsOnIBS.f_inject(self, smesh, emesh)
             edots_se = ElectronsOnIBS.edot(self, smesh, emesh)
             dNe_de_IBS = np.zeros((s_1d_dim.size, e_vals.size))
@@ -801,9 +857,7 @@ class ElectronsOnIBS: #!!!
                 if self.cooling in ('stat_ibs', 'stat_mimic'):
                     dNe_de_IBS[i_s, :] = stat_distr(e_vals, f_inj_se[i_s, :], edots_se[i_s, :])
 
-        if self.cooling in ('leak_apex', 'leak_ibs', 'leak_mimic'):
-            e_vals = np.logspace(np.log10(self.emin), np.log10(self.emax), 381)
-            smesh, emesh = np.meshgrid(s_1d_dim, e_vals, indexing = 'ij')
+        elif self.cooling in ('leak_apex', 'leak_ibs', 'leak_mimic'):
             if self.cooling == 'stat_mimic':
                 eta_fl_new = ElectronsOnIBS.eta_flow_mimic(self, smesh)
                 self.eta_a = eta_fl_new
@@ -818,8 +872,6 @@ class ElectronsOnIBS: #!!!
 
             for i_s in range(s_1d_dim.size):
                 if self.cooling == 'leak_ibs':
-                    # dNe_de_IBS[i_s, :] = Stat_distr_with_leak_ivp(e  = e_vals,
-                        # q_func, edot_func, T_func, q_args, edot_args, T_args)
                     dNe_de_IBS[i_s, :] = stat_distr_with_leak(Es = e_vals,
                         Qs = f_inj_se[i_s, :], Edots = edots_se[i_s, :], Ts = ts_leak[i_s, :],
                         mode = 'analyt')
@@ -832,39 +884,31 @@ class ElectronsOnIBS: #!!!
                         Qs = f_inj_se[i_s, :], Edots = edots_se[i_s, :], 
                         Ts = ts_leak[i_s, :], mode = 'analyt') 
             
-        if self.cooling == 'adv':
+        elif self.cooling == 'adv':
             edot_func = lambda s_, e_: ElectronsOnIBS.edot(self, s_, e_)
             f_inject_func = lambda s_, e_: ElectronsOnIBS.f_inject(self, s_, e_)
             vel_func = lambda s_: ElectronsOnIBS.vel(self, s=s_)
             
             dNe_de_IBS, e_vals = evolved_e_advection(s_ = s_1d_dim,
                 edot_func=edot_func, f_inject_func=f_inject_func, 
-                tot_loss_args=(), f_args=(), vel_func=vel_func, v_args=())
-            
-        # if to_lor_trans, we transfer the spectrum to the co-moving
-        # reference frames for each s on ibs
-        # if to_lor_trans:
-            # dNe_de_IBS_transfered = np.zeros(dNe_de_IBS.shape)
-            # for i_s in range(s_1d_dim.size):
-                # dNe_de_IBS_transfered[i_s, :] = lor_trans_ug_e_spec(E_lab = e_vals, dN_dE_lab, gamma)
-                
+                tot_loss_args=(), f_args=(), vel_func=vel_func, v_args=(),
+                emin_grid=self.emin_grid, emax_grid=self.emax_grid)
+        else:
+            raise ValueError('I don\'t know this `cooling`!')
+
         # if there were 2 horns in ibs, we fill the 2nd horn with the values 
         # from the 1st horn
-        if not self.ibs.one_horn:
-            dNe_de_IBS_2horns = np.zeros(((self.ibs.s).size, e_vals.size ))
-            dNe_de_IBS_2horns[:self.ibs.n, :] = dNe_de_IBS[::-1, :] # in reverse order from s=smax to ~0
-            dNe_de_IBS_2horns[self.ibs.n : 2*self.ibs.n, :] = dNe_de_IBS
-            dNe_de_IBS = dNe_de_IBS_2horns
-            
+        dNe_de_IBS_2horns = np.zeros(((self.ibs.s).size, e_vals.size ))
+        dNe_de_IBS_2horns[:self.ibs.n, :] = dNe_de_IBS[::-1, :] # in reverse order from s=smax to ~0
+        dNe_de_IBS_2horns[self.ibs.n : 2*self.ibs.n, :] = dNe_de_IBS        
         
-        if to_set_onto_ibs:
-            self.dNe_de_IBS = dNe_de_IBS
-            self.e_vals = e_vals
-            e_sed = np.array([ dNe_de_IBS[i_s, :] * e_vals**2 for i_s in range(dNe_de_IBS.shape[0])])
-            self.e_sed = e_sed
-            # print('dNe_de_IBS and e_vals are set')
+        self.dNe_de_IBS = dNe_de_IBS_2horns
+        self.e_vals = e_vals
+        e_sed = np.array([ dNe_de_IBS_2horns[i_s, :] * e_vals**2
+                          for i_s in range(dNe_de_IBS_2horns.shape[0])])
+        self.e_sed = e_sed
         if to_return:
-            return dNe_de_IBS, e_vals
+            return dNe_de_IBS_2horns, e_vals
         
 
     def peek(self, ax=None, 
@@ -918,9 +962,11 @@ class ElectronsOnIBS: #!!!
         ax[1].set_ylabel(r'$N(s)$')
         ax[1].set_title(r'$N(s)$')    
         
-        
-        edot_apex = ElectronsOnIBS.edot(self, 0, self.e_vals)
-        ax[2].plot(self.e_vals, -self.e_vals / edot_apex)
+        smesh, emesh = np.meshgrid(self.ibs.s_dimless[self.ibs.n:2*self.ibs.n] * self.r_sp,
+                                   self.e_vals, indexing='ij')
+        edot_ = ElectronsOnIBS.edot(self, smesh, emesh)
+        edot_avg = trapezoid(edot_, smesh[:, 0], axis=0) / trapezoid(np.ones(smesh[:, 0].size), smesh[:, 0], axis=0)
+        ax[2].plot(self.e_vals, -self.e_vals / edot_avg)
         ax[2].set_xlabel('e, eV')
         ax[2].set_title('t cooling [s] VS e')
         ax[2].set_xscale('log')
@@ -1123,76 +1169,117 @@ class NonstatElectronEvol: #!!!
     
     
     
-if __name__ == '__main__':
-    import matplotlib.pyplot as plt
-    from ibsen.orbit import Orbit
-    from ibsen.winds import Winds
-    from ibsen.ibs import IBS
-    import time
+# if __name__ == '__main__':
+    # from ibsen.orbit import Orbit
+    # from ibsen.winds import Winds
+    # from ibsen.ibs import IBS
+    # import time
 
+    # sys_name = 'psrb' 
+    # orb = Orbit(sys_name = sys_name, n=1003)
+    # winds_full = Winds(orbit=orb, sys_name = sys_name, alpha=-10/180*pi, incl=23*pi/180,
+    #             f_d=165, f_p=0.1, delta=0.015, np_disk=3, rad_prof='pl', r_trunk=None,
+    #             height_exp=0.25,
+    #                 ns_field_model = 'linear', ns_field_surf = 0.2, ns_r_scale = 1e13,
+    #                 opt_field_model = 'linear', opt_field_surf = 0, opt_r_scale = 1e13,)
+    # # winds_full.peek(showtime=(-100*DAY, 100*DAY))
+
+
+    # el = NonstatElectronEvol(winds=winds_full, t_start=-100*DAY, t_stop=100*DAY,
+    #                         emin=1e9, emax=1e13, emin_grid=1e8, emax_grid=1e13,
+    #                         p_e=1.7, init_distr='zero', eps_big=5e-3, eps_small=3e-3,
+    #                         n_dec_e=201, dt_min=0.01*DAY, dt_first=None,
+    #                         adaptive_dt=True, eta_a=1e20)
+    # start = time.time()
+    # ts, es, ns = el.calculate(to_return=True)
+    # # e_ = es[1, :]
+    # e_ = el.e_c
+    # print(time.time() - start)
+
+    # plt.subplot(1, 3, 1)
+    # print(el.ts.shape)
+    # print(el.dNe_des.shape)
+    # print(type(el.ts))
+    # print(type(el.dNe_des))
+    # plt.plot(e_, el.dn_de(-70*DAY)*e_**2, color='r', label='-60 days')
+    # plt.plot(e_, el.stat_distr_at_time(-70*DAY, e_)*e_**2, ls='--', color='r')
+    
+    # plt.plot(e_, el.dn_de(-15*DAY)*e_**2, color='g', label='-15 days')
+    # plt.plot(e_, el.stat_distr_at_time(-15*DAY, e_)*e_**2, ls='--', color='g')
+    
+    
+    # plt.plot(e_, el.dn_de(0)*e_**2, color='k', label='0 days')
+    # plt.plot(e_, el.stat_distr_at_time(0, e_)*e_**2, ls='--', color='k')
+
+    # plt.plot(e_, el.dn_de(15*DAY)*e_**2, color='m', label='20 days')
+    # plt.plot(e_, el.stat_distr_at_time(15*DAY, e_)*e_**2, ls='--', color='m')
+
+    # plt.plot(e_, el.dn_de(70*DAY)*e_**2, color='b', label='70 days')
+    # plt.plot(e_, el.stat_distr_at_time(70*DAY, e_)*e_**2, ls='--', color='b')
+
+    # plt.xscale('log')
+    # plt.yscale('log')
+    # plt.xlabel('e, eV')
+    # plt.ylim(1e45, 5e49)
+    # plt.legend(fontsize=10)
+    # plt.title('e-SED')
+
+
+    # plt.subplot(1, 3, 2)
+    # Ntot = el.n_tot(ts)
+    # Ntot_stat = el.nstat_tot(ts)
+    # plt.plot(ts/DAY, Ntot, label='nonstat')
+    # plt.plot(ts/DAY, Ntot_stat, label='stat')
+    
+    # plt.xlabel('t, days')
+    # plt.title('total Ne in [emin, emax]')
+    # plt.legend()
+    
+    # plt.subplot(1, 3, 3)
+    # dt = ts[1:] - ts[:-1]
+    # plt.plot(ts[1:]/DAY, dt/DAY)
+    # plt.title('time step (d)')
+    # plt.xlabel('t, days')
+    # plt.yscale('log')
+
+
+
+if __name__ == "__main__":
+    from ibsen.orbit import Orbit
+
+    DAY = 86400.
+    AU = 1.5e13
+    
     sys_name = 'psrb' 
     orb = Orbit(sys_name = sys_name, n=1003)
-    winds_full = Winds(orbit=orb, sys_name = sys_name, alpha=-10/180*pi, incl=23*pi/180,
-                f_d=165, f_p=0.1, delta=0.015, np_disk=3, rad_prof='pl', r_trunk=None,
-                height_exp=0.25,
-                    ns_field_model = 'linear', ns_field_surf = 0.2, ns_r_scale = 1e13,
-                    opt_field_model = 'linear', opt_field_surf = 0, opt_r_scale = 1e13,)
-    # winds_full.peek(showtime=(-100*DAY, 100*DAY))
-
-
-    el = NonstatElectronEvol(winds=winds_full, t_start=-100*DAY, t_stop=100*DAY,
-                            emin=1e9, emax=1e13, emin_grid=1e8, emax_grid=1e13,
-                            p_e=1.7, init_distr='zero', eps_big=5e-3, eps_small=3e-3,
-                            n_dec_e=201, dt_min=0.01*DAY, dt_first=None,
-                            adaptive_dt=True, eta_a=1e20)
-    start = time.time()
-    ts, es, ns = el.calculate(to_return=True)
-    # e_ = es[1, :]
-    e_ = el.e_c
-    print(time.time() - start)
-
-    plt.subplot(1, 3, 1)
-    print(el.ts.shape)
-    print(el.dNe_des.shape)
-    print(type(el.ts))
-    print(type(el.dNe_des))
-    plt.plot(e_, el.dn_de(-70*DAY)*e_**2, color='r', label='-60 days')
-    plt.plot(e_, el.stat_distr_at_time(-70*DAY, e_)*e_**2, ls='--', color='r')
+    from ibsen.winds import Winds
+    winds = Winds(orbit=orb, sys_name = sys_name, alpha=-10/180*pi, incl=23*pi/180,
+              f_d=165, f_p=0.1, delta=0.02, np_disk=3, rad_prof='pl', r_trunk=None,
+             height_exp=0.25)     
     
-    plt.plot(e_, el.dn_de(-15*DAY)*e_**2, color='g', label='-15 days')
-    plt.plot(e_, el.stat_distr_at_time(-15*DAY, e_)*e_**2, ls='--', color='g')
+    from ibsen.ibs import IBS
+    # from scipy.integrate import trapezoid
+    # fig, ax = plt.subplots(2, 1)
+    t = 15 * DAY
+    Nibs = 21
+    ibs = IBS(beta=None,
+              winds=winds,
+              gamma_max=1.00003,
+              s_max=1.,
+              s_max_g=4.,
+              n=Nibs,
+              one_horn=False,
+              t_to_calculate_beta_eff=t) # the same IBS as before
+    ibs1 = ibs.rescale_to_position()
+    # ibs1.peek(show_winds=True, to_label=False, showtime=(-100*DAY, 100*DAY),
+    #          ibs_color='doppler')
+    els = ElectronsOnIBS(Bp_apex=1, ibs=ibs, cooling='adv', eta_a = 1e20,
+                     to_inject_e = 'ecpl', emin=1e9, emax=1e13, emin_grid=1e9,
+                     p_e=1.7) 
+    els.calculate(to_return=False)
+    print('el_ev calculated')
+    els.peek()
     
+    # plt.plot(els.ibs.s, els._b)
+    # plt.plot(els.ibs.s, els._u)
     
-    plt.plot(e_, el.dn_de(0)*e_**2, color='k', label='0 days')
-    plt.plot(e_, el.stat_distr_at_time(0, e_)*e_**2, ls='--', color='k')
-
-    plt.plot(e_, el.dn_de(15*DAY)*e_**2, color='m', label='20 days')
-    plt.plot(e_, el.stat_distr_at_time(15*DAY, e_)*e_**2, ls='--', color='m')
-
-    plt.plot(e_, el.dn_de(70*DAY)*e_**2, color='b', label='70 days')
-    plt.plot(e_, el.stat_distr_at_time(70*DAY, e_)*e_**2, ls='--', color='b')
-
-    plt.xscale('log')
-    plt.yscale('log')
-    plt.xlabel('e, eV')
-    plt.ylim(1e45, 5e49)
-    plt.legend(fontsize=10)
-    plt.title('e-SED')
-
-
-    plt.subplot(1, 3, 2)
-    Ntot = el.n_tot(ts)
-    Ntot_stat = el.nstat_tot(ts)
-    plt.plot(ts/DAY, Ntot, label='nonstat')
-    plt.plot(ts/DAY, Ntot_stat, label='stat')
-    
-    plt.xlabel('t, days')
-    plt.title('total Ne in [emin, emax]')
-    plt.legend()
-    
-    plt.subplot(1, 3, 3)
-    dt = ts[1:] - ts[:-1]
-    plt.plot(ts[1:]/DAY, dt/DAY)
-    plt.title('time step (d)')
-    plt.xlabel('t, days')
-    plt.yscale('log')
