@@ -11,8 +11,8 @@ import astropy.units as u
 G = 6.67e-8
 DAY = 86400.
 AU = 1.5e13
-def is_list_of_vecs(x):
-    return isinstance(x, list) and all(isinstance(xx, np.ndarray) for xx in x)
+# def is_list_of_vecs(x):
+#     return isinstance(x, list) and all(isinstance(xx, np.ndarray) for xx in x)
 
 def vectorize_func(func_simple):
     def wrapper(*args):
@@ -422,6 +422,13 @@ def rotate_z(vec, phi):
     x_rotated_ = c_ * _x - s_ * _y
     y_rotated_ = s_ * _x + c_ * _y
     return np.array([x_rotated_, y_rotated_, _z])
+
+def rotate_z_xy(x, y, phi):
+    c_, s_ = cos(phi), sin(phi)
+    x_rotated_ = c_ * x - s_ * y
+    y_rotated_ = s_ * x + c_ * y
+    return x_rotated_, y_rotated_
+
 
 def t_avg_func(func, t1, t2, n_t):
     """

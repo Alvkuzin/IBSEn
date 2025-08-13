@@ -1,6 +1,6 @@
 [project]
 name = "ibsen"
-version = "0.2.3"
+version = "0.2.4"
 description = "A toy model for pulsar binary system"
 authors = [{name = "Lesha"}]
 dependencies = ["numpy"]

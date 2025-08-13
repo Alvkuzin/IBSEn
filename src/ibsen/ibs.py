@@ -7,7 +7,7 @@ from pathlib import Path
 import xarray as xr
 from ibsen.winds import Winds
 from ibsen.utils import lor_trans_b_iso, lor_trans_ug_iso, beta_from_g, absv, \
- vector_angle, rotate_z, n_from_v
+ vector_angle, rotate_z, rotate_z_xy, n_from_v
  
 from astropy import constants as const
 
@@ -59,118 +59,103 @@ _here = Path(__file__).parent          # points to pulsar/
 _ibs_data_file = _here / "tab_data" / "Shocks4.nc"
 ds_sh = xr.load_dataset(_ibs_data_file)
 
-class IBS:
-    """
-    TODO: Maybe create 2 classes. 1st: IBS_dimentionless, without any winds, just 
-    with beta. 2nd: IBS_real, it would take winds and optional time and 
-    return rescaled, rotated ibs.
-    """
-    def __init__(self, beta, s_max, gamma_max=None, s_max_g=4., n=31, one_horn=False,  
-                 winds = None, t_to_calculate_beta_eff = None, to_rescale=True):
+
+class IBS_norm: #!!!
+    def __init__(self, beta, s_max, gamma_max=1.1, s_max_g=4., n=31,
+                unit_los=np.array([1, 0, 0])):
         self.beta = beta
         self.gamma_max = gamma_max
         self.s_max = s_max
         self.s_max_g = s_max_g
         self.n = n
-        self.one_horn = one_horn
-        self.winds = winds
-        self.t_forbeta = t_to_calculate_beta_eff
-        self.to_rescale = to_rescale
-        ##### ----------------------------------------------------------- #####
-        ##### --- I just want to declare everything before assigning ---- #####
-        self.x = None
-        self.y = None
-        self.theta = None
-        self.r = None
-        self.r_dimless = None
-        
-        self.s = None
-        self.s_dimless = None
-        
-        self.theta1 = None
-        self.r1 = None
-        self.r1_dimless = None
-        
-        self.tangent = None
-        self.thetainf = None
-        self.x_apex = None
-        self.x_apex_dimless = None
-        
-        self.unit_r = None # unit vector from P to IBS point
-        self.unit_r1 = None # unit vector from S to IBS point
-        self.unit_rsp = None # unit vector from S to P
-        self.r_sp = None # binary separation s-p
-        
-        self.unit_beta = None # unit vectors of velosity v/c in each IBS point
-        self.unit_los = None # unit vector in the Line of Sight direction
-        self.vec_beta = None # vectors of velosity v/c in each IBS point
+        self.unit_los = unit_los # unit vector in the Line of Sight direction
 
         self.calculate()
-    
     
     @staticmethod
     def vel_from_g(g_vel):
         return C_LIGHT * beta_from_g(g_vel) 
     
-    
     def calculate(self):
-        if isinstance(self.winds, Winds):
-            self.beta = self.winds.beta_eff(self.t_forbeta)
-
         (xp, yp, tp, rp, sp, t1p, r1p, tanp, theta_inf_,
-         r_apex) = IBS.approx_IBS(self, full_output=True)
+         r_apex) = IBS_norm.approx_IBS(self, full_output=True)
         self.x = xp
         self.y = yp
         self.theta = tp
         self.r = rp
-        self.r_dimless = rp
-        
         self.s = sp
-        self.s_dimless = sp
-        
         self.theta1 = t1p
         self.r1 = r1p
-        self.r1_dimless = r1p
-        
         self.tangent = tanp
         self.thetainf = theta_inf_
         self.x_apex = r_apex 
-        self.x_apex_dimless = r_apex 
         
         norms_r = []
         norms_r1 = []
-        tans_= []
-        if isinstance(self.winds, Winds):
+        unit_beta_= []
+        self.unit_los = n_from_v(np.array(self.unit_los) )
 
-            self.unit_los = np.array([cos(self.winds.orbit.nu_los),
-                                 sin(self.winds.orbit.nu_los),
-                                 0])
-            vec_rsp = self.winds.orbit.vector_sp(self.t_forbeta)
-            unit_rsp = n_from_v(vec_rsp)
-            for x_, y_, th_, tan_ in zip(xp, yp, tp, tanp):
-                n_ = np.array([x_, y_, 0])
-                n_r_ = n_from_v(n_)
-                n_r1_ = unit_rsp + n_r_
-                norms_r.append(n_r_)
-                norms_r1.append(n_r1_)
-                
-                if th_ < 0: # if lower horn
-                    tang_vec = -np.array([cos(tan_), sin(tan_), 0])
-                else: # if upper horn
-                    tang_vec = np.array([cos(tan_), sin(tan_), 0])
-                tans_.append(n_from_v(tang_vec))
-                    
-            self.unit_r = norms_r
-            self.unit_r1 = norms_r1
-            self.unit_rsp = unit_rsp
-            self.r_sp = absv(vec_rsp)
-            self.unit_beta = tans_
-            beta_vecs = [x * y for x, y in zip(tans_, beta_from_g(self.g))]
-            self.vec_beta = beta_vecs
+        vec_rsp = np.array([-1, 0, 0])
+        unit_rsp = n_from_v(vec_rsp)
+        for x_, y_, th_, tan_ in zip(xp, yp, tp, tanp):
+            n_ = np.array([x_, y_, 0])
+            n_r_ = n_from_v(n_)
+            n_r1_ = n_from_v(vec_rsp + n_)
+            norms_r.append(n_r_)
+            norms_r1.append(n_r1_)
+            
+            if th_ < 0: # if lower horn
+                unit_beta_vec = -np.array([cos(tan_), sin(tan_), 0])
+            else: # if upper horn
+                unit_beta_vec = np.array([cos(tan_), sin(tan_), 0])
+            unit_beta_.append(n_from_v(unit_beta_vec))
         
         
+        # norms_r, norms_r1, unit_beta_ = [np.array(ar_) for ar_ in (norms_r, norms_r1, unit_beta_)]
+        self.unit_r = norms_r
+        self.unit_r1 = norms_r1
+        self.unit_rsp = unit_rsp
+        self.r_sp = absv(vec_rsp)
+        self.unit_beta = unit_beta_
+        beta_vecs = [_x * _y for _x, _y in zip(unit_beta_, beta_from_g(self.g))]
+        self.vec_beta = beta_vecs
+        self.s_max=np.max(sp)
+        
+        self.s_m = self.s[:self.s.size-1]
+        self.s_p = self.s[1:]
+        self.s_mid = 0.5*(self.s_m + self.s_p)
+        self.ds = self.s_p-self.s_m
 
+        self.x_m = self.x[:self.s.size-1]
+        self.x_p = self.x[1:]
+        self.x_mid = 0.5*(self.x_m + self.x_p)
+        self.dx = self.x_p-self.x_m
 
+        self.y_m = self.y[:self.s.size-1]
+        self.y_p = self.y[1:]    
+        self.y_mid = 0.5*(self.y_m + self.y_p)
+        self.dy = self.y_p-self.y_m
+
+        self.theta_m = self.theta[:self.s.size-1]
+        self.theta_p = self.theta[1:]
+        self.theta_mid = 0.5*(self.theta_m + self.theta_p)
+        self.dtheta = self.theta_p - self.theta_m
+        
+        unit_r_mid_ = []
+        unit_r1_mid_ = []
+        unit_beta_mid_ = []
+        # vec_beta_mid_ = []
+        for i_m in range(0, self.s.size-1):
+            # print(norms_r[i_m+1])
+            unit_r_mid_.append(0.5 * (norms_r[i_m+1] + norms_r[i_m]) )
+            unit_r1_mid_.append(0.5 * (norms_r1[i_m+1] + norms_r1[i_m]))
+            unit_beta_mid_.append(0.5 * (unit_beta_[i_m+1] + unit_beta_[i_m]))
+            # vec_beta_mid_.append(0.5 * (beta_vecs[i_m+1] + beta_vecs[i_m]))
+        
+        self.unit_r_mid = unit_r_mid_
+        self.unit_r1_mid = unit_r1_mid_
+        self.unit_beta_mid = unit_beta_mid_
+        self.vec_beta_mid = [_x * _y for _x, _y in zip(unit_beta_mid_, beta_from_g(self.g_mid))]
 
     def s_interp(self, s_, what):
         """
@@ -215,31 +200,37 @@ class IBS:
         
     @property
     def g(self):
-        return IBS.gma(self, s = self.s)
+        return IBS_norm.gma(self, s = self.s)
     
     @property
-    def f_(self):
-        return self.x_apex / self.x_apex_dimless
-    
+    def g_mid(self):
+        return IBS_norm.gma(self, s = self.s_mid)
     
     
     @property
     def beta_vel(self):
         return beta_from_g(g_vel = self.g)
     
-    def lor_trans_b_iso_on_ibs(self, B_iso):
-        return lor_trans_b_iso(B_iso=B_iso, gamma=self.g)
-    
-    def lor_trans_ug_iso_on_ibs(self, ug_iso):
-        return lor_trans_ug_iso(ug_iso=ug_iso, gamma=self.g)
+    @property
+    def beta_vel_mid(self):
+        return beta_from_g(g_vel = self.g_mid)
     
     
+    # def lor_trans_b_iso_on_ibs(self, B_iso):
+    #     return lor_trans_b_iso(B_iso=B_iso, gamma=self.g)
+    
+    # def lor_trans_ug_iso_on_ibs(self, ug_iso):
+    #     return lor_trans_ug_iso(ug_iso=ug_iso, gamma=self.g)
     
     @property
     def theta_inf(self):
         to_solve1 = lambda tinf: tinf - tan(tinf) - pi / (1. - self.beta)
-        th_inf = brentq(to_solve1, pi/2 + 1e-5, pi - 1e-5)
-        return th_inf
+        try:
+            th_inf = brentq(to_solve1, pi/2 + 1e-5, pi - 1e-5)
+            return th_inf
+        except:
+            # raise ValueError('Could not calculate theta_inf')
+            return np.nan
     
         
     def theta1_CRW(self, theta):
@@ -253,49 +244,45 @@ class IBS:
         
     def rotate(self, phi):
         """
-        Rotates the shock at the angle phi CLOCKWISE 
+        Rotates the shock at the angle phi COUNTERCLOCKWISE. Note that the vector of 
+        the line of sight unit_los is not rotated.
         
         Parameters
         ----------
-        phi : TYPE
-            DESCRIPTION.
+        phi : float
+            The angle to rotate at [rad].
 
         Returns
         -------
-        rotated_ibs : TYPE
-            DESCRIPTION.
-            
-            # self.unit_r = norms_r
-            # self.unit_r1 = norms_r1
-            self.unit_rsp = unit_rsp
-            # self.r_sp = absv(vec_rsp)
-            # self.unit_beta = tans_
-            # beta_vecs = [x * y for x, y in zip(tans_, beta_from_g(self.g))]
-            # self.vec_beta = beta_vecs
+        rotated_ibs : class IBS_norm
+            The class of dimentionleess IBS corresponding to the rotated IBS.
 
         """
-        c_, s_ = cos(phi), sin(phi)
-        x_rotated_ = c_ * self.x - s_ * self.y
-        y_rotated_ = s_ * self.x + c_ * self.y
-        # x_rotated_, y_rotated_, z_rotated_ = rotate_z(np.array([self.x, self.y]), phi)
+
         rotated_ibs = self.__class__(beta=self.beta, gamma_max=self.gamma_max, s_max=self.s_max,
-                               s_max_g = self.s_max_g, n=self.n, one_horn=self.one_horn,
-                               winds=self.winds, t_to_calculate_beta_eff=self.t_forbeta)
-        rotated_ibs.x = x_rotated_
-        rotated_ibs.y = y_rotated_
+                               s_max_g = self.s_max_g, n=self.n, unit_los=self.unit_los)
+        rotated_ibs.x, rotated_ibs.y  = rotate_z_xy(self.x, self.y, phi)
+        rotated_ibs.x_m, rotated_ibs.y_m  = rotate_z_xy(self.x_m, self.y_m, phi)
+        rotated_ibs.x_p, rotated_ibs.y_p  = rotate_z_xy(self.x_p, self.y_p, phi)
+        rotated_ibs.x_mid, rotated_ibs.y_mid  = rotate_z_xy(self.x_mid, self.y_mid, phi)
+        
         rotated_ibs.tangent = self.tangent + phi
         for i in range(self.s.size):
             rotated_ibs.unit_r[i] = rotate_z(self.unit_r[i], phi)
             rotated_ibs.unit_beta[i] = rotate_z(self.unit_beta[i], phi)
             rotated_ibs.vec_beta[i] = rotate_z(self.vec_beta[i], phi)
             rotated_ibs.unit_r1[i] = rotate_z(self.unit_r1[i], phi)
+            if i != self.s.size-1:
+                rotated_ibs.unit_r_mid[i] = rotate_z(self.unit_r_mid[i], phi)
+                rotated_ibs.unit_r1_mid[i] = rotate_z(self.unit_r1_mid[i], phi)
+                rotated_ibs.vec_beta_mid[i] = rotate_z(self.vec_beta_mid[i], phi)
+                rotated_ibs.unit_beta_mid[i] = rotate_z(self.unit_beta_mid[i], phi)
+            
+            
+            
         rotated_ibs.unit_rsp = rotate_z(self.unit_rsp, phi)
 
         return rotated_ibs
-        
-        
-        
-        
     
     def calculate_ibs_shape_crw(self, full_return = False):
         """
@@ -363,7 +350,7 @@ class IBS:
             Describes where the IBS should be cut. If float, then it is treated as
             the dimentionless arclength of the IBS at which it should be cut 
             (should be less than 5.0). If 'bow', then the part of the IBS with
-            theta < 90 deg is left. If 'incl', these parts of the shock left for
+            theta < 90 deg is left. If 'incl', such parts of the shock left for
             which the angle between the radius-vector from the pulsar and the 
             tanential is < 90 + 10 deg
             
@@ -419,137 +406,318 @@ class IBS:
                                           ints(yplot),
                 intth1(yplot), intr1(yplot), inttan(yplot))
         yp = yplot
-        if self.one_horn:
-            if full_output:
-                return (xp, yp, tp, rp, sp, t1p, r1p, tanp, intpl.theta_inf.item(),
-            intpl.r_apex.item())
-            if not full_output:
-                return xp, yp
-        if not self.one_horn:
-            xp = np.concatenate((xp[::-1], xp))
-            yp = np.concatenate((-yp[::-1], yp))
-            tp = np.concatenate((-tp[::-1], tp))
-            rp = np.concatenate((rp[::-1], rp))
-            sp = np.concatenate((-sp[::-1], sp))
-            t1p = np.concatenate((-t1p[::-1], t1p))
-            r1p = np.concatenate((r1p[::-1], r1p))
-            tanp = np.concatenate((-tanp[::-1], pi+tanp))
-            if full_output:
-                return (xp, yp, tp, rp, sp, t1p, r1p, tanp, intpl.theta_inf.item(),
-            intpl.r_apex.item())
-            if not full_output:
-                return xp, yp
+        # if self.one_horn:
+        #     if full_output:
+        #         return (xp, yp, tp, rp, sp, t1p, r1p, tanp, intpl.theta_inf.item(),
+        #     intpl.r_apex.item())
+        #     if not full_output:
+        #         return xp, yp
+        # if not self.one_horn:
+        xp = np.concatenate((xp[::-1], xp))
+        yp = np.concatenate((-yp[::-1], yp))
+        tp = np.concatenate((-tp[::-1], tp))
+        rp = np.concatenate((rp[::-1], rp))
+        sp = np.concatenate((-sp[::-1], sp))
+        t1p = np.concatenate((-t1p[::-1], t1p))
+        r1p = np.concatenate((r1p[::-1], r1p))
+        tanp = np.concatenate((-tanp[::-1], pi+tanp))
+        if full_output:
+            return (xp, yp, tp, rp, sp, t1p, r1p, tanp, intpl.theta_inf.item(),
+        intpl.r_apex.item())
+        if not full_output:
+            return xp, yp
             
     @staticmethod
     def doppler_factor(g_vel, ang_):
         beta_vels = beta_from_g(g_vel=g_vel)
         return 1 / g_vel / (1 - beta_vels * cos(ang_))
             
-    # def dopl(self, nu_true, nu_los=None):
-    #     """
-    #     The doppler factor from the bulk motion along the shock.
-
-    #     Parameters
-    #     ----------
-    #     nu_true : np.ndarray
-    #         The angle between the S-to-periastron direction and the IBS 
-    #         symmetry line. In case the apex lies on the S-P line, 
-    #         this is the true anomaly of the P.
-            
-    #     nu_los : np.ndarray
-    #         The angle between the S-to-periastron direction and the projection
-    #         of the line-of-sight onto the pulsar orbit. For PSRB, 2.3 rad.
-
-    #     Returns
-    #     -------
-    #     np.ndarray of length n of bulk motion doppler-factors.
-
-    #     """
-        
-        
-    #     angs = np.zeros((self.s).size)
-        
-    #     try:
-    #         if nu_los is None:
-    #             _nu_los = self.winds.orbit.nu_los
-    #         if nu_los is not None: _nu_los = nu_los
-    #     except:
-    #         if nu_los is None: 
-    #             raise ValueError('you should provide nu_los')
-    #         if nu_los is not None: _nu_los = nu_los
-                
-        
-    #     angs[self.theta < 0] = _nu_los - nu_true - (self.tangent)[self.theta < 0]
-    #     angs[self.theta >= 0] = _nu_los - nu_true + (pi - self.tangent)[self.theta >= 0]
-        
-    #     return IBS.doppler_factor(g_vel = self.g, ang_ = angs)
-    
-    def rescale_to_position(self):
-        """
-        If winds:Winds was provided, rescale the IBS to the real units at
-        the time t_to_calculate_beta_eff [s] and rotate it so that its 
-        line of symmetry is S-P line. Rescaled are: x, y, r, s, r1, x_apex.
-        The tangent is added pi + nu_tr to (at the stage of 'IBS.rotate').
-        
-        ---
-        Returns new rescaled ibs_resc:IBS
-        """
-        if isinstance(self.winds, Winds):
-            _r_sp = self.winds.orbit.r(self.t_forbeta)
-            _nu_tr = self.winds.orbit.true_an(self.t_forbeta)
-            ibs_resc = IBS.rotate(self, phi=pi + _nu_tr)
-            x_sh, y_sh = ibs_resc.x, ibs_resc.y
-            x_sh, y_sh = x_sh * _r_sp, y_sh * _r_sp
-            x_sh += _r_sp * cos(_nu_tr)
-            y_sh += _r_sp * sin(_nu_tr)
-            ibs_resc.x = x_sh
-            ibs_resc.y = y_sh
-            ibs_resc.s = self.s * _r_sp
-            ibs_resc.s_max = self.s_max * _r_sp
-            ibs_resc.s_max_g = self.s_max_g * _r_sp
-            ibs_resc.r = self.r * _r_sp
-            ibs_resc.r1 = self.r1 * _r_sp
-            ibs_resc.x_apex = self.x_apex * _r_sp
-            return ibs_resc
-
-        if not isinstance(self.winds, Winds):
-            raise ValueError("You should provide winds:Winds to rescale the IBS to "
-                             "the position of the pulsar. Use winds = Winds(...) "
-                             "to create the winds object.")
-            
             
     @property
-    def real_dopl_angle(self):
+    def dopl_angle(self):
         """
         The angle between the velocity and the LoS direction.
         """
         angs = np.array(vector_angle(self.unit_los, self.unit_beta))
         return angs
     
+    @property
+    def dopl_angle_mid(self):
+        """
+        The angle between the velocity and the LoS direction.
+        """
+        angs = np.array(vector_angle(self.unit_los, self.unit_beta_mid))
+        return angs
+    
+    
+    
+    
     
     @property
-    def real_dopl(self):
-        """Only for the rotated ibs!"""
-        return IBS.doppler_factor(g_vel = self.g, ang_ = self.real_dopl_angle)
+    def dopl(self):
+        """IBS doppler factors delta"""
+        return IBS_norm.doppler_factor(g_vel = self.g, ang_ = self.dopl_angle)
+    @property
+    def dopl_mid(self):
+        """IBS doppler factors delta"""
+        return IBS_norm.doppler_factor(g_vel = self.g_mid, ang_ = self.dopl_angle_mid)
+    
 
     @property
     def scattering_angle(self):
-        if isinstance(self.winds, Winds):
-            angs = np.array(vector_angle(self.unit_r1, self.unit_los))
-        if not isinstance(self.winds, Winds):
-            raise ValueError("You should provide winds:Winds to rescale the IBS to "
-                             "the position of the pulsar. Use winds = Winds(...) "
-                             "to create the winds object.")
-        return angs
+        """
+        The scattering angle for a photon from the star scattered at the IBS
+        towards the observer in the lab frame.
+        """
+        return np.array(vector_angle(self.unit_r1, self.unit_los))
+
+
+    @property
+    def scattering_angle_mid(self):
+        """
+        The scattering angle for a photon from the star scattered at the IBS
+        towards the observer in the lab frame.
+        """
+        return np.array(vector_angle(self.unit_r1_mid, self.unit_los))
 
     @property
     def scattering_angle_comoving(self):
         """
-        The scattering angle in the comoving frame of the IBS.
-        """
-        angs = np.array(vector_angle(self.unit_r1, self.unit_los,
+        The scattering angle for a photon from the star scattered at the IBS
+        towards the observer in the frame co-moving with the bulk motion 
+        velocity.
+        """        
+        return np.array(vector_angle(self.unit_r1, self.unit_los,
                                      self.vec_beta, True))
-        return angs
+    
+    @property
+    def scattering_angle_comoving_mid(self):
+        """
+        The scattering angle for a photon from the star scattered at the IBS
+        towards the observer in the frame co-moving with the bulk motion 
+        velocity.
+        """        
+        return np.array(vector_angle(self.unit_r1_mid, self.unit_los,
+                                     self.vec_beta_mid, True))    
+        
+    def peek(self, fig=None, ax=None,
+             ibs_color='k', to_label=True):
+        
+        if ax is None:
+            import matplotlib.pyplot as plt
+            fig, ax = plt.subplots(figsize=(8, 6))    
+
+        if to_label:
+            label = rf'$\beta = {self.beta}$'
+        else:
+            label = None
+        xstar_, ystar_, zstar_ = -self.unit_rsp
+        xlos_, ylos_, zlos_ = self.unit_los
+
+        if ibs_color in ( 'doppler', 'scattering', 'scattering_comoving'):
+            # print(2)
+            if ibs_color == 'doppler':
+                color_param = self.dopl
+                bar_label = r'doppler factor $\delta$'
+            elif ibs_color == 'scattering':
+                # print(3)
+                color_param = self.scattering_angle / pi
+                bar_label = r'scattering angle / $\pi$'
+            elif ibs_color == 'scattering_comoving':
+                color_param = self.scattering_angle_comoving / pi
+                bar_label = r'comoving scattering angle / $\pi$'
+            else:
+                raise ValueError(f"Unknown ibs_color: {ibs_color}. "
+                                 "Use 'doppler', 'scattering' or 'scattering_comoving'.")
+
+            plot_with_gradient(fig=fig, ax=ax, xdata=self.x, ydata=self.y,
+                            some_param=color_param, colorbar=True, lw=2, ls='-',
+                            colorbar_label=bar_label)
+
+        else:
+            try:
+                ax.plot(self.x, self.y, color=ibs_color, label = label)
+                ax.plot([-5*xstar_, 5*xstar_], [-5*ystar_, 5*ystar_], 
+                        color=ibs_color, ls='--', alpha = 0.3)
+            except:
+                raise ValueError('Probably wrong color keyword :(((')
+
+        # if not rescaled:
+
+        ax.scatter(xstar_, ystar_, color='b') # star is originally in (1, 0)
+        ax.scatter(0, 0, color='r') # pulsar is in (0, 0)
+
+        ax.plot([0, 5*xlos_], [0, 5*ylos_], color='g', ls='--', alpha = 0.3)
+
+        x_scale = np.max(np.array([
+            np.abs(np.min(self.x)), np.abs(np.max(self.x))
+            ]))
+        y_scale = np.max(np.array([
+                np.abs(np.min(self.y)), np.abs(np.max(self.y))            
+            ]))
+            
+        ax.set_xlim(-1.2*x_scale, 1.2*x_scale )
+        ax.set_ylim(-1.2*y_scale, 1.2*y_scale) 
+        
+            
+        ax.legend()
+
+
+class IBS: #!!!
+    def __init__(self, s_max, gamma_max=None, s_max_g=4., n=31, 
+                 winds = None, t_to_calculate_beta_eff = None):
+        self.gamma_max = gamma_max
+        self.s_max = s_max
+        self.s_max_g = s_max_g
+        self.n = n
+        self.winds = winds
+        self.t_forbeta = t_to_calculate_beta_eff
+        
+        self.calculate()
+        
+        
+    
+    def calculate(self):
+        """General calculation of everything"""
+        self.calculate_normalized_ibs()
+        self.rescale_to_position()
+    
+    
+    
+    def calculate_normalized_ibs(self):
+        """calculate the effective beta from Winds at time t_forbeta and 
+            initialize the normalized IBS with this beta.
+        """
+        self.beta = self.winds.beta_eff(self.t_forbeta)
+        self.r_sp = self.winds.orbit.r(self.t_forbeta)
+        unit_los_ = np.array([cos(self.winds.orbit.nu_los),
+                             sin(self.winds.orbit.nu_los),
+                             0])
+        _nu_tr = self.winds.orbit.true_an(self.t_forbeta)
+
+        self.ibs_n = IBS_norm(beta=self.beta, s_max=self.s_max,
+                        gamma_max=self.gamma_max, s_max_g=self.s_max_g, n=self.n,
+                    unit_los=unit_los_).rotate(pi + _nu_tr)
+        
+    def rescale_to_position(self):
+        """
+        Rescale the IBS to the real units at
+        the time t_to_calculate_beta_eff [s] and rotate it so that its 
+        line of sy_mmetry is S-P line. Rescaled are: x, y, r, s, r1, x_apex.
+        The tangent is added pi + nu_tr to (at the stage of 'IBS.rotate').
+        To the x and y - coordinates of the IBS there is also added the
+        vector of the real s-p distance at the moment (in cm).
+        Yes, read this terrible English sentence which I translated from 
+        Russian in my head. Suffer.
+        ---
+        Returns new rescaled ibs_resc:IBS
+        """
+        _r_sp = self.winds.orbit.r(self.t_forbeta)
+        _nu_tr = self.winds.orbit.true_an(self.t_forbeta)
+        x_sh, y_sh = self.ibs_n.x, self.ibs_n.y
+        x_sh, y_sh = x_sh * _r_sp, y_sh * _r_sp
+        x_sh += _r_sp * cos(_nu_tr)
+        y_sh += _r_sp * sin(_nu_tr)
+        self.x = x_sh
+        self.y = y_sh
+        self.s, self.s_max, self.s_max_g, self.r, self.r1, self.x_apex = [
+            _stuff * _r_sp for _stuff in (self.ibs_n.s, self.ibs_n.s_max, 
+                            self.ibs_n.s_max_g, self.ibs_n.r, self.ibs_n.r1, 
+                            self.ibs_n.x_apex)]
+        
+        self.s_m, self.s_p, self.s_mid, self.ds, self.x_m, self.x_p, self.x_mid, self.dx, \
+        self.y_m, self.y_p, self.y_mid, self.dy = [_stuff * _r_sp for _stuff in (
+            self.ibs_n.s_m, self.ibs_n.s_p, self.ibs_n.s_mid, self.ibs_n.ds, 
+            self.ibs_n.x_m, self.ibs_n.x_p, self.ibs_n.x_mid, self.ibs_n.dx,
+            self.ibs_n.y_m, self.ibs_n.y_p, self.ibs_n.y_mid, self.ibs_n.dy)]          
+
+    def s_interp(self, s_, what):
+        """
+        Returns the interpolated value of 'what' (x, y, ...) at the coordinate 
+        s_. 
+ 
+        Parameters
+        ----------
+        s_ : np.ndarray
+            The arclength along the upper horn of the IBS to find the value at [cm].
+
+        Returns
+        -------
+        The desired value of ibs.what in the coordinate s_. 
+
+        """
+        ### see a comment for s_interp in IBS_norm
+        return self.r_sp * self.ibs_n.s_interp(s_ / self.r_sp, what)
+    
+    # @property
+    # def int_an(self):
+    #     return self.s_max_g / (self.gamma_max - 1) * (self.gamma_max**2 - 1)**0.5 
+
+    
+    def gma(self, s):
+        return 1. + (self.gamma_max - 1.) * np.abs(s) / self.s_max_g        
+        # return self.gamma_max
+
+        
+    @property
+    def g(self):
+        return IBS.gma(self, s = self.s)
+
+    # @property
+    # def beta_vel(self):
+    #     return beta_from_g(g_vel = self.g)
+    
+    # def lor_trans_b_iso_on_ibs(self, B_iso):
+    #     return lor_trans_b_iso(B_iso=B_iso, gamma=self.g)
+    
+    # def lor_trans_ug_iso_on_ibs(self, ug_iso):
+    #     return lor_trans_ug_iso(ug_iso=ug_iso, gamma=self.g)
+    
+    
+    
+    # @property
+    # def theta_inf(self):
+    #     return self.ibs_n.theta_inf
+            
+    # @staticmethod
+    # def doppler_factor(g_vel, ang_):
+    #     beta_vels = beta_from_g(g_vel=g_vel)
+    #     return 1 / g_vel / (1 - beta_vels * cos(ang_))
+            
+    
+
+    # @property
+    # def dopl_angle(self):
+    #     """
+    #     The angle between the velocity and the LoS direction.
+    #     """
+    #     angs = np.array(vector_angle(self.unit_los, self.unit_beta))
+    #     return angs
+    
+    
+    # @property
+    # def dopl(self):
+    #     """Only for the rotated ibs!"""
+    #     return IBS.doppler_factor(g_vel = self.g, ang_ = self.dopl_angle)
+
+    # @property
+    # def scattering_angle(self):
+    #     if isinstance(self.winds, Winds):
+    #         angs = np.array(vector_angle(self.unit_r1, self.unit_los))
+    #     if not isinstance(self.winds, Winds):
+    #         raise ValueError("You should provide winds:Winds to rescale the IBS to "
+    #                          "the position of the pulsar. Use winds = Winds(...) "
+    #                          "to create the winds object.")
+    #     return angs
+
+    # @property
+    # def scattering_angle_comoving(self):
+    #     """
+    #     The scattering angle in the comoving frame of the IBS.
+    #     """
+    #     angs = np.array(vector_angle(self.unit_r1, self.unit_los,
+    #                                  self.vec_beta, True))
+    #     return angs
         
     def peek(self, fig=None, ax=None, show_winds=False,
              ibs_color='k', to_label=True,
@@ -564,25 +732,13 @@ class IBS:
         else:
             label = None
 
-        if ibs_color not in ( 'doppler', 'scattering', 'scattering_comoving'):
-            ax.plot(self.x, self.y, color=ibs_color, label = label)
-            ax.axvline(x = self.x_apex, color=ibs_color, alpha = 0.3)
 
-        # find out if IBS is rescaled to the position of the pulsar
-        rescaled = False
-        if np.max(self.s) > 10: rescaled = True
 
         if ibs_color in ( 'doppler', 'scattering', 'scattering_comoving'):
-            # print(1)
-            
-            if not rescaled:
-                raise ValueError("You should rescale the IBS to the position of the pulsar "
-                                 "before plotting the doppler factor. Use rescale_to_position() "
-                                 "method of IBS class. Note that for this you should " 
-                                 "provide winds:Winds to the IBS class.")
+
             # print(2)
             if ibs_color == 'doppler':
-                color_param = self.real_dopl
+                color_param = self.dopl
             elif ibs_color == 'scattering':
                 # print(3)
                 color_param = self.scattering_angle
@@ -595,71 +751,86 @@ class IBS:
             plot_with_gradient(fig=fig, ax=ax, xdata=self.x, ydata=self.y,
                             some_param=color_param, colorbar=True, lw=2, ls='-',
                             colorbar_label=ibs_color)
+
+        else:
+            try:
+                ax.plot(self.x, self.y, color=ibs_color, label = label)            
+            except:
+                raise ValueError('Probably wrong color keyword')
+
         if show_winds:
             if not isinstance(self.winds, Winds):
                 raise ValueError("You should provide winds:Winds to show the winds.")
             self.winds.peek(ax=ax, showtime=showtime,
                             plot_rs=False)
 
-        if not rescaled:
-            ax.scatter(1, 0, color='b') # star is in (1, 0)
-            ax.scatter(0, 0, color='r') # pulsar is in (0, 0)
-            ax.axhline(y=0, color='k', ls='--', alpha = 0.3)
-            ax.axvline(x=0, color='k', ls='--', alpha = 0.3)
+        # if rescaled:
+        puls_vector = self.winds.orbit.vector_sp(self.t_forbeta)
+        _xp, _yp = puls_vector[0], puls_vector[1]
+        ax.scatter(_xp, _yp, color='b') # pulsaR
+        # ...and the star was alreay plotted in the winds.peek()
+        ax.plot( [1.5*_xp, 1.5*_yp], [0, 0], color='k', alpha=0.3, ls='--',)
 
-        if rescaled:
-            puls_vector = self.winds.orbit.vector_sp(self.t_forbeta)
-            _xp, _yp = puls_vector[0], puls_vector[1]
-            ax.scatter(_xp, _yp, color='b') # pulsaR
-            # ...and the star was alreay plotted in the winds.peek()
-            ax.plot( [1.5*_xp, 1.5*_yp], [0, 0], color='k', alpha=0.3, ls='--',)
-
-            ##################################################################################
-            show_cond  = np.logical_and(self.winds.orbit.ttab > showtime[0], 
-                                        self.winds.orbit.ttab < showtime[1])
-            orb_x, orb_y = self.winds.orbit.xtab[show_cond], self.winds.orbit.ytab[show_cond]
-            x_scale = np.max(np.array([
-                np.abs(np.min(orb_x)), np.abs(np.max(orb_x))
-                ]))
-            y_scale = np.max(np.array([
-                    np.abs(np.min(orb_y)), np.abs(np.max(orb_y))            
-                ]))
-            
-            ax.set_xlim(-1.2*x_scale, 1.2*min(x_scale, self.winds.orbit.r_periastr) )
-            ax.set_ylim(-1.2*y_scale, 1.2*y_scale) 
+        ##################################################################################
+        show_cond  = np.logical_and(self.winds.orbit.ttab > showtime[0], 
+                                    self.winds.orbit.ttab < showtime[1])
+        orb_x, orb_y = self.winds.orbit.xtab[show_cond], self.winds.orbit.ytab[show_cond]
+        x_scale = np.max(np.array([
+            np.abs(np.min(orb_x)), np.abs(np.max(orb_x))
+            ]))
+        y_scale = np.max(np.array([
+                np.abs(np.min(orb_y)), np.abs(np.max(orb_y))            
+            ]))
+        
+        ax.set_xlim(-1.2*x_scale, 1.2*min(x_scale, self.winds.orbit.r_periastr) )
+        ax.set_ylim(-1.2*y_scale, 1.2*y_scale) 
         
             
         ax.legend()
+
+    def __getattr__(self, name):
+        # called if attribute not found on IBS; forward to normalized object
+        return getattr(self.ibs_n, name)
  
             
 if __name__ == "__main__":
     from ibsen.orbit import Orbit
     import matplotlib.pyplot as plt   
-    fig, ax = plt.subplots(2, 1)
     # example of how to use the IBS class
-    orbit_ = Orbit(period=100*DAY, e=0, tot_mass=30*2e33, nu_los=np.pi/2)
+    orbit_ = Orbit(period=100*DAY, e=0, tot_mass=30*2e33, nu_los=np.pi*0.71577)
     winds_ = Winds(orbit=orbit_, sys_name='psrb', f_d=0)
     
-    ibs = IBS(beta=None, gamma_max=2, s_max=2, s_max_g=2,
-              t_to_calculate_beta_eff=0*DAY, winds=winds_, n=500) 
-    print(ibs.theta_inf/np.pi)
-    ibs1 = ibs.rescale_to_position()
-    # ibs1 = ibs
-    ibs1.peek(show_winds=True, to_label=False, showtime=(-60*DAY, 60*DAY),
-             ibs_color='doppler', ax=ax[0], fig=fig)
-    # ax[1].plot(ibs1.s, ibs1.y, label='y(s)')
+    ###########################################################################
+    # fig, ax = plt.subplots(1, 1)
+    # ibs_n = IBS_norm(beta=0.1, s_max=2.5, gamma_max=1.5, n=99, unit_los=[1, -1, 0])
+    # ibs_n1 = ibs_n.rotate(-135 * pi/180)
+    # ibs_n2 = IBS_norm(beta=0.01, s_max=1, gamma_max=1.5, n=37, unit_los=[1, -1, 0]).rotate(45 * pi/180)
+    # col_key = 'scattering'
+    # ibs_n.peek(ibs_color=col_key, ax=ax, fig=fig)
+    # ibs_n1.peek(ibs_color=col_key, ax=ax, fig=fig)
+    # ibs_n2.peek(ibs_color=col_key, ax=ax, fig=fig)
     
-    ax[1].plot(ibs1.s, ibs1.scattering_angle/np.pi, label='scattering / pi')
-    ax[1].plot(ibs1.s, ibs1.scattering_angle_comoving/np.pi, label='scattering comov / pi')
+    # plt.scatter(ibs_n1.s, ibs_n1.scattering_angle/pi, s=2, color='k')
+    # plt.scatter(ibs_n1.s_mid, ibs_n1.scattering_angle_comoving_mid/pi, s=2, color='r')
     
-    ax[1].plot(ibs1.s, ibs1.scattering_angle_comoving/np.pi, label='scattering comov / pi')
-    ax[1].plot(ibs1.s, ibs1.scattering_angle_comoving/np.pi, label='scattering comov / pi')
+    # plt.scatter(ibs_n1.x_mid, ibs_n1.y_mid, s=2, color='r')
     
-    # ax[1].plot(ibs1.s, ibs1.real_dopl_angle/np.pi, label='dopl angle rad')
-    # ax[1].plot(ibs1.s, ibs1.g, label='gamma')
-    # ax[1].plot(ibs1.s, ibs1.real_dopl, label='dopl factor')
-    # ax[1].plot(ibs1.s, ibs1.beta_vel, label='beta')
+    ###########################################################################
     
+    fig, ax = plt.subplots(2, 1)
+    import time
+    start = time.time()
+    ibs = IBS(gamma_max=5, s_max=2, s_max_g=2,
+              t_to_calculate_beta_eff=25*DAY, winds=winds_, n=21) 
+        # print(ibs.theta_inf/np.pi)
+    ibs.peek(show_winds=True, to_label=False, showtime=(-60*DAY, 60*DAY),
+             ibs_color='scattering', ax=ax[0], fig=fig)
+    # # # ax[1].plot(ibs1.s, ibs1.y, label='y(s)')
     
-    ax[1].legend()
-    plt.show()
+    # ax[1].scatter(ibs.s, ibs.scattering_angle_comoving/pi, label='scattering / pi', c='k', s=4)
+    # ax[1].scatter(ibs.s_mid, ibs.scattering_angle_comoving_mid/pi, label='scattering / pi', c='r', s=4)
+    
+    ax[1].scatter(ibs.s, ibs.dopl, label='dopl', c='k', s=4)
+    ax[1].scatter(ibs.ibs_n.s*ibs.r_sp, ibs.ibs_n.dopl, label='dopl', c='b', s=4)
+    
+    ax[1].scatter(ibs.s_mid, ibs.dopl_mid, label='dopl', c='r', s=4)

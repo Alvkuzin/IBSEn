@@ -554,7 +554,7 @@ if __name__ == "__main__":
     # lc.peek()
     fig, ax = plt.subplots(nrows=3, sharex=True)
     # DAY=86400
-    Ne_e=[]
+    Ne_e = []
     Ninj = []
     edots = []
     i_show = 0
