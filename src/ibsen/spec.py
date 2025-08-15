@@ -162,14 +162,6 @@ def integrate_over_ibs_with_weights(arr_xy, x, y_extended, y_eval, weights, y_sc
         The integrand evaluated at x \times y_eval.
 
     """
-
-    # if not toboost:
-    #     # a = interp1d(x, y)
-    #     # _spl = interp1d(y_extended, arr_xy[0, :])
-    #     # sed_e_up = _spl(y_eval)
-    #     sed_e_up = interplg(x=y_eval, xdata=y_extended, ydata=arr_xy[0, :])
-    #     sed_s_e_up = sed_e_up[None, :]
-    # if toboost:
         
     # It's maybe not the best idea to use RGI here, seems like it sometimes
     # interpolates too rough. But I haven't figured out a way to use interp1d 
@@ -186,7 +178,7 @@ def integrate_over_ibs_with_weights(arr_xy, x, y_extended, y_eval, weights, y_sc
 
     I_interp_up = vals_up.reshape(x.size, y_eval.size)  
 
-    div = trapezoid(np.ones(x.size), x)
+    # div = trapezoid(np.ones(x.size), x)
     sed_s_e_up = I_interp_up * weights[:, None]
 
     # sed_e_up = trapezoid(sed_s_e_up, x, axis=0) /  div
@@ -269,7 +261,7 @@ def calculate_sed_nonboosted_2horns(s_1d_2horns, e_ext, e_ev, dNe_de_2horns, e_e
     sed_e_tot : 1d np.ndarray
         Integrated SED over all segments.
     sed_s_e_tot : 2d np.ndarray
-        2D array (2 * n_segments x n_e_ext) of SED per segment.
+        2D array (n_segments x n_e_ext) of SED per segment.
     
     Raises
     ------
@@ -286,21 +278,22 @@ def calculate_sed_nonboosted_2horns(s_1d_2horns, e_ext, e_ev, dNe_de_2horns, e_e
 
     
     """
-    n_ = int(s_1d_2horns.size/2)
+    ### the number of segments on the upper horn, apex (s~0) excluded
+    
+    n_ = int(  (s_1d_2horns.size-1)  /2) 
     # print(n_)
-    s_1d_1horn = s_1d_2horns[n_:2*n_]
-    dNe_de_1horn = dNe_de_2horns[n_:2*n_, :] 
-    b_scale_1horn = b_scale_2horns[n_:2*n_] if b_scale_2horns is not None else None
-    u_scale_1horn = u_scale_2horns[n_:2*n_] if u_scale_2horns is not None else None
-    n_scale_1horn = n_scale_2horns[n_:2*n_] if n_scale_2horns is not None else None
-    gammas_1horn = gammas_2horns[n_:2*n_] if gammas_2horns is not None else None
-    scatter_angs_1horn = scatter_angs_2horns[n_:2*n_] if scatter_angs_2horns is not None else None  
+    ### and some stuff at the upper horn excluding apex 
+    # s_1d_1horn = s_1d_2horns[n_+1:2*n_+1]
+    dNe_de_1horn = dNe_de_2horns[n_+1:2*n_+1, :] 
+    b_scale_1horn = b_scale_2horns[n_+1:2*n_+1] if b_scale_2horns is not None else None
+    u_scale_1horn = u_scale_2horns[n_+1:2*n_+1] if u_scale_2horns is not None else None
+    n_scale_1horn = n_scale_2horns[n_+1:2*n_+1] if n_scale_2horns is not None else None
+    gammas_1horn = gammas_2horns[n_+1:2*n_+1] if gammas_2horns is not None else None
+    scatter_angs_1horn = scatter_angs_2horns[n_+1:2*n_+1] if scatter_angs_2horns is not None else None  
 
     
 
     if apex_only or simple:
-        
-        # dNe_de_1d = trapezoid(dNe_de_1horn, s_1d_1horn, axis=0) / trapezoid(np.ones(n_), s_1d_1horn)
         ### for apex_only, we will calculate SED one time, so we need the 
         ### TOTAL number of emitting particles, but in simple we will 
         ### `calculate` SED in all marts of IBS, and then sum it up, so we
@@ -371,8 +364,12 @@ def calculate_sed_nonboosted_2horns(s_1d_2horns, e_ext, e_ev, dNe_de_2horns, e_e
         #### horns due to symmetry considerations 
         sed_s_e_tot_1horn = calculate_sed_simple(sed_e_apex=sed_e_apex,
                                            rescale=rescale_simple)
-
-        sed_s_e_tot = np.concatenate((sed_s_e_tot_1horn[::-1, :], sed_s_e_tot_1horn))
+        # print(sed_s_e_tot_1horn[0, :].size)
+        # print(e_ext.size)
+        sed_s_e_tot = np.concatenate((sed_s_e_tot_1horn[::-1, :],
+                                      np.zeros((1, e_ext.size)),
+                                      sed_s_e_tot_1horn))
+        # print(sed_s_e_tot.shape)
         # sed_s_e_tot = fill_nans(sed_s_e_tot)
 
         # sed_e_tot = trapezoid(sed_s_e_tot, s_1d_2horns, axis=0) /(np.max(s_1d_2horns) - np.min(s_1d_2horns))
@@ -380,15 +377,15 @@ def calculate_sed_nonboosted_2horns(s_1d_2horns, e_ext, e_ev, dNe_de_2horns, e_e
         # print(sed_e_tot)
                     
     elif (not simple) and (not apex_only):
-        sed_s_e_tot = np.zeros((2*n_, e_ext.size))
+        sed_s_e_tot = np.zeros((2*n_+1, e_ext.size))
         #### we iterate over the whole IBS. If mechanism is isotropic Sy or IC,
         #### we calculate everything properly for one horn (lower) and then
         #### for the upper horn we appoint the corresponding values. 
         ####
         #### If the mechanism in non-isotropic ic_ani (or generally any mechanism
-        #### which depends on the horn), we calculate SED properly and 
+        #### which is not axisymmetric), we calculate SED properly and 
         #### independently for both horns.
-        for i_ibs in range(0, 2*n_):
+        for i_ibs in range(0, 2*n_+1):
             # if i_ibs == 0 or i_ibs == 2*n_-1:
             #     continue
             # rescaling B and u_g to the point on an IBS. I do it even in case
@@ -399,10 +396,12 @@ def calculate_sed_nonboosted_2horns(s_1d_2horns, e_ext, e_ev, dNe_de_2horns, e_e
             # in the frame comoving
             # along the shock with a bulk Lorentz factor of Gammas[i_ibs]
             if what_model == 'syn':
-                if i_ibs >= n_:  
+                if i_ibs == n_:
+                    sed_s_e_tot[i_ibs, :] = np.zeros(e_ext.size)
+                if i_ibs > n_:  
                     # if we're at the upper horn, appoint the symmetric values
                     # from the lower horn and continue
-                    sed_s_e_tot[i_ibs, :] = sed_s_e_tot[2*n_ - 1 - i_ibs, :]
+                    sed_s_e_tot[i_ibs, :] = sed_s_e_tot[2*n_ - i_ibs, :]
                     continue 
                 #### else --- calculate properly
                 B_2horns = B_apex * b_scale_2horns[i_ibs]
@@ -427,7 +426,6 @@ def calculate_sed_nonboosted_2horns(s_1d_2horns, e_ext, e_ev, dNe_de_2horns, e_e
                 Sync = Synchrotron(e_spec_for_naima, B = B_comov * u.G)
                 sed_synchr = Sync.sed(E_dim, distance = distance * u.cm)
                 # sed_tot = sed_syncr 
-                # and putting a total dimentionLESS spec into SED_s_E
                 sed_s_e_tot[i_ibs, :] = fill_nans_1d(sed_synchr / sed_unit)
                     
  
@@ -435,7 +433,7 @@ def calculate_sed_nonboosted_2horns(s_1d_2horns, e_ext, e_ev, dNe_de_2horns, e_e
                 if i_ibs >= n_:  
                     # if we're at the upper horn, appoint the symmetric values
                     # from the lower horn and continue
-                    sed_s_e_tot[i_ibs, :] = sed_s_e_tot[2*n_ - 1 - i_ibs, :]
+                    sed_s_e_tot[i_ibs, :] = sed_s_e_tot[2*n_ - i_ibs, :]
                     continue 
                 #### else --- calculate properly
                 u_g_2horns = ug_apex * u_scale_2horns[i_ibs]
@@ -540,7 +538,8 @@ class SpectrumIBS: #!!!
                  distance = None, apex_only=False):
         self.els = els
         self._orb = self.els.ibs.winds.orbit
-        self.set_ibs()
+        self._ibs = self.els.ibs
+        # self.set_ibs()
         self.ic_ani = ic_ani
         self.delta_power = delta_power
         self.lorentz_boost = lorentz_boost
@@ -553,35 +552,20 @@ class SpectrumIBS: #!!!
         
         _dist = unpack_dist(self._orb.name, distance)
         self.distance = _dist
-        
-    def set_ibs(self):
-        # check if the IBS was rescaled, and if not, rescale and use rescaled
-        if abs(self.els.ibs.x_apex) > 1e5:
-            # assume then that the IBS was rescaled
-            self._ibs = self.els.ibs
-        else:
-            ibs1 = self.els.ibs.rescale_to_position()
-            self._ibs = ibs1
-                
 
     def calculate_sed_on_ibs(self, E = np.logspace(2, 14, 1000),
                              to_set_onto_ibs=True, to_return=False,):
-        
-        # _b_1horn, _u_1horn = (self.els._b[self._ibs.n : 2*self._ibs.n], 
-        #                       self.els._u[self._ibs.n : 2*self._ibs.n])
-        _b_2horns, _u_2horns = self.els._b, self.els._u
-        
 
+        _b_2horns, _u_2horns = self.els._b_mid, self.els._u_mid
         try:
-            dNe_de_IBS, e_vals = self.els.dNe_de_IBS, self.els.e_vals
+            dNe_deds_mid, dNe_ds_mid, dNe_de_mid, e_vals = self.els.dNe_deds_mid, \
+                self.els.dNe_ds_mid, self.els.dNe_de_mid, self.els.e_vals
         except:
-            print('no dNe_de_IBS in els, calculating...')
-            dNe_de_IBS, e_vals = self.els.calculate(to_return=True)
-            
-        # ug_a = self.els.u_g_apex
-        # rsp = self.els.r_sp
-        # _Topt = self._ibs.winds.Topt
-        
+            print('no dNe_deds_IBS in els, calculating...')
+            self.els.calculate()
+            dNe_deds_mid, dNe_ds_mid, dNe_de_mid, e_vals = self.els.dNe_deds_mid, \
+                self.els.dNe_ds_mid, self.els.dNe_de_mid, self.els.e_vals
+                
         _abs_ph = np.ones(E.size)
         _abs_gg = np.ones(E.size)
         
@@ -599,58 +583,69 @@ class SpectrumIBS: #!!!
         # (1) for each segment of IBS, we calulate a spectrum and put it into
         # the 2-dimentional array SED_s_E. The E_ph is always the same and it is 
         # E but extended: min(E) / max(delta) < E_ph < max(E) * max(delta)
-        # if simple=True, then the simple apex-spectrum rescaling and integration
-        # is performed, without calculating a spec for each s-segment
         # -------------------------------------------------------------------------
-        dopls = self._ibs.real_dopl # for both horns
+        dopls = self._ibs.dopl_mid # for both horns
         
         d_max = max(np.max(dopls), 1/np.min(dopls))
         if not self.apex_only:
-            Nphot = int(2 * E.size * 
-                        np.log10(d_max**2 * 1.21 * np.max(E) / np.min(E)) /
-                        np.log10(np.max(E) / np.min(E)) )
-            E_ext = np.logspace(np.log10(np.min(E)/d_max/1.1),
-                                np.log10(np.max(E)*d_max*1.1), Nphot)
+            # Nphot = int(2 * E.size * 
+            #             np.log10(d_max**2 * 1.21 * np.max(E) / np.min(E)) /
+            #             np.log10(np.max(E) / np.min(E)) )
+            # E_ext = np.logspace(np.log10(np.min(E)/d_max/1.1),
+            #                     np.log10(np.max(E)*d_max*1.1), Nphot)
+            
+            ### Introduce an auxillary extended grid over photon energries.
+            ### Coef `2` is empirically found to be OK for later interpolation.
+            ndec_ = int(2 * E.size / np.log10(np.max(E) / np.min(E)))
+            E_ext = loggrid(np.min(E)/d_max/1.1, np.max(E)*d_max*1.1,
+                            ndec_)
         else:
             E_ext = E
-        # this SED_s_E we calculate only for 1 horn
-        if self._ibs.one_horn:
-            # s_1d_dim = self._ibs.s * rsp
-            raise ValueError('IBS should be two-horned.')
-        # nibs = self._ibs.n
-        # s_1d_dim = self._ibs.s[nibs : 2*nibs] #* rsp
-        s_2horns = self._ibs.s
-        # dNe_de_IBS_1horn = dNe_de_IBS[nibs : 2*nibs, :]
-            
-        # _n = 0.5 * (1 - cos( self._ibs.s_interp(s_=s_1d_dim/rsp, what = 'theta') ))
-        Ntot = trapezoid(dNe_de_IBS, e_vals, axis=1)
-        Navg = trapezoid(Ntot, s_2horns) / (np.max(s_2horns)-np.min(s_2horns))
-        _n_norm_2horns = Ntot / Navg 
 
-        # gammas_1horn = self.els.ibs.gma(s = s_1d_dim/rsp)
-        gammas_2horns = self._ibs.g
+        s_2horns = self._ibs.s_mid
+        # ds_2horns = self._ibs.ds          
+        # dNe_deds_m = dNe_deds_IBS[]
+        # dNtot_ds = trapezoid(dNe_deds_IBS, e_vals, axis=1)
+        # Navg = trapezoid(s_2horns * dNtot_ds, s_2horns) / (np.max(s_2horns)-np.min(s_2horns))
+        Ntot = trapezoid(dNe_ds_mid, s_2horns)
+        _n_norm_2horns = s_2horns * dNe_ds_mid / Ntot 
+
+        gammas_2horns = self._ibs.g_mid
         
         sed_tot = np.zeros(E.size)
         sed_s_ = np.zeros((s_2horns.size, E.size))
-            
-        """
-        sed_s_e, s_1d_2horns, e_ext, e_ev, dopls_2horns, delta_power, abs_tot=None
-        """
-        # print('b 2 horns = ', _b_2horns)
+
         for mechanism in self.mechanisms:
             if mechanism.lower() in ('s', 'sy', 'syn', 'synchr', 'synchrotron'):
-                sed_sy, sed_s_sy = calculate_sed_nonboosted_2horns(s_1d_2horns=s_2horns,
-                        e_ext=E_ext, e_ev=E, dNe_de_2horns=dNe_de_IBS,
-                        e_el=e_vals, simple=self.simple, 
-                        apex_only=self.apex_only, what_model='syn',
-                        distance=self.distance, B_apex=self.els.B_apex, 
-                        b_scale_2horns=_b_2horns, n_scale_2horns=_n_norm_2horns,
+                sed_sy, sed_s_sy = calculate_sed_nonboosted_2horns(
+                        s_1d_2horns=s_2horns,
+                        e_ext=E_ext,
+                        e_ev=E,
+                        dNe_de_2horns=dNe_de_mid,
+                        e_el=e_vals,
+                        simple=self.simple, 
+                        apex_only=self.apex_only,
+                        what_model='syn',
+                        distance=self.distance,
+                        B_apex=self.els.B_apex, 
+                        b_scale_2horns=_b_2horns,
+                        n_scale_2horns=_n_norm_2horns,
                         lorentz_boost=self.lorentz_boost,
                         gammas_2horns=gammas_2horns) 
                 # if not self.apex_only:
+                # print(sed_s_sy.shape)
+                # print(s_2horns.shape)
+                # print(E_ext.shape)
+                # print(E.shape)
+                # print(dopls.shape)
+                
                 sed_sy, sed_s_sy = boost_sed_from_2horns(sed_s_e=sed_s_sy,
-                    s_1d_2horns=s_2horns, e_ext=E_ext, e_ev=E, dopls_2horns=dopls,
-                    delta_power=self.delta_power, abs_tot=_abs_gg*_abs_ph,
+                    s_1d_2horns=s_2horns,
+                    e_ext=E_ext,
+                    e_ev=E,
+                    dopls_2horns=dopls,
+                    delta_power=self.delta_power,
+                    abs_tot=_abs_gg*_abs_ph,
                     toboost=(not self.apex_only)) 
                 sed_tot += sed_sy
                 sed_s_ += sed_s_sy
@@ -662,21 +657,23 @@ class SpectrumIBS: #!!!
                 if self.ic_ani:
                     _model_name = 'ic_ani'
                     if self.lorentz_boost:
-                        scatter_2horns = self._ibs.scattering_angle_comoving
+                        scatter_2horns = self._ibs.scattering_angle_comoving_mid
                     else:
-                        scatter_2horns = self._ibs.scattering_angle
+                        scatter_2horns = self._ibs.scattering_angle_mid
                 else:
                     _model_name = 'ic'
                     scatter_2horns = None
-                sed_ic, sed_s_ic = calculate_sed_nonboosted_2horns(s_1d_2horns=s_2horns,
-                        e_ext=E_ext, e_ev=E, dNe_de_2horns=dNe_de_IBS,
+                sed_ic, sed_s_ic = calculate_sed_nonboosted_2horns(
+                        s_1d_2horns=s_2horns,
+                        e_ext=E_ext, e_ev=E, dNe_de_2horns=dNe_de_mid,
                         e_el=e_vals, simple=self.simple, 
                         apex_only=self.apex_only, what_model=_model_name,
                         distance=self.distance, n_scale_2horns=_n_norm_2horns,
                         Topt=self._ibs.winds.Topt, ug_apex=self.els.u_g_apex,
                         u_scale_2horns=_u_2horns,
                         lorentz_boost=self.lorentz_boost,
-                        gammas_2horns=gammas_2horns, scatter_angs_2horns=scatter_2horns) 
+                        gammas_2horns=gammas_2horns,
+                        scatter_angs_2horns=scatter_2horns) 
                 # print(sed_ic)
                 # if not self.apex_only:
                 sed_ic, sed_s_ic = boost_sed_from_2horns(sed_s_e=sed_s_ic,
@@ -773,19 +770,19 @@ class SpectrumIBS: #!!!
         emiss_s_ = emiss_s
         emiss_s_[np.isinf(emiss_s)]=np.nan
         # print(np.nanmax(emiss_s_))
-        ax[1].plot(self._ibs.s, emiss_s/np.nanmax(emiss_s_), **kwargs)
+        ax[1].plot(self._ibs.s_mid, emiss_s/np.nanmax(emiss_s_), **kwargs)
 
 
 
         if show_many:
-            _n = self._ibs.n
+            _n = self._ibs.n-1
             for i_s in (int(_n * 0.15),
                         int(_n * 0.7),
                         int(_n*1.3),
                         int(_n*1.85),
                     ):
                 ilo, ihi = int(i_s-_n/10), int(i_s+_n/10)
-                label_interval = f"{(self._ibs.s[ilo] / self._ibs.s_max) :.2f}-{(self._ibs.s[ihi] / self._ibs.s_max) :.2f}"
+                label_interval = f"{(self._ibs.s_mid[ilo] / self._ibs.s_max) :.2f}-{(self._ibs.s_mid[ihi] / self._ibs.s_max) :.2f}"
                 label_s = fr"$s = ({label_interval})~ s_\mathrm{{max}}$"
                 # int_sed_here = (trapezoid(self.sed_s[ilo : ihi, :], self._ibs.s[ilo:ihi], axis=0) / 
                 #                 (self._ibs.s[ihi] - self._ibs.s[ilo]) 
@@ -835,27 +832,24 @@ if __name__ == "__main__":
     # from scipy.integrate import trapezoid
     # fig, ax = plt.subplots(2, 1)
     t = -30 * DAY
-    Nibs = 80
-    ibs = IBS(beta=None,
-              winds=winds,
-              gamma_max=1.4,
+    Nibs = 12
+    ibs = IBS(winds=winds,
+              gamma_max=1.8,
               s_max=1.,
               s_max_g=4.,
               n=Nibs,
-              one_horn=False,
               t_to_calculate_beta_eff=t) 
-    ibs1 = ibs.rescale_to_position()
     # ibs1.peek(show_winds=True, to_label=False, showtime=(-100*DAY, 100*DAY),
     #          ibs_color='doppler')
     els = ElectronsOnIBS(Bp_apex=7.768, ibs=ibs, cooling='stat_ibs', eta_a = 1e20,
                      to_inject_e = 'ecpl', p_e=1.7) 
-    els.calculate(to_return=False)
+    els.calculate()
     print('el_ev calculated')
     
-    spec = SpectrumIBS(els=els, mechanisms=['i', 's'], simple=False,
+    spec = SpectrumIBS(els=els, mechanisms=['s', 'i'], simple=True,
                        apex_only=False, lorentz_boost=True)
     E = np.concatenate((
-        loggrid(2.9e2, 1.1e4, 61),
+        loggrid(2.9e2, 1.1e4, 100),
         ))
     spec.calculate_sed_on_ibs(E=E
                               )

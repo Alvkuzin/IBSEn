@@ -8,6 +8,9 @@ import warnings
 import astropy.units as u
 
 
+from matplotlib.collections import LineCollection
+from matplotlib.colors import Normalize
+
 G = 6.67e-8
 DAY = 86400.
 AU = 1.5e13
@@ -470,6 +473,61 @@ def t_avg_func(func, t1, t2, n_t):
 def l2_norm(xarr, yarr):
     return ( trapezoid(yarr**2, xarr) )**0.5
 
+def wrap_grid(x, frac=0.10, num_points=1000, single_num_points=15):
+
+    x = np.asarray(x, dtype=float)
+    if x.ndim != 1:
+        raise ValueError("x must be 1D")
+
+    xmin, xmax = x.min(), x.max()
+
+    # New endpoints per sign-aware 10% rule
+    lo = xmin*(1 - frac) if xmin >= 0 else xmin*(1 + frac)
+    hi = xmax*(1 + frac) if xmax >= 0 else xmax*(1 - frac)
+
+    if xmax == xmin:
+        # Degenerate grid: spread evenly between lo and hi
+        t = np.linspace(0.0, 1.0, single_num_points)
+        return lo + t*(hi - lo)
+
+    return np.linspace(lo, hi, num_points)
+
+########## some helper function for drawing, whatev ############################ 
+####################################################################################
+####################################################################################
+def plot_with_gradient(fig, ax, xdata, ydata, some_param, colorbar=False, lw=2,
+                       ls='-', colorbar_label='grad', minimum=None, maximum=None):
+    """
+    to draw the plot (xdata, ydata) on the axis ax with color along the curve
+    marking some_param. The color changes from blue to red as some_param increases.
+    You may provide your own min and max values for some_param:
+    minimum and maximum, then the color will be scaled according to them.
+    """
+    # Prepare line segments
+    points = np.array([xdata, ydata]).T.reshape(-1, 1, 2)
+    segments = np.concatenate([points[:-1], points[1:]], axis=1)
+    
+    # Normalize some_p values to the range [0, 1] for colormap
+    vmin_here = minimum if minimum is not None else np.min(some_param)
+    vmax_here = maximum if maximum is not None else np.max(some_param)
+    
+    norm = Normalize(vmin=vmin_here, vmax=vmax_here)
+    
+    # Create the LineCollection with colormap
+    lc = LineCollection(segments, cmap='coolwarm', norm=norm)
+    lc.set_array(some_param[:-1])  # color per segment; same length as segments
+    lc.set_linewidth(lw)
+    
+    # Plot
+
+    line = ax.add_collection(lc)
+    
+    if colorbar:
+        fig.colorbar(line, ax=ax, label=colorbar_label)  # optional colorbar
+        
+    ax.set_xlim(xdata.min(), xdata.max())
+    ax.set_ylim(ydata.min(), ydata.max())
+
 # def Get_PSRB_params(orb_p = 'psrb'):
 #     """
 #     Quickly access some PSRB orbital parameters: orbital period P [days],
@@ -675,18 +733,22 @@ if __name__ == "__main__":
     # print('between 0 and 45 new', np.arccos( (1/2**0.5-b1_)/(1-b1_/2**0.5))/np.pi) # between 0 and 45
     # print('between 45 and 90 new', np.arccos(-b1_)/np.pi-np.arccos( (1/2**0.5-b1_)/(1-b1_/2**0.5))/np.pi) # between 45 and 90
     
-    for ang1 in (0, 30, 45, 60, 90, 120):
-        diff = np.linspace(0, 180-ang1, 100) / 180 * np.pi
-        ang1 = ang1  / 180 * np.pi
+    # for ang1 in (0, 30, 45, 60, 90, 120):
+    #     diff = np.linspace(0, 180-ang1, 100) / 180 * np.pi
+    #     ang1 = ang1  / 180 * np.pi
 
-        vec0 = np.array([cos(ang1), sin(ang1), 0])
-        beta_vec = 0.86 * np.array([1, 0, 0])
-        vecs = []
-        for d_ in diff:
-            vecs.append(np.array([cos(ang1 + d_), sin(ang1 + d_), 0 ]))
-        angs = np.array(vector_angle(vecs, vec0, beta_vec, True))
-        plt.plot(diff*180/pi, diff*180/pi, color='k', ls='--')
-        plt.plot(diff*180/pi, angs*180/pi, label = f'diff = {ang1 * 180 / np.pi}')
-        plt.legend()
+    #     vec0 = np.array([cos(ang1), sin(ang1), 0])
+    #     beta_vec = 0.86 * np.array([1, 0, 0])
+    #     vecs = []
+    #     for d_ in diff:
+    #         vecs.append(np.array([cos(ang1 + d_), sin(ang1 + d_), 0 ]))
+    #     angs = np.array(vector_angle(vecs, vec0, beta_vec, True))
+    #     plt.plot(diff*180/pi, diff*180/pi, color='k', ls='--')
+    #     plt.plot(diff*180/pi, angs*180/pi, label = f'diff = {ang1 * 180 / np.pi}')
+    #     plt.legend()
+    
+    # x = np.linspace(-1.1, 3.4, 17)
+    x = 4
+    print(wrap_grid(x, frac=0.1, num_points=21, single_num_points=12))
         
     
