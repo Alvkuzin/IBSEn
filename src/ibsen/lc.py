@@ -97,6 +97,7 @@ class LightCurve:
     def __init__(self,
                  
                  times, bands = ( [3e2, 1e4], ), bands_ind = ( [3e3, 1e4], ),
+                 epows=None,
                     to_parall=False, # lc itself
                  full_spec = False,
                  
@@ -134,6 +135,7 @@ class LightCurve:
         ####################################################################
         self.times = times
         self.bands = bands
+        self.epows = epows # moment order for flux calc 
         self.bands_ind = bands_ind
         self.to_parall = to_parall
         self.full_spec = full_spec # if to calculate spec just in bands=bands 
@@ -324,7 +326,7 @@ class LightCurve:
         else:
             E_ = []
             for band in self.bands:
-                E_in_band = loggrid(band[0]/1.1, band[1]*1.1, 67)
+                E_in_band = loggrid(band[0]/1.2, band[1]*1.2, 67)
                 E_.append(E_in_band)
             E_ = np.concatenate(E_)
 
@@ -333,7 +335,7 @@ class LightCurve:
                                         to_return=True)
         
         emissiv_now = trapezoid(sed_s_now/E_ph_now, E_ph_now, axis=1)
-        fluxes_now = spec_now.fluxes(bands=self.bands)
+        fluxes_now = spec_now.fluxes(bands=self.bands, epows=self.epows)
         indexes_now = spec_now.indexes(bands=self.bands_ind)
         return (r_sp_now, r_pe_now, r_se_now, Bp_apex_now, Bopt_apex_now,
                 ibs_now, els_now, dNe_de_IBS_now, e_vals_now, spec_now,
@@ -452,7 +454,7 @@ class LightCurve:
         Plot the light curve.
         """
         if ax is None:
-            import matplotlib.pyplot as plt
+            # import matplotlib.pyplot as plt
             fig, ax = plt.subplots(nrows=1, ncols=4,
                                     figsize=(16, 4))
         
@@ -526,14 +528,15 @@ if __name__ == "__main__":
                     times = ts,
                     bands = ([3e2, 1e4], [4e11, 1e13],
                              ),
+                    epows=[1, 0],
                     bands_ind = ([3e3, 1e4],),
                     full_spec = False,
                     to_parall = True, 
                     f_d = 150,
                     mechanisms=['syn', 'ic'],
                     apex_only=False,
-                    ic_ani=False,
-                    simple = True,
+                    ic_ani=True,
+                    simple = False,
                     alpha_deg = -8.,
                     s_max = 1,
                     gamma_max=1.2,

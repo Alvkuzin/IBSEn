@@ -17,7 +17,108 @@ DAY = 86400
 SIGMA_BOLTZ = float(const.sigma_sb.cgs.value)
 
 class IBS: #!!!
-    def __init__(self, s_max, gamma_max=None, s_max_g=4., n=31, 
+    """
+    Intrabinary shock (IBS) in physical (cgs) units at a given orbital epoch.
+
+    This adapter builds a **dimensionless** shock via :class:`IBS_norm` using the
+    effective momentum-flux ratio `\\beta` from a supplied :class:`Winds`
+    model at time ``t_to_calculate_beta_eff``, rotates it to align the symmetry
+    axis with the instantaneous star–pulsar line, rescales all length-like
+    quantities by the current separation :math:`r_{\\rm sp}(t)`, and then shifts
+    the curve to the pulsar’s instantaneous position in the orbital plane.
+    Unitless/angle-like properties are delegated to the underlying normalized
+    object. 
+
+    Parameters
+    ----------
+    s_max : float, optional
+        Arclength cutoff (dimensionless) passed to :class:`IBS_norm`. Default is 1.0.
+    gamma_max : float, optional
+        Maximum bulk Lorentz factor reached at ``s_max_g``. Default is 3.0.
+    s_max_g : float, optional
+        Arclength (dimensionless) at which ``gamma == gamma_max``; passed through
+        to :class:`IBS_norm` and later rescaled to cm. Default is 4.0.
+    n : int, optional
+        Sampling points used to build the normalized IBS (per horn, before
+        mirroring). Default is 31.
+    winds : Winds
+        Wind environment tied to an :class:`Orbit`; used to compute
+        :math:`\\beta_\\mathrm{eff}(t)`, separation ``r_sp(t)``, line of sight,
+        and rotation. **Required** for construction.
+    t_to_calculate_beta_eff : float
+        Time (s) relative to periastron at which to evaluate
+        :math:`\\beta_\\mathrm{eff}(t)` and position/orientation. Stored as
+        ``t_forbeta``.
+
+    Attributes
+    ----------
+    winds : Winds
+        The supplied winds model.
+    t_forbeta : float
+        Time (s) relative to the periastron passage at which the IBS is evaluated.
+    beta : float or ndarray
+        Effective momentum-flux ratio at ``t_forbeta`` from ``winds.beta_eff``.
+    r_sp : float
+        Star–pulsar separation at ``t_forbeta`` [cm]; used for rescaling and
+        shifting.
+    ibs_n : IBS_norm
+        Underlying **normalized** IBS rotated by ``π + true_an(t_forbeta)``.
+    x, y : ndarray, shape (N,)
+        IBS coordinates in the orbital plane [cm], shifted so the star is at the
+        origin and the pulsar lies at ``orbit.vector_sp(t_forbeta)``. 
+    s : ndarray
+        Signed arclength along the IBS [cm]; increases through the apex.
+    s_max, s_max_g : float
+        Arclength cut and the location of ``gamma_max`` [cm] (rescaled from
+        the normalized values).
+    r, r1 : ndarray
+        Distances from pulsar→IBS and star→IBS, respectively [cm].
+    x_apex : float
+        Pulsar→apex distance [cm].
+    ds_dtheta : ndarray
+        :math:`\\mathrm{d}s/\\mathrm{d}\\theta` along the curve [cm].
+    s_m, s_p, s_mid, ds : ndarray
+        Midpoint/arclength helper arrays [cm].
+    x_m, x_p, x_mid, dx : ndarray
+        X-coordinate midpoint helpers [cm].
+    y_m, y_p, y_mid, dy : ndarray
+        Y-coordinate midpoint helpers [cm].
+    g : ndarray
+        Bulk Lorentz factor along the rescaled IBS (via :meth:`gma`).
+
+    Methods
+    -------
+    calculate()
+        Top-level staged calculation: build normalized IBS and rescale/rotate.
+    calculate_normalized_ibs()
+        Compute ``beta``, ``r_sp``, LoS, and create the rotated :class:`IBS_norm`.
+    rescale_to_position()
+        Rescale all length-like attributes to cm and shift to the pulsar’s position.
+    s_interp(s_, what)
+        Interpolate an attribute (e.g. ``'x'``, ``'y'``) at arclength ``s_`` [cm].
+    gma(s)
+        Bulk Lorentz factor at arclength ``s`` [cm].
+    peek(fig=None, ax=None, show_winds=False, ibs_color='k', to_label=True, showtime=None)
+        Quick-look plot of the IBS (optionally color-coded by Doppler/scattering)
+        and, if requested, the winds/orbit context. 
+
+    Notes
+    -----
+    * The line of sight is built from the orbit’s ``nu_los`` as
+      ``[cos(nu_los), sin(nu_los), 0]`` and the normalized IBS is rotated by
+      ``π + true_an(t_forbeta)`` before rescaling, aligning the symmetry axis
+      with the star–pulsar line. 
+    * Most non-length attributes/methods (e.g., ``dopl``, scattering angles)
+      are accessed via delegation to ``ibs_n`` (``__getattr__``). 
+
+    See Also
+    --------
+    IBS_norm : Dimensionless IBS geometry used internally.
+    Winds : Wind and radiation fields; provides ``beta_eff`` and orbital geometry.
+    Orbit : Keplerian orbit used by :class:`Winds`.
+
+    """
+    def __init__(self, s_max=1.0, gamma_max=3.0, s_max_g=4.0, n=31, 
                  winds = None, t_to_calculate_beta_eff = None):
         self.gamma_max = gamma_max
         self.s_max = s_max
@@ -74,7 +175,8 @@ class IBS: #!!!
                             self.ibs_n.s_max_g, self.ibs_n.r, self.ibs_n.r1, 
                             self.ibs_n.x_apex, self.ibs_n.ds_dtheta)]
         
-        self.s_m, self.s_p, self.s_mid, self.ds, self.x_m, self.x_p, self.x_mid, self.dx, \
+        self.s_m, self.s_p, self.s_mid, self.ds, \
+            self.x_m, self.x_p, self.x_mid, self.dx, \
         self.y_m, self.y_p, self.y_mid, self.dy = [_stuff * _r_sp for _stuff in (
             self.ibs_n.s_m, self.ibs_n.s_p, self.ibs_n.s_mid, self.ibs_n.ds, 
             self.ibs_n.x_m, self.ibs_n.x_p, self.ibs_n.x_mid, self.ibs_n.dx,
@@ -111,17 +213,51 @@ class IBS: #!!!
         return interpolator(s_)
     
     def gma(self, s):
+        """Bulk Lorentz factor as a function of arclength s [cm]."""
         return 1. + (self.gamma_max - 1.) * np.abs(s) / self.s_max_g        
-        # return self.gamma_max
-
         
     @property
     def g(self):
+        """Bulk Lorentz factor along the IBS."""
         return IBS.gma(self, s = self.s)
         
     def peek(self, fig=None, ax=None, show_winds=False,
              ibs_color='k', to_label=True,
              showtime=None):
+        """
+        Quick look at the IBS in the orbital plane.
+
+        Parameters
+        ----------
+        fig : fig object of pyplot, optional
+             The default is None.
+        ax : ax object of pyplot, optional
+            DESCRIPTION. The default is None.
+        show_winds : bool, optional
+            Whether to show the winds (requires Winds to be provided).
+              The default is False.
+        ibs_color : str, optional
+            Can be one of {'doppler', 'scattering', 'scattering_comoving'} 
+            to colorcode the IBS by the doppler factor, or the scattering angle
+            in the lab or comoving frame, respectively; or any matplotlib color. 
+            The default is 'k'.
+        to_label : bool, optional
+            Whether to put a label `beta=...` on a plot.
+              The default is True.
+        showtime : tuple of (tmin, tmax), optional
+            For orbit displaying (see orbit.peek()). 
+            The default is None.
+
+        Raises
+        ------
+        ValueError
+            If the ibs_color is not one of the recognizable options.
+
+        Returns
+        -------
+        None.
+
+        """
         
         if ax is None:
             import matplotlib.pyplot as plt
@@ -169,7 +305,7 @@ class IBS: #!!!
         _xp, _yp = puls_vector[0], puls_vector[1]
         ax.scatter(_xp, _yp, color='b') # pulsaR
         # ...and the star was alreay plotted in the winds.peek()
-        ax.plot( [1.5*_xp, 1.5*_yp], [0, 0], color='k', alpha=0.3, ls='--',)
+        ax.plot( [0, 1.5*_xp], [0, 1.5*_yp], color='k', alpha=0.3, ls='--',)
 
         ##################################################################################
         show_cond  = np.logical_and(self.winds.orbit.ttab > showtime[0], 

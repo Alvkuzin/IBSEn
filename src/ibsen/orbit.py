@@ -59,6 +59,81 @@ def unpack_orbit(orb_type=None, T=None, e=None, M=None, nu_los=None, **kwargs):
 # print(unpack_orbit('psrb', kwargs='Ropt'))
 
 class Orbit:
+    """
+  Keplerian binary orbit in the orbital plane (CGS units).
+
+  This class represents a two-body elliptical orbit with the periastron
+  aligned with the +X axis and motion confined to the XY-plane (Z=0).
+  It provides geometry and anomalies as functions of time measured from
+  periastron passage and pre-tabulates the orbit for quick
+  plotting/evaluation.
+
+  Parameters
+  ----------
+  sys_name : {'psrb', 'rb', 'bw'}, or dict, or None, optional
+      If provided, load default orbital parameters via
+      ``ibsen.get_obs_data.get_parameters(sys_name)``; explicit arguments
+      below override those defaults. If dict, the parameters are fetched from it.
+      If None, all parameters must be given explicitly.
+  period : float, optional
+      Orbital period :math:`T` in seconds.
+  e : float, optional
+      Orbital eccentricity (:math:`0 \\le e < 1`).
+  tot_mass : float, optional
+      Total system mass :math:`M` in grams. Used to form ``GM = G*M``.
+  nu_los : float, optional
+      Line-of-sight true anomaly (radians) in the orbital plane. Used to
+      locate the time of line-of-sight passage.
+  n : int or None, optional
+      If not None (default 1000), pre-compute and store tabulated arrays of
+      :math:`x(t), y(t), z(t), r(t), \\nu_\\mathrm{true}(t)` and ``t`` over
+      one period for quick access/plotting. If None, no tabulation is
+      performed at initialization.
+
+  Attributes
+  ----------
+  e : float
+      Eccentricity.
+  T : float
+      Orbital period (s).
+  mtot : float
+      Total system mass (g).
+  GM : float
+      Gravitational parameter :math:`G M` (cgs).
+  nu_los : float
+      Line-of-sight true anomaly (rad).
+  name : str or None
+      Value of ``sys_name`` used to initialize the orbit (if any).
+  n : int or None
+      Requested number of tabulation points.
+  a : float
+      Semi-major axis (cm), computed from Kepler's third law.
+  b : float
+      Semi-minor axis (cm).
+  r_periastr : float
+      Periastron distance (cm).
+  r_apoastr : float
+      Apoastron distance (cm).
+  t_los: float
+      Time of the line of sight crossing [s].
+  xtab, ytab, ztab : ndarray or None
+      Tabulated coordinates (cm) if ``n`` is not None. ``ztab`` is identically
+      zero for the planar orbit.
+  ttab : ndarray or None
+      Tabulated times (s) relative to periastron.
+  rtab : ndarray or None
+      Tabulated separation :math:`r(t)` (cm).
+  nu_truetab : ndarray or None
+      Tabulated true anomaly :math:`\\nu_\\mathrm{true}(t)` (rad).
+
+  Notes
+  -----
+  Times ``t`` are interpreted as offsets from periastron passage (``t=0``).
+  The mean anomaly is :math:`M(t) = 2\\pi t/T`. The eccentric anomaly
+  :math:`E(t)` solves Kepler's equation :math:`E - e\\sin E = M(t)`. All
+  distances are returned in centimeters (cgs).
+
+  """
     def __init__(self, sys_name=None, period=None, e=None, tot_mass=None, nu_los=None, n=1000):
         T_, e_, mtot_, nu_los_ = unpack_orbit(orb_type=sys_name, 
                                 T=period, e=e, M=tot_mass, nu_los=nu_los)
@@ -74,67 +149,175 @@ class Orbit:
         self.n = n
         
         if n is not None:
-            self.calculate()
+            self._calculate()
         
     @property    
     def a(self):
         """
         Calculate the semi-major axis of the orbit.
+
+        Returns
+        -------
+        float
+            Semi-major axis of the orbit.
+
         """
-        return (self.T**2 * self.GM / 4. / pi**2)**(1/3)
+        return np.cbrt(self.T**2 * self.GM / 4. / pi**2)
 
     
     @property
     def b(self):
+        """
+        Calculate the semi-minor axis of the orbit.
+
+        Returns
+        -------
+        float
+            Semi-minor axis of the orbit.
+
+        """
         return self.a * np.sqrt(1 - self.e**2)
     
     @property
     def r_periastr(self):
+        """
+        Calculate the periastron distance.
+
+        Returns
+        -------
+        float
+            Periastron distance.
+
+        """
         return self.a * (1 - self.e)
     
     @property
     def r_apoastr(self):
+        """
+        Calculate the apoastron distance.
+
+        Returns
+        -------
+        float
+            Apoastron distance.
+
+        """
         return self.a * (1 + self.e)
     
-    def mean_motion(self, t):    
+    def mean_motion(self, t): 
+        """
+        Mean motion M = 2 pi t / T_orb
+
+        Parameters
+        ----------
+        t : np.ndarray
+            time from periastron passage [s].
+
+        Returns
+        -------
+        np.ndaray
+            Mean motion at time t.
+
+        """
         return 2 * pi * t / self.T
+    
+    def _ecc_an_novec(self, t):
+        """
+        Calculates the eccentric anomaly at the time t.
+
+        Parameters
+        ----------
+        t : float
+            Time after the periastron passage [s].
+
+        Returns
+        -------
+        float
+            E(t).
+
+        """
+        func_to_solve = lambda E: E - self.e * np.sin(E) - Orbit.mean_motion(self, t)
+        try:
+            E = brentq(func_to_solve, -1e3, 1e3)
+            return E
+        except:
+            print('fuck smth wrong with Ecc_novec(t)')
+            return np.nan
 
     def ecc_an(self, t): 
         """
-        Eccentric anomaly as a function of time. t [s] (float or array).
+        Calculates the eccentric anomaly at the time(s) t.
+
+        Parameters
+        ----------
+        t : float | np.ndarray
+            Times relative to the periastron passage [s].
+
+        Returns
+        -------
+        float | np.ndarray
+            E(t).
+
         """
 
         if isinstance(t, np.ndarray):
-            E_ = np.zeros(t.size)
-            for i in range(t.size):
-                func_to_solve = lambda E: E - self.e * np.sin(E) - Orbit.mean_motion(self, t[i])
-                try:
-                    E_[i] = brentq(func_to_solve, -1e3, 1e3)
-                except:
-                    print('fuck smth wrong with Ecc(t): array')
-                    E_[i] = np.nan
+            E_ = np.array([
+                Orbit._ecc_an_novec(self, t_now) for t_now in t
+                ])
             return E_
         else:
-            func_to_solve = lambda E: E - self.e * np.sin(E) - Orbit.mean_motion(self, t)
-            try:
-                E = brentq(func_to_solve, -1e3, 1e3)
-                return E
-            except:
-                print('fuck smth wrong with Ecc(t): float')
-                return np.nan
+            return Orbit._ecc_an_novec(self, t)
         
         
     def r(self, t):
+        """
+        Distance between the components at time t.
+
+        Parameters
+        ----------
+        t : np.ndarray
+            Time relative to the periastron passage [s].
+
+        Returns
+        -------
+        np.ndarray
+            r(t).
+
+        """
         return self.a * (1 - self.e * np.cos(Orbit.ecc_an(self, t)))
        
         
     def true_an(self, t):
+        """
+        True anomaly at time t. The angle between the direction of
+          periastron and the current position of the body.
+
+        Parameters
+        ----------
+        t : np.ndarray
+            Time relative to the periastron passage [s].
+
+        Returns
+        -------
+        np.ndarray
+            nu_true(t).
+
+        """
         ecc_ = Orbit.ecc_an(self, t)
         b_ = self.e / (1 + (1 - self.e**2)**0.5)
         return ecc_ + 2 * np.arctan(b_ * sin(ecc_) / (1 - b_ * cos(ecc_))) 
     
     @property
     def t_los(self):
+        """
+        Time of the line-of-sight passage.
+
+        Returns
+        -------
+        float
+            t_los.
+
+        """
         if abs(Orbit.true_an(self, self.T/2) - self.nu_los) < 1e-6:
             return self.T/2
         else:
@@ -143,25 +326,91 @@ class Orbit:
             return t_to_obs
     
     def x(self, t):
+        """
+        X-coordinate of the body at time t. The direction of the periastron is along the X-axis.
+
+        Parameters
+        ----------
+        t : np.ndarray
+            Time relative to the periastron passage [s].
+
+        Returns
+        -------
+        np.ndarray
+            x(t).
+
+        """
         return self.a * (cos(Orbit.ecc_an(self, t)) - self.e)
 
     def y(self, t):
+        """
+        Y-coordinate of the body at time t. The direction of the periastron is along the X-axis.
+
+        Parameters
+        ----------
+        t : np.ndarray
+            Time relative to the periastron passage [s].
+
+        Returns
+        -------
+        np.ndarray
+            y(t).
+
+        """
         return self.a * (1 - self.e**2)**0.5 * sin(Orbit.ecc_an(self, t))
 
     def z(self, t):
+        """
+        Z-coordinate of the body at time t. The direction of the periastron is along the X-axis.
+
+        Parameters
+        ----------
+        t : np.ndarray
+            Time relative to the periastron passage [s].
+
+        Returns
+        -------
+        np.ndarray
+            z(t).
+
+        """
         if isinstance(t, np.ndarray):
             return np.zeros(t.size)
         else:
             return 0.
 
     def vector_sp(self, t):
+        """
+        Position vector of the body at time t. The direction of the periastron is along the X-axis.
+
+        Parameters
+        ----------
+        t : np.ndarray
+            Time relative to the periastron passage [s].
+
+        Returns
+        -------
+        np.ndarray of shape (3, len(t))
+            3D position vector at time t.
+
+        """
         return np.array([Orbit.x(self, t), Orbit.y(self, t), Orbit.z(self, t)])   
 
-    def calculate(self):
-        t_tab = np.linspace(-self.T * 1.1, self.T * 1.1, int(self.n))
+    def _calculate(self):
+        """
+        Tabulate the orbit, set xtab, ytab, ztab, ttab, rtab, nu_truetab.
+
+        Returns
+        -------
+        None.
+
+        """
+        _E_tab = np.linspace(-2.5 * pi, 2.5 * pi, int(self.n))
+        t_tab = self.T/ (2 * pi) * (_E_tab - self.e * np.sin(_E_tab))
+        # t_tab = np.linspace(-self.T * 1.1, self.T * 1.1, int(self.n))
         self.xtab = Orbit.x(self, t_tab)
         self.ytab = Orbit.y(self, t_tab)
-        self.ztab = Orbit.y(self, t_tab)    
+        self.ztab = Orbit.z(self, t_tab)    
         self.ttab = t_tab
         self.rtab = Orbit.r(self, t_tab)
         self.nu_truetab = Orbit.true_an(self, t_tab)
@@ -171,6 +420,33 @@ class Orbit:
              times_pos = (),
              color='k',
              xplot='time'):
+        """
+        Quick look at the orbit.
+
+        Parameters
+        ----------
+        ax : axis from pyplot, optional
+            The axis to draw an orbit on. Should be at least
+              with 1 row and 3 columns.  The default is None.
+        showtime : tuple (tmin, tmax), optional
+            A tuple of min anf max times [s] for displaying the orbit.
+            If None, then show from -T/2 to T/2.
+              The default is None.
+        times_pos : tuple, optional
+            Times [s] at which to draw points on the orbit.
+             The default is ().
+        color : str, optional
+            Pyplot-recognized color keyword. The default is 'k'.
+        xplot : str, optional
+            What should the x-axis be on the plots.
+            Either 'time' or 'phase'.
+               The default is 'time'.
+
+        Returns
+        -------
+        None.
+
+        """
         if ax is None:
             fig, ax = plt.subplots(nrows=1, ncols=3,
                                    figsize=(12, 4))
@@ -231,7 +507,7 @@ class Orbit:
             ]
             ax_.set_position(new_pos)
     
-    plt.show()
+    # plt.show()
             
     
     

@@ -18,6 +18,27 @@ AU = 1.5e13
 #     return isinstance(x, list) and all(isinstance(xx, np.ndarray) for xx in x)
 
 def vectorize_func(func_simple):
+    """
+    Vectorises a function func_simple of *args, so that each can be either
+    a single vector or a tuple of vectors. In the second case, the lengths
+    of tuples should be the same.
+
+    Parameters
+    ----------
+    func_simple : callable
+        Function of some vector arguments.
+
+    Raises
+    ------
+    ValueError
+        If any argument is not a vector or a list of vectors.
+
+    Returns
+    -------
+    callable
+        Vectorized function.
+
+    """
     def wrapper(*args):
         if all(isinstance(x, np.ndarray) for x in args):
             return func_simple(*args)
@@ -35,6 +56,23 @@ def vectorize_func(func_simple):
     return wrapper    
 
 def unpack(query, dictat):
+    """
+    Unpacking values from a string of names.
+
+    Parameters
+    ----------
+    query : str
+        A string of names from the dictionary to unpack, e.g. 
+        "a b c".
+    dictat : dict
+        A dictionary from which to get values.
+
+    Returns
+    -------
+    list_ : list
+        A list of values [dictat['a'], ...].
+
+    """
     markers = query.split()
     list_ = []
     for name in markers:
@@ -42,6 +80,9 @@ def unpack(query, dictat):
     return list_
 
 def mydot_novec(a, b):
+    """
+    Scalar product of vectors a, b.
+    """
     xa, ya, za = a
     xb, yb, zb = b
     return xa * xb +  ya * yb + za * zb
@@ -49,28 +90,46 @@ def mydot_novec(a, b):
 mydot = vectorize_func(mydot_novec)
 
 def mycross_novec(a, b):
-    xa, ya, za = a
-    xb, yb, zb = b
-    return np.array([xa * zb - za * yb, za * xb - xa * zb, xa * yb - ya * xb])
+    """
+    Vector product of vectors a, b.
+    """
+    ax, ay, az = a
+    bx, by, bz = b
+    return np.array([ay * bz - az * by,
+                     az * bx - ax * bz,
+                     ax * by - ay * bx])
 
 mycross = vectorize_func(mycross_novec)
 
-def absv_novec(Vec):
-    return (mydot(Vec, Vec))**0.5
+def absv_novec(vec):
+    """
+    Absolute value of a vector vec.
+    """
+    return (mydot(vec, vec))**0.5
 
 absv = vectorize_func(absv_novec)
 
 
-def n_from_v_novec(some_vector):
-    return some_vector / absv(some_vector)
+def n_from_v_novec(vec):
+    """
+    Normalized vector vec.
+    """
+    return vec / absv(vec)
 
 n_from_v = vectorize_func(n_from_v_novec)
 
 
 def g_from_beta(beta_vel):
-    return 1 / np.sqrt(1 - beta_vel**2)
+    """
+    Lorentz factor Gamma from the dimentionless velosity beta_vel.
+    """
+    return 1. / np.sqrt(1. - beta_vel**2)
 
 def beta_from_g(g_vel):
+    """
+    Dimentionless velosity beta_vel from Lorentz factor Gamma.
+    """
+    
     if isinstance(g_vel, np.ndarray):
         res = np.zeros_like(g_vel)
         cond = (g_vel > 1.0+1e-7) 
@@ -117,17 +176,59 @@ def lor_trans_angle(angle, gamma):
 
 
 def lor_trans_b_iso(B_iso, gamma):
+    """
+    Lorentz-transforms a value of a module of an isotropic magnetic 
+    field B_iso into a coordinate frame co-moving with a lorentz-factor gamma.
+    
+
+    Parameters
+    ----------
+    B_iso : float | np.ndarray of size gamma
+        Absolute value of an isotropic magnetic field strength in a lab frame.
+    gamma : float | np.ndarray of size B_iso
+        A lorentz factor of a coordinate frame to transform to.
+
+    Returns
+    -------
+    float | np.ndarray of size gamma/B_iso
+        Absolute value of a non-isotropic magnetic field strength in a 
+        co-moving frame.
+
+    """
     bx, by, bz = B_iso / 3**0.5, B_iso / 3**0.5, B_iso / 3**0.5
     bx_comov = bx
     by_comov, bz_comov = by * gamma, bz * gamma
     return (bx_comov**2 + by_comov**2 + bz_comov**2)**0.5
 
 def lor_trans_ug_iso(ug_iso, gamma): # Relativistic jets... eq. (2.57)
-    # delta_doppl = d_boost(gamma, ang_beta_obs)
+    """
+    Lorentz-transforms a value of a module of an isotropic photon 
+    field ug_iso into a coordinate frame co-moving with a lorentz-factor gamma.
+    Uses eq. (2.57) from Relativistic Jets from Active Galactic Nuclei Edited
+    by Markus Böttcher, Daniel E. Harris, and Henric Krawczynski.
+
+    Parameters
+    ----------
+    ug_iso : float | np.ndarray of size gamma
+        Absolute value of an isotropic photon field energy density in a lab
+        frame.
+    gamma : float | np.ndarray of size B_iso
+        A lorentz factor of a coordinate frame to transform to.
+
+    Returns
+    -------
+    float | np.ndarray of size gamma/ug_iso
+        Absolute value of a non-isotropic photon field energy density in a 
+        co-moving frame.
+
+    """
     return ug_iso * gamma**2 * (3 + beta_from_g(gamma)) / 3.
 
 def lor_trans_Teff_iso(Teff_iso, gamma): # assuming u ~ T^4
-    # delta_doppl = d_boost(gamma, ang_beta_obs)
+    """
+    Transforms an effective temperature of a photon field into the co-moving 
+    system. Fully analogous to lor_trans_ug_iso. Assumes T \propto u^{1/4}
+    """
     return Teff_iso * (gamma**2 * (3 + beta_from_g(gamma)) / 3.)**0.25
 
 
@@ -317,18 +418,102 @@ def lor_trans_e_spec_iso(E_lab, dN_dE_lab, gamma, E_comov=None, n_mu=101):
 
 
 def loggrid(x1, x2, n_dec):
-    n_points = int( np.log10(x2 / x1) * n_dec) + 1
+    """
+    Creates a log-spaced grid from x1 to x2 with n_dec points per decade.
+
+    Parameters
+    ----------
+    x1 : float
+        lower bound for a grid.
+    x2 : float
+        upper bound for a grid.
+    n_dec : float
+        The number of points per decade. If the number of points turnes out to 
+        be 1 (x2 is close to x1 and n_dec is small), an array of [x1, x2] is 
+        returned.
+
+    Raises
+    ------
+    ValueError
+        x2 <= x1.
+
+    Returns
+    -------
+    np.ndarray
+        a log-spaced grid from x1 to x2 with n_dec points per decade.
+
+    """
+    if x2 <= x1:
+        raise ValueError('x2 should be > x1 for loggrid.')
+    n_points = max(int( np.log10(x2 / x1) * n_dec) + 1,
+                   2)
     return np.logspace(np.log10(x1), np.log10(x2), n_points)
 
 def logrep(xdata, ydata):
+    """
+    Creates a logarithmic interpolator for the data (xdata, ydata).
+
+    Parameters
+    ----------
+    xdata : np.ndarray
+        1D array of x-coordinates.
+    ydata : np.ndarray
+        1D array of y-coordinates.
+
+    Returns
+    -------
+    interp1d-reurned interpolator
+        A logarithmic interpolator for the data (xdata, ydata). The xdata should
+        be positive and sorted in ascending order. To evaluate the y-values at
+        x-values, you should do 
+        10**(
+        logrep(xdata, ydata)(np.log10(x))
+        )
+
+    """
     asc = np.argsort(xdata)
     xdata, ydata = xdata[asc], ydata[asc] 
     return interp1d(np.log10(xdata), np.log10(ydata))
 
 def logev(x, logspl):
+    """
+    Evaluates a logarithmic interpolator logspl at x.
+
+    Parameters
+    ----------
+    x : np.ndarray
+        1D array of x-coordinates.
+    logspl : interp1d-returned object.
+        interp1d-returned loglog interpolator..
+
+    Returns
+    -------
+    np.ndarray
+        A 1D array of y-coordinates, evaluated at x. The x should be positive
+        and sorted in ascending order.
+
+    """
     return 10**( logspl( np.log10(x) ) )
 
 def interplg(x, xdata, ydata):
+    """
+    Interpolates ydata at x, given xdata/ydata in logarithmic scale.
+
+    Parameters
+    ----------
+    x : np.ndarray
+        1D array of x-coordinates to evaluate y at.
+    xdata : np.ndarray
+        1D array of x-data: x-coordinates at which ydata is given.
+    ydata : np.ndarray
+        1D array of y-data.
+
+    Returns
+    -------
+    np.ndarray
+        y interpolated at x, using ydata(xdata).
+
+    """
     asc = np.argsort(xdata)
     xdata, ydata = xdata[asc], ydata[asc] 
     spl_ = interp1d(np.log10(xdata), np.log10(ydata))
@@ -337,7 +522,9 @@ def interplg(x, xdata, ydata):
 
 def trapz_loglog(y, x, axis=-1, intervals=False):
     """
-    Borrowed from Naima utils. I mean, we use Naima anyway, right?
+    ---------------------------------------------------------------------------
+    ----- Borrowed from Naima utils. I mean, we use Naima anyway, right? ------
+    ---------------------------------------------------------------------------
 
     Integrate along the given axis using the composite trapezoidal rule in
     loglog space.
@@ -410,14 +597,34 @@ def trapz_loglog(y, x, axis=-1, intervals=False):
     return ret
 
 def rotated_vector(alpha, incl):
+    """
+    Creates a vector np.array([x, y, z]), which is initially a unit
+    vector in z-direction np.array([0, 0, 1]) rotated by `incl` around
+    y-axis and then by `alpha` around z-axis. 
+
+    Parameters
+    ----------
+    alpha : float
+        The angle of the second turn around z-axis [rad].
+    incl : float
+        The angle of the first turn around y-axis [rad].
+
+    Returns
+    -------
+    np.ndarray of length 3
+        The rotated vector.
+
+    """
     return np.array([  cos(alpha) * sin(incl),
-                     - sin(alpha) * sin(incl),
+                       sin(alpha) * sin(incl),
                        cos(incl)
                        ])
 
 def rotate_z(vec, phi):
+    
     """
-    rotates vector vec=np.array([x, y, z]) around z-axis in a positive direction
+    rotates vector vec=np.array([x, y, z]) around z-axis at the 
+    angle phi in a positive direction
     """
     
     _x, _y, _z = vec
@@ -427,6 +634,27 @@ def rotate_z(vec, phi):
     return np.array([x_rotated_, y_rotated_, _z])
 
 def rotate_z_xy(x, y, phi):
+    """
+    Rotates a 2-D vector (x, y) around z-axis at the angle phi in a positive direction.
+
+    Parameters
+    ----------
+    x : float
+        vector x-coordinate.
+    y : float
+        vector y-coordinate.
+    phi : float
+        angle [rad] to rotate the vector around z-axis.
+
+    Returns
+    -------
+    x_rotated_ : float
+        x-coordinate of the rotated vector.
+        
+    y_rotated_ : float
+        y-coordinate of the rotated vector.
+
+    """
     c_, s_ = cos(phi), sin(phi)
     x_rotated_ = c_ * x - s_ * y
     y_rotated_ = s_ * x + c_ * y
@@ -436,6 +664,7 @@ def rotate_z_xy(x, y, phi):
 def t_avg_func(func, t1, t2, n_t):
     """
     Averages function func(e, t) over a time period t = [t1, t2],
+    currently giving an algebraic average.
 
     Parameters
     ----------
@@ -471,9 +700,59 @@ def t_avg_func(func, t1, t2, n_t):
     return func_avg
 
 def l2_norm(xarr, yarr):
+    """
+    An L2-norm of a function yarr(xarr) defined on the grid xarr.
+
+    Parameters
+    ----------
+    xarr : np.ndarray
+        1D array of x-coordinates. Should be sorted in ascending order.
+    yarr : np.ndarray
+        1D array of y-coordinates. Should be the same length as xarr.
+
+    Returns
+    -------
+    float
+        The L2-norm of the function yarr(xarr), defined as
+        \sqrt{ \int y^2 dx }.
+
+    """
     return ( trapezoid(yarr**2, xarr) )**0.5
 
 def wrap_grid(x, frac=0.10, num_points=1000, single_num_points=15):
+    """
+    Creates a grid of points around the range of x, with a 10% margin
+    on both sides. If the range is degenerate (xmin == xmax), it will
+    create a grid points evenly spaced between xmin*(1 - frac) and xmax*(1 + frac).
+
+
+    Parameters
+    ----------
+    x : float | np.ndarray
+        1D array of x-coordinates. Should be sorted in ascending order.
+    frac : float, optional
+        A margin for the enveloping grid. The default is 0.10.
+    num_points : int, optional
+        The number of points for the enveloping grid. The default is 1000.
+    single_num_points : int, optional
+        A number of points for a grid if x is a number. The default is 15.
+
+    Raises
+    ------
+    ValueError
+        If x dimention is > 1.
+
+    Returns
+    -------
+    np.ndarray
+        A 1D array of points, evenly spaced between <xmin and
+        >xmax taking sign into account. E.g., if x=np.array([1, ....2, ]),
+        the grid will be created between 0.9 and 2.2, with 1000 points.
+        If x=np.array([-1, ..., 2]), the grid will be created between
+        -1.1 and 2.2, with 1000 points. If x=np.array([1, 1, 1]) or x=1,
+        the grid will be created between 0.9 and 1.1, with 15 points.
+
+    """
 
     x = np.asarray(x, dtype=float)
     if x.ndim != 1:
@@ -498,10 +777,44 @@ def wrap_grid(x, frac=0.10, num_points=1000, single_num_points=15):
 def plot_with_gradient(fig, ax, xdata, ydata, some_param, colorbar=False, lw=2,
                        ls='-', colorbar_label='grad', minimum=None, maximum=None):
     """
-    to draw the plot (xdata, ydata) on the axis ax with color along the curve
+    
+    Draw the plot (xdata, ydata) on the axis ax with color along the curve
     marking some_param. The color changes from blue to red as some_param increases.
     You may provide your own min and max values for some_param:
     minimum and maximum, then the color will be scaled according to them.
+    
+
+    Parameters
+    ----------
+    fig : pyplot figure
+        The figure on which to draw the plot.
+    ax : pyplot axis
+        The axis on which to draw the plot. 
+    xdata : np.ndarray
+        1D array of x-coordinates.
+    ydata : np.ndarray
+        1D array of y-coordinates. Should be the same length as xdata.
+    some_param : np.ndarray
+        1D array of values to color the line by. Should be the same length as xdata.
+    colorbar : bool, optional
+        Whether to draw a colorbar. The default is False.
+    lw : float, optional
+        A linewidth keyword for pyplot.plot. The default is 2.
+    ls : string, optional
+        A linestyle keyword for pyplot.plot.. The default is '-'.
+    colorbar_label : string | float, optional
+        Label for a colorbar. The default is 'grad'.
+    minimum : float, optional
+        If provided, it is used as a minimum value for the 
+        colorcoding of some_param. The default is None.
+    maximum : float, optional
+        If provided, it is used as a maximum value for the 
+        colorcoding of some_param. The default is None.
+
+    Returns
+    -------
+    None.
+
     """
     # Prepare line segments
     points = np.array([xdata, ydata]).T.reshape(-1, 1, 2)
@@ -561,148 +874,9 @@ def plot_with_gradient(fig, ax, xdata, ydata, some_param, colorbar=False, lw=2,
 #            'D': D_here, 'Ropt': Ropt_here, 'T': Torb_here}
 #     return res
 
-# def unpack_orbit(orb_p, Torb=None, e=None, Mtot=None, to_return = None):
-#     """
-#     Unpack the orbital parameters from a dictionary or a string.
-#     If orb_p is None, Torb, e, and Mtot should be provided.
-#     """
-#     if orb_p is None:
-#         markes = to_return.split()
-#         returns = []
-#         for name in markes:
-#             if name == 'T':
-#                 returns.append(Torb)
-#             elif name == 'e':
-#                 returns.append(e)
-#             elif name == 'M':
-#                 returns.append(Mtot)
-#             else:
-#                 print('Unknown parameter:', name)
-#         return returns
-#     else:
-#         if isinstance(orb_p, str):
-#             orb_par = Get_PSRB_params(orb_p)
-#         else:
-#             orb_par = orb_p
-#         return unpack(query=to_return, dictat=orb_par)
-    
-# # print(unpack_orbit('psrb', e=4, to_return= '  e '))
-
-# def a_axis(orb_p = None, Torb=None, Mtot=None):
-#     """
-#     Calculate the semi-major axis of the orbit.
-#     """
-#     Torb_, M_ = unpack_orbit(orb_p, Torb, Mtot=Mtot, to_return='T M')
-#     GM_ = G * M_
-#     return (Torb_**2 * GM_ / 4 / pi**2)**(1/3)
-
-# def r_peri(orb_p = None, Torb=None, Mtot=None, e=None):
-#     a_ = a_axis(orb_p, Torb, Mtot)
-#     e_, = unpack_orbit(orb_p, e=e, to_return='e') 
-#     return a_ * (1 - e_)
-
-# def Mean_motion(t, Torb):    
-#     return 2 * np.pi * t / Torb
-
-# def Ecc_an(t, Torb_, e_): 
-#     """
-#     Eccentric anomaly as a function of time. t [s] (float or array),
-#     Torb_ [s] (float), e_ (float).
-#     This function is considered useless outside  of this module, so
-#     Torb and e should always be provided explicitly.
-#     """
-#     if isinstance(t, float):
-#         func_to_solve = lambda E: E - e_ * np.sin(E) - Mean_motion(t, Torb_)
-#         try:
-#             E = brentq(func_to_solve, -1e3, 1e3)
-#             return E
-#         except:
-#             print('fuck smth wrong with Ecc(t): float')
-#             return -1
-#     else:
-#         E_ = np.zeros(t.size)
-#         for i in range(t.size):
-#             func_to_solve = lambda E: E - e_ * np.sin(E) - Mean_motion(t[i], Torb_)
-#             try:
-#                 E_[i] = brentq(func_to_solve, -1e3, 1e3)
-#             except:
-#                 print('fuck smth wrong with Ecc(t): array')
-#                 E_[i] = np.nan
-#         return E_
-
-# def Radius(t, orb_p=None, Torb=None, e=None, Mtot=None):
-#     a_ = a_axis(orb_p, Torb, Mtot)
-#     Torb_, e_ = unpack_orbit(orb_p, Torb, e=e, to_return='T e')   
-#     return a_ * (1 - e_ * np.cos(Ecc_an(t, Torb_, e_)))
-
-# def True_an(t, orb_p=None, Torb=None, e=None):
-#     Torb_, e_ = unpack_orbit(orb_p, Torb, e=e, to_return='T e')   
-#     Ecc_ = Ecc_an(t, Torb_, e_)
-#     b_ = e_ / (1 + (1 - e_**2)**0.5)
-#     return Ecc_ + 2 * np.arctan(b_ * sin(Ecc_) / (1 - b_ * cos(Ecc_)))
-
-# def X_coord(t, Torb, e, Mtot):
-#     a_ = a_axis(None, Torb, Mtot)
-#     return a_ * (np.cos(Ecc_an(t, Torb, e)) - e)
-
-# def Y_coord(t, Torb, e, Mtot):
-#     a_ = a_axis(None, Torb, Mtot)
-#     return a_ * (1 - e**2)**0.5 * sin(Ecc_an(t, Torb, e))
-
-# def Z_coord(t, Torb, e, Mtot):
-#     if isinstance(t, np.ndarray):
-#         return np.zeros(t.size)
-#     else:
-#         return 0.
-
-# def Vector_S_P(t, orb_p=None, Torb=None, e=None, Mtot=None):
-#     Torb_, e_, Mtot_ = unpack_orbit(orb_p, Torb, e, Mtot, to_return='T e M')   
-#     x_, y_, z_ = (X_coord(t, Torb_, e_, Mtot_),
-#                   Y_coord(t, Torb_, e_, Mtot_),
-#                   Z_coord(t, Torb_, e_, Mtot_))
-#     return np.array([x_, y_, z_])
-
-
-# def Dist_to_disk(rvec, alpha, incl):
-#     return mydot(rvec, rotated_vector(alpha, incl))
-
-# def times_of_disk_passage(alpha, incl, orb_p=None, Torb=None, e=None, Mtot=None):
-#     Torb_, e_, Mtot_ = unpack_orbit(orb_p, Torb, e, Mtot, to_return='T e M')   
-#     Dist_to_disk_time = lambda t: mydot(Vector_S_P(t, orb_p, Torb_, e_, Mtot_),
-#                              rotated_vector(alpha, incl))
-#     t1 = brentq(Dist_to_disk_time, -Torb_/2., 0)
-#     t2 = brentq(Dist_to_disk_time, 0, Torb_/2.)
-#     return t1, t2
-
-
-# def r_to_DP(t, alpha, incl, orb_p=None, Torb=None, e=None, Mtot=None):
-#     Torb_, e_, Mtot_ = unpack_orbit(orb_p, Torb, e, Mtot, to_return='T e M')   
-#     radius = Vector_S_P(t, Torb_, e_, Mtot_)
-#     ndisk = rotated_vector(alpha, incl)
-#     return mydot(radius, ndisk) * ndisk
-
-# def r_in_DP(t, alpha, incl, orb_p=None, Torb=None, e=None, Mtot=None):
-#     Torb_, e_, Mtot_ = unpack_orbit(orb_p, Torb, e, Mtot, to_return='T e M')   
-#     radius = Vector_S_P(t, Torb_, e_, Mtot_)
-#     ndisk = rotated_vector(alpha, incl)
-#     d_to_disk = mydot(radius, ndisk)
-#     return radius - ndisk * d_to_disk
-
-# def r_in_DP_fromV(Vx, Vy, normal):
-#     nx_, ny_, nz_ = normal
-#     dot_prod = Vx * nx_ + Vy * ny_
-#     V_toD_x, V_toD_y, V_toD_z = nx_ * dot_prod, ny_ * dot_prod, nz_ * dot_prod 
-#     V_inD_x, V_inD_y, V_inD_z = Vx - V_toD_x, Vy - V_toD_y, -V_toD_z
-#     return V_inD_x, V_inD_y, V_inD_z
-
-# def n_DiskMatter(t, alpha, incl, orb_p=None, Torb=None, e=None, Mtot=None):
-#     Torb_, e_, Mtot_ = unpack_orbit(orb_p, Torb, e, Mtot, to_return='T e M')   
-#     n_indisk = n_from_v(r_in_DP(t, alpha, incl, Torb_, e_, Mtot_))
-#     ndisk = rotated_vector(alpha, incl)
-#     return mycross(ndisk, n_indisk)
-
-if __name__ == "__main__":
-    import matplotlib.pyplot as plt 
+# if __name__ == "__main__":
+    ### А ты сюдой зачем смотришь? Что ты хочешь тут увидеть? Вот то-то и оно.
+#     import matplotlib.pyplot as plt 
     # n1 = [np.array([0, -1, 0.0]),  np.array([1, 0, 0.0])]
     # n1 = n_from_v(n1)
     # n2 = [np.array([1, -1, 0.0]), np.array([1, -1, 0.0])]
@@ -748,7 +922,91 @@ if __name__ == "__main__":
     #     plt.legend()
     
     # x = np.linspace(-1.1, 3.4, 17)
-    x = 4
-    print(wrap_grid(x, frac=0.1, num_points=21, single_num_points=12))
+    # x = 4
+    # print(wrap_grid(x, frac=0.1, num_points=21, single_num_points=12))
         
     
+# from skimage.measure import marching_cubes
+# from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
+
+# def plot_isosurface_parametric(ax,
+#                                h_forp, r_forp, phi,
+#                                u_be, v, w,
+#                                values,                  # disk_ps3, shape (Nh, Nr, Nphi)
+#                                levels,
+#                                color=(1.0, 0.5, 0.0),   # orange
+#                                alpha=0.30,
+#                                step_size=1,
+#                                allow_degenerate=True):
+#     """
+#     Plot one or more isosurfaces of 'values' defined on a parametric grid (h, r, phi)
+#     with axisymmetric embedding x = h*u + r*(cosφ v + sinφ w).
+
+#     Parameters
+#     ----------
+#     ax : 3D axes
+#     h_forp, r_forp, phi : 1D arrays (uniformly spaced recommended)
+#         h = coordinate along the axis u_be
+#         r = radius from the axis in the slice plane
+#         φ = rotation angle around u_be (radians)
+#     u_be, v, w : (3,) arrays, orthonormal basis (u_be is the symmetry axis)
+#     values : ndarray, shape (Nh, Nr, Nphi)
+#         Scalar field on the (h,r,φ) grid (e.g., log10 pressure)
+#     levels : float or sequence of float
+#         Isosurface level(s) in the same units as 'values' (e.g., np.nanmax(values)-k)
+#     color : RGB tuple
+#     alpha : float
+#     step_size : marching cubes step size (increase for speed, decrease for quality)
+#     """
+
+#     # Input checks
+#     values = np.asarray(values, float)
+#     assert values.shape == (h_forp.size, r_forp.size, phi.size), \
+#         f"'values' must have shape (Nh, Nr, Nphi) = {(h_forp.size, r_forp.size, phi.size)}, got {values.shape}"
+
+#     # Replace NaNs with very low values so they won't appear at high iso levels
+#     vmin_finite = np.nanmin(values[np.isfinite(values)])
+#     vol = np.where(np.isfinite(values), values, vmin_finite - 1e6)
+
+#     # Precompute linear spacing info (we assume uniform spacing here)
+#     # marching_cubes returns verts in index order (z,y,x) == (ih, ir, iphi)
+#     Nh, Nr, Np = values.shape
+#     h0, r0, p0 = h_forp[0], r_forp[0], phi[0]
+#     dh = (h_forp[-1] - h_forp[0]) / (Nh - 1) if Nh > 1 else 1.0
+#     dr = (r_forp[-1] - r_forp[0]) / (Nr - 1) if Nr > 1 else 1.0
+#     dp = (phi[-1] - phi[0]) / (Np - 1) if Np > 1 else 1.0
+
+#     # Ensure numpy arrays
+#     u_be = np.asarray(u_be, float); v = np.asarray(v, float); w = np.asarray(w, float)
+
+#     # Multiple or single level
+#     if np.isscalar(levels):
+#         levels = [levels]
+
+#     artists = []
+#     for lvl in levels:
+#         verts, faces, _, _ = marching_cubes(
+#             vol, level=lvl, step_size=step_size, allow_degenerate=allow_degenerate
+#         )
+#         if verts.size == 0 or faces.size == 0:
+#             continue  # nothing at this level
+
+#         # verts[:,0]=ih (along h), verts[:,1]=ir (along r), verts[:,2]=ip (along phi)
+#         hv = h0 + dh * verts[:, 0]
+#         rv = r0 + dr * verts[:, 1]
+#         pv = p0 + dp * verts[:, 2]
+
+#         # Map to physical 3D: x = h*u + r*cosφ*v + r*sinφ*w
+#         cos_p = np.cos(pv)[:, None]
+#         sin_p = np.sin(pv)[:, None]
+#         verts_xyz = (hv[:, None] * u_be[None, :]
+#                      + rv[:, None] * cos_p * v[None, :]
+#                      + rv[:, None] * sin_p * w[None, :])
+
+#         tri = ax.plot_trisurf(verts_xyz[:, 0],
+#                               verts_xyz[:, 1],
+#                               faces,
+#                               verts_xyz[:, 2],
+#                               color=color, alpha=alpha, linewidth=0)
+#         artists.append(tri)
+#     return artists

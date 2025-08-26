@@ -7,7 +7,7 @@ from scipy.integrate import trapezoid, cumulative_trapezoid, solve_ivp
 from scipy.interpolate import interp1d
 # import time
 # from joblib import Parallel, delayed
-from ibsen.utils import  beta_from_g, loggrid, t_avg_func, wrap_grid
+from ibsen.utils import  beta_from_g, loggrid, t_avg_func, wrap_grid, trapz_loglog
 import matplotlib.pyplot as plt
 
 from ibsen.transport_solvers.transport_on_ibs_solvers import solve_for_n, nonstat_characteristic_solver
@@ -38,28 +38,75 @@ sed_unit = u.erg / u.s / u.cm**2
 RAD_IN_DEG = pi / 180.0
 
 def syn_loss(ee, B):
-    '''Synchrotron losses, dE/dt. Bis in G, electron energy -- eV '''
+    """
+    Synchrotron losses, dE/dt.
+
+    Parameters
+    ----------
+    ee : np.ndarray
+        Electron energy [eV].
+    B : np.ndarray
+        Magnetic field [cgs].
+
+    Returns
+    -------
+    np.ndarray
+        Synchrotron losses, dE/dt [eV/s]
+
+    """
     # return -4e5 * B**2 * (ee/1e10)**2 #eV/s ???
     return -2.5e5 * B**2 * (ee/1e10)**2 #eV/s ???
 
 # def Gma(s, sm, G_term):
     # return 1 + (G_term - 1) * s / sm
 
-def gfunc(x, a = -0.362, b = 0.826, alpha = 0.682, beta = 1.281): #from 1310.7971
+def gfunc(x, a = -0.362, b = 0.826, alpha = 0.682, beta = 1.281): 
+    """
+    Auxillary function from 1310.7971
+    """
     return (1 +  (a * x**alpha) / (1 + b * x**beta) )**(-1)
     
 def Gani(u_, c = 6.13):
+    """
+    G_ani from 1310.7971, eq. (35)
+    """
     cani = c
     return cani * u_ * np.log(1 + 2.16 * u_ / cani) / (1 + cani * u_ / 0.822)
 
 def Giso(u_, c = 4.62):
+    """
+    G_iso from 1310.7971, eq. (38)
+    """
     ciso = c
     return ciso * u_ * np.log(1 + 0.722 * u_ / ciso) / (1 + ciso * u_ / 0.822)
 
 def Giso_full(x):
+    """
+    Full G_iso from 1310.7971, which is G_iso times gfunc
+    """
     return Giso(x, 5.68) * gfunc(x)
 
 def ic_loss(Ee, Topt, Ropt, dist): # Ee in eV !!!!!!
+    """
+    Inverse Compton (isotropic) losses dE/de 
+
+    Parameters
+    ----------
+    Ee : np.ndarray
+        Electron energy [eV].
+    Topt : np.ndarray
+        Effective temperature of a star [K].
+    Ropt : np.ndarray
+        Star radius [cm].
+    dist : np.ndarray
+        Distance from the star.
+
+    Returns
+    -------
+        np.ndarray.
+        IC losses for a single electron dE/dt [eV/s].
+
+    """
     kappa = (Ropt / 2 / dist)**2
     T_me = (K_BOLTZ * Topt / MC2E)
     Ee_me = Ee  / ERG_TO_EV / MC2E
@@ -69,21 +116,126 @@ def ic_loss(Ee, Topt, Ropt, dist): # Ee in eV !!!!!!
 
     
 def t_adiab(dist, eta_flow):
+    """
+    Adiabatic (?) time defined as t_ad = eta_flow * dist / c.
+
+    Parameters
+    ----------
+    dist : np.ndarray
+        Characteristic distance, e.g. the binary separation [cm].
+    eta_flow : np.ndarray
+        Proportionality coefficient.
+
+    Returns
+    -------
+    np.ndarray
+        t_ad [s].
+
+    """
     return eta_flow * dist / C_LIGHT
 
 def ecpl(E, ind, ecut, norm):
+    """
+    Exponential cut-off power-law.
+    norm * E^(-ind) * exp(-E/ecut).
+    Parameters
+    ----------
+    E : np.ndarray
+        Energy.
+    ind : np.ndarray
+        Power-law index.
+    ecut : np.ndarray
+        Exponential cut-off energy.
+    norm : np.ndarray
+        Overall normalization.
+
+    Returns
+    -------
+    np.ndarray
+        Exponential cut-off power-law.
+
+    """
     return norm * E**(-ind) * exp(-E / ecut)
 
 def pl(E, ind, norm):
+    """
+    Power law norm * E^(-ind).
+
+    Parameters
+    ----------
+    E : np.ndarray
+        Energy.
+    ind : np.ndarray
+        Power-law index.
+    norm : np.ndarray
+        Overall normalization.
+
+    Returns
+    -------
+    np.ndarray
+        Power-law.
+
+    """
     return norm * E**(-ind)
 
 def secpl(E, ind, ecut, beta_e, norm):
+    """
+    Super-exponential cut-off power-law.
+    norm * E^(-ind) * exp(-(E/ecut)^beta_e).
+    Parameters
+    ----------
+    E : np.ndarray
+        Energy.
+    ind : np.ndarray
+        Power-law index.
+    ecut : np.ndarray
+        Exponential cut-off energy.
+    beta_e : np.ndarray
+        Super-exponential index.
+    norm : np.ndarray
+        Overall normalization.
+
+    Returns
+    -------
+    np.ndarray
+        Super-exponential cut-off power-law.
+
+    """
     return norm * E**(-ind) * exp(- (E / ecut)**beta_e )
 
 
 
 def total_loss(ee, B, Topt, Ropt, dist, eta_flow, eta_syn, eta_IC):
-    # if isinstance(eta_flow, np.ndarray)
+    """
+    Total losses dE/dt = eta_syn * syn_loss + eta_IC * ic_loss - E/t_ad.
+    Negative! For a single electron.
+
+    Parameters
+    ----------
+    ee : np.ndarray
+        Electron energy [eV].
+    B : np.ndarray
+        Magnetic field [cgs].
+    Topt : np.ndarray
+        Optical star effective temperature [K].
+    Ropt : np.ndarray
+        Optical star radius [cm].
+    dist : np.ndarray
+        Distance from the optical star [cm].
+    eta_flow : np.ndarray
+        Proportionality coefficient for the adiabatic time.
+        If > 1e10, adiabatic losses are neglected.
+    eta_syn : np.ndarray
+        Proportionality coefficient for the synchrotron losses.
+    eta_IC : np.ndarray
+        Proportionality coefficient for the inverse Compton losses.
+
+    Returns
+    -------
+    np.ndarray
+        Total loss for a single electron dE/dt [eV/s].
+
+    """
     eta_flow_max = np.max(np.asarray(eta_flow))
     if eta_flow_max < 1e10:
         return eta_syn * syn_loss(ee, B) + eta_IC * ic_loss(ee, Topt, Ropt, dist) - ee / t_adiab(dist, eta_flow)
@@ -122,11 +274,11 @@ def stat_distr(Es, Qs, Edots):
 
 def stat_distr_with_leak(Es, Qs, Edots, Ts, mode = 'ivp'):
     """  
-        calculates the stationary spectrum with leakage: the solution of
-        d(n * Edot)/dE + n/T(E) = Q(E), which is
-            
-        n(E) = 1/|Edot| \int_E ^\infty Q(E') K(E, E') dE', where
-        K(E, E') = exp( \int_E^E' dE''/ (Edot(E'') * T(E'') )  )
+    Calculates the stationary spectrum with leakage: the solution of
+    d(n * Edot)/dE + n/T(E) = Q(E), which is
+        
+    n(E) = 1/|Edot| \int_E ^\infty Q(E') K(E, E') dE', where
+    K(E, E') = exp( \int_E^E' dE''/ (Edot(E'') * T(E'') )  )
 
     Parameters
     ----------
@@ -172,6 +324,7 @@ def stat_distr_with_leak(Es, Qs, Edots, Ts, mode = 'ivp'):
         n_numeric = u_numeric / Edots
         return n_numeric
     if mode == 'analyt':
+        
         inv_Tf = 1 / (Ts * Edots)
         # First, compute ∫_∞^{e} (1 / (T * f)) de
         inner_int = cumulative_trapezoid(inv_Tf[::-1], Es[::-1], initial=0)[::-1]  
@@ -189,48 +342,85 @@ def stat_distr_with_leak(Es, Qs, Edots, Ts, mode = 'ivp'):
 def evolved_e_advection(s_, edot_func, f_inject_func,
               tot_loss_args, f_args, vel_func, v_args, emin_grid = 1e9, 
               emax_grid = 5.1e14):  
-        # s -- in [cm] !!!
-        
-        # we calculate it on e-grid emin / extend_d < e <  emax * extend_u
-        # and hope that zero boundary conditions will be not important
-        
-        # extend_u = 10; extend_d = 10; 
-        extend_u = 2; extend_d = 10; 
-        Ns, Ne_dec = 601, 123 
-        # Ns, Ne = 201, 203 
-        # Ne_real = int( Ne * np.log10(extend_u * emax_grid / extend_d / emin_grid) / np.log10(emax_grid / emin_grid) )
-        # e_vals_sample = np.logspace(np.log10(emin / extend_d), np.log10(emax * extend_u), Ne_real)
-        e_vals_sample = loggrid(emin_grid / extend_d, emax_grid * extend_u,
-                                Ne_dec)
-        
-        ### now we'll look where the f_inject is not negligible and only there
-        ### will we solve the equation 
-        ### Currently it's set so that the eq is solved at all energies 
-        ssmesh, emesh = np.meshgrid(s_, e_vals_sample, indexing='ij')
-        f_sample = f_inject_func(ssmesh, emesh, *f_args)
-        f_sample_sed = f_sample[1, :] * e_vals_sample**2
-        e_where_good = np.where(f_sample_sed > np.max(f_sample_sed) / (-1e6) )
-        s_vals = np.linspace(0, np.max(s_), Ns)
-        e_vals = e_vals_sample[e_where_good]
-        dNe_de = solve_for_n(v_func = vel_func, edot_func = edot_func,
-                            f_func = f_inject_func,
-                            v_args = v_args, 
-                            edot_args = tot_loss_args,
-                            f_args = f_args,
-                            s_grid = s_vals, e_grid = e_vals, 
-                            method = 'FDM_cons', bound = 'neun')
-        # #### Only leave the part of the solution between emin < e < emax 
-        ind_int = np.logical_and(e_vals <= emax_grid, e_vals >= emin_grid)
-        e_vals = e_vals[ind_int]
-        dNe_de = dNe_de[:, ind_int]
-        
-        #### and evaluate the values on the IBS grid previously obtained:dNe_de_IBS, e_vals
-        interp_x = interp1d(s_vals, dNe_de, axis=0, kind='linear', fill_value='extrapolate')
-        dNe_de_IBS = interp_x(s_)
-        dNe_de_IBS[dNe_de_IBS <= 0] = np.min(dNe_de_IBS[dNe_de_IBS>0]) / 3.14
-        
-        return dNe_de_IBS, e_vals
+    """
+    Calculates the electron spectrum on a grid of positions s_ along the
+    IBS, taking into account advection and cooling. The solution is obtained
+    with the finite-difference method for the transport equation:
+    v(s) * dn/ds + d(edot * n)/de = f_inject(s, e).
+
+    Parameters
+    ----------
+    s_ : np.ndarray of shape (Ns,)
+        The grid of positions along the IBS [cm]. Internally
+        the equation is solved on a grid 0 < s < 1.01* max(s_) with Ns=601 points.
+    edot_func : callable with signature edot_func(s, e, *tot_loss_args)
+        The total losses dE/dt [eV/s] for a single electron.
+    f_inject_func : callable with signature f_inject_func(s, e, *f_args)
+        The injection function dNdot/dsde [1/s/cm/eV].
+    tot_loss_args : tuple
+        Optional arguments for edot_func.
+    f_args : tuple
+        Optional arguments for f_inject_func.
+    vel_func : callable with signature vel_func(s, *v_args)
+        Bulk motion velocity along the IBS [cm/s].
+    v_args : tuple
+        Optional arguments for vel_func.
+    emin_grid : float, optional
+        The min of energy grid to solve the equaion on.
+         Internally the equation is solved from emin_grid/10 to emax_grid*2.
+           The default is 1e9.
+    emax_grid : float, optional
+        The max of energy grid to solve the equaion on.
+         Internally the equation is solved from emin_grid/10 to emax_grid*2.
+           The default is 5.1e14.
+
+    Returns
+    -------
+    dNe_deds_IBS : np.ndarray of shape (Ns, Ne)
+        The electron spectra dNedot/deds on the grid s_ and on a grid of energies
+        between emin_grid and emax_grid.
+    e_vals : np.ndarray of shape (Ne,)
+        The electron energy grid on which the solution is provided.
+
+    """    
+    # we calculate it on e-grid emin / extend_d < e <  emax * extend_u
+    # and hope that zero boundary conditions will be not important
     
+    # extend_u = 10; extend_d = 10; 
+    extend_u = 2; extend_d = 10; 
+    Ns, Ne_dec = 601, 123 
+    # Ns, Ne = 201, 203 
+ 
+    e_vals_sample = loggrid(emin_grid / extend_d, emax_grid * extend_u,
+                            Ne_dec)
+    
+    ### now we'll look where the f_inject is not negligible and only there
+    ### will we solve the equation 
+    ### Currently it's set so that the eq is solved at all energies 
+    ssmesh, emesh = np.meshgrid(s_, e_vals_sample, indexing='ij')
+    f_sample = f_inject_func(ssmesh, emesh, *f_args)
+    f_sample_sed = f_sample[1, :] * e_vals_sample**2
+    e_where_good = np.where(f_sample_sed > np.max(f_sample_sed) / (-1e6) )
+    s_vals = np.linspace(0, np.max(s_)*1.01, Ns)
+    e_vals = e_vals_sample[e_where_good]
+    dNe_deds = solve_for_n(v_func = vel_func, edot_func = edot_func,
+                        f_func = f_inject_func,
+                        v_args = v_args, 
+                        edot_args = tot_loss_args,
+                        f_args = f_args,
+                        s_grid = s_vals, e_grid = e_vals, 
+                        method = 'FDM_cons', bound = 'neun')
+    # #### Only leave the part of the solution between emin_grid < e < emax_grid 
+    ind_int = np.logical_and(e_vals <= emax_grid, e_vals >= emin_grid)
+    e_vals = e_vals[ind_int]
+    dNe_deds = dNe_deds[:, ind_int]
+    #### and evaluate the values on the IBS grid previously obtained:dNe_de_IBS, e_vals
+    interp_x = interp1d(s_vals, dNe_deds, axis=0, kind='linear', fill_value='extrapolate')
+    dNe_deds_IBS = interp_x(s_)
+    dNe_deds_IBS[dNe_deds_IBS <= 0] = np.min(dNe_deds_IBS[dNe_deds_IBS>0]) / 3.14
+    
+    return dNe_deds_IBS, e_vals
+
 def evolved_e_nonstat_1zone(t_start, t_stop,  
                             q_func, edot_func, 
                           init='stat',
@@ -267,9 +457,10 @@ def evolved_e_nonstat_1zone(t_start, t_stop,
     e_grid : 1d-array, optional
         The energy grid to calculate the evolution on. The default is None.
     emin : float, optional
-        If e_grid is not set, this is used as the maximum energy. The default is 1e9.
+        If e_grid is not set, this is used as the energy grid minimum 
+        (but see `coef_down`). The default is 1e9.
     emax : float, optional
-        If e_grid is not set, this is used as the minimum energy OF INTEREST. The default is 5.1e14.
+        If e_grid is not set, this is used as the energy grid maximum. The default is 5.1e14.
     coef_down : float, optional
         If e_grid is not set, this is used to calculate the REAL minimum
         energy: emin_real = emin/coef_down. The default is 10.
@@ -283,12 +474,12 @@ def evolved_e_nonstat_1zone(t_start, t_stop,
         If adaptive_dt=True, this is treated as the critical relative error
         to increase a time step dt. Should be < eps_big (not forced).
         The default is 1e-3.
-    dt_min : floor, optional
+    dt_min : float, optional
         If adaptive_dt=True, this is treated as the floor for a time step dt.
         Should be < dt_max (not forced).
           If adaptive_dt=False, this is the constant time step.
             The default is 1e-2*DAY.
-    dt_max : floor, optional
+    dt_max : float, optional
         If adaptive_dt=True, this is treated as the ceiling for a time step dt.
          Should be > dt_min (not forced). The default is 5*DAY.
     dt_first : float, optional
@@ -304,7 +495,8 @@ def evolved_e_nonstat_1zone(t_start, t_stop,
     Raises
     ------
     ValueError
-        DESCRIPTION.
+        if the initial spectrum (e, n0) is not reognized
+        as having a required form.
 
     Returns
     -------
@@ -320,6 +512,7 @@ def evolved_e_nonstat_1zone(t_start, t_stop,
         average cooling function at each time step (on energy bins EDGES).
     q_avg : np. 2d-array 
         average injection function at each time step (on energy bins EDGES).
+    Sorryyyyyyyy for the mess with edges and centres of energy bins.
 
     """
     if e_grid is None:
@@ -434,6 +627,80 @@ def evolved_e(cooling, r_SP, ss, rs, thetas, edot_func, f_inject_func,
               tot_loss_args, f_args, vel_func = None, v_args = None, emin = 1e9, 
               emax = 5.1e14, t_func = None, t_args = None, eta_flow_func = None, 
               eta_flow_args = None):
+    """
+    The function previously used to calculate the electron spectrum on the IBS
+    taking into account cooling, providing a single interface (and by the interface 
+    I mean this function) fot various cooling modes which are possible. But the initial
+    idea was that it requires only the necessary parameters, because you don't have
+    to know much about the IBS and winds actually.
+
+    Parameters
+    ----------
+    cooling : str
+        A string describing the cooling mode. It can be:
+        - 'no' -- no cooling, the electron spectrum is just the injected one
+        - 'stat_apex' -- stationary cooling, but the injection function is averaged
+          over the IBS (i.e. f_inject(s, e) --> <f_inject(e)>_s )
+        - 'stat_ibs' -- stationary cooling, the injection function is not averaged
+          over the IBS (i.e. f_inject(s, e) is used as is)
+        - 'stat_mimic' -- stationary cooling, the injection function is not averaged
+          over the IBS (i.e. f_inject(s, e) is used as is), but the adiabatic losses are
+          mimicked by increasing the radiative losses
+        - 'leak_apex' -- stationary cooling with leakage, the same meaning as 
+            with stat_apex
+        - 'leak_ibs' -- stationary cooling with leakage, the same meaning as 
+            with stat_ibs
+        - 'leak_mimic' -- stationary cooling with leakage, the same meaning as 
+            with stat_mimic but the leakage time is mimicked
+        - 'adv' -- stationary cooling with advection, the injection function is not
+          averaged over the IBS (i.e. f_inject(s, e) is used as is); the solution
+          of  the advection equation is obtained with the finite-difference method. 
+    r_SP : float
+        Binary separation [cm].
+    ss : np.array of shape (Ns,)
+        An array of positions along the IBS in units of r_SP.
+    rs : np.array of shape (Ns,)
+        An array of distances from the pulsar to the IBS in units of r_SP.
+    thetas : np.array of shape (Ns,)
+        An array of angles between the line of centers and the direction
+        from the pulsar to the IBS in radians.
+    edot_func : callable of signature edot_func(s, e, *tot_loss_args)
+        A total energy loss function dE/dt [eV/s] for a single electron.
+    f_inject_func : callable of signature f_inject_func(s, e, *f_args)
+        An injection function dNdot/dsde [1/s/cm/eV].
+    tot_loss_args : tuple
+        Optional arguments for edot_func.
+    f_args : tuple
+        Optional arguments for f_inject_func.
+    vel_func : callable, of signature vel_func(s, *v_args),  optional
+        A bulk motion velocity along the IBS [cm/s]. If cooling != 'adv',
+          vel_func is not used. The default is None.
+    v_args : tuple, optional
+        Optional argumetns for vel_func. The default is None.
+    emin : float, optional
+        Energy grid minimum. The default is 1e9.
+    emax : float, optional
+        Energy grid maximum. The default is 5.1e14.
+    t_func : callable of signature t_func(s, e, *t_args). 
+        A leakage time function T [s] for a single electron.
+        The default is None.
+    t_args : tuple, optional
+        Optional arguments for t_func. The default is None.
+    eta_flow_func : callable, of signature eta_flow_func(s, *eta_flow_args),
+      optional
+        Eta_ad for stat_mimic. The default is None.
+    eta_flow_args : tuple, optional
+        Optional arguments for eta_flow_func. The default is None.
+
+    Returns
+    -------
+    dNe_de_IBS : np.ndarray of shape (Ns, Ne)
+        The electron spectra dNedot/deds on the grid s_ and on a grid of energies
+        between emin and emax.
+    e_vals : np.ndarray of shape (Ne,)
+        The electron energy grid on which the solution is provided.
+
+    """
     if cooling not in ('no', 'stat_apex', 'stat_ibs', 'stat_mimic', 'leak_apex', 'leak_ibs',
                        'leak_mimic', 'adv'):
         print('cooling should be one of these options:')
@@ -454,8 +721,6 @@ def evolved_e(cooling, r_SP, ss, rs, thetas, edot_func, f_inject_func,
         smesh, emesh = np.meshgrid(ss*r_SP, e_vals, indexing = 'ij')
         if cooling == 'stat_mimic':
             (B0, Topt, Ropt, r_SE, eta_fl, eta_sy, eta_ic, ss, rs, thetas, r_SP) = tot_loss_args
-            # if eta_flow_func == None:
-            #     eta_flow_func = eta_flow_mimic
             eta_fl_new = eta_flow_func(smesh, *eta_flow_args)
             tot_loss_args = (B0, Topt, Ropt, r_SE, eta_fl_new * eta_fl,
                                  eta_sy, eta_ic, ss, rs, thetas, r_SP)    
@@ -463,7 +728,6 @@ def evolved_e(cooling, r_SP, ss, rs, thetas, edot_func, f_inject_func,
         edots_se = edot_func(smesh, emesh, *tot_loss_args)
         dNe_de_IBS = np.zeros((ss.size, e_vals.size))
                 
-            # edots_se = edot_func(smesh, emesh, *tot_loss_args_new)
         for i_s in range(ss.size):
             if cooling == 'stat_apex':
                 f_inj_av = trapezoid(f_inj_se, ss, axis=0) / np.max(ss)
@@ -478,9 +742,6 @@ def evolved_e(cooling, r_SP, ss, rs, thetas, edot_func, f_inject_func,
         edots_se = edot_func(smesh, emesh, *tot_loss_args)
         dNe_de_IBS = np.zeros((ss.size, e_vals.size))
         ts_leak = t_func(smesh, emesh, *t_args)
-        # f_inj_integr = trapezoid(f_inj_se, e_vals, axis=1)
-        # Ntot_s = analyt_adv_Ntot_tomimic(smesh, emesh, f_inj_func = f_inject_func,
-        #             f_inj_args = f_args, dorb=r_SP, s_max_g=4, Gamma=Gamma)
 
         for i_s in range(ss.size):
             if cooling == 'leak_ibs':
@@ -499,56 +760,154 @@ def evolved_e(cooling, r_SP, ss, rs, thetas, edot_func, f_inject_func,
                     Ts = ts_leak[i_s, :], mode = 'analyt') 
         
     if cooling == 'adv':
-        dNe_de_IBS, e_vals = evolved_e_advection(r_SP, ss, edot_func,
-                    f_inject_func, tot_loss_args, f_args, vel_func, v_args)
+        dNe_de_IBS, e_vals = evolved_e_advection(s_ = ss*r_SP, edot_func=edot_func,
+                    f_inject_func=f_inject_func, tot_loss_args=tot_loss_args,
+                      f_args=f_args, vel_func=vel_func, v_args=v_args,
+                      emin_grid=emin, emax_grid=emax)
             
     return dNe_de_IBS, e_vals
     
 class ElectronsOnIBS: #!!!
     """
-    A class representing the electrons on the IBS.
-    
-    Attributes
+    Electron injection and cooling on the intrabinary shock (IBS).
+
+    This class builds and evolves the electron distribution on a single IBS
+    snapshot (given by an :class:`IBS` instance) using several cooling models.
+    It provides injection profiles in energy and along the shock, radiative and
+    adiabatic loss rates, optional leakage/advection mimics, and solvers for
+    stationary/leaky/advection cases. Energies are in eV, lengths in cm, and
+    times in seconds. The supplied ``ibs`` must already be initialized with a
+    valid ``winds`` (and thus an ``orbit``, so it should be ibs:IBS, not
+    ibs:IBS_norm). 
+
+    Parameters
     ----------
     Bp_apex : float
-        pulsar magn field in apex.
-    u_g_apex : float
-        photon energy density in apex.
+        Pulsar magnetic field at the apex [G].
     ibs : IBS
-        must contain ibs.winds. Should be dimentionless (not rescaled) and in 
-        natural coordinates (not rotated) !!!
-    to_inject_e : str, optional
-        injection function along energies. Either 'pl' or 'ecpl'.
-        The default is 'ecpl'.
-    to_inject_theta : str, optional
-        injection function along theta. Either '2d' or '3d'. 
-        The default is '3d'.
+        IBS geometry at a chosen epoch (must have ``ibs.winds`` with an
+        attached ``orbit``). Used for arc-length grid, angles, gamma,
+        and distances needed by losses. 
+    cooling : {'no', 'stat_apex', 'stat_ibs', 'stat_mimic',
+               'leak_apex', 'leak_ibs', 'leak_mimic', 'adv'} or None, optional
+        Cooling/evolution mode. If not in the set above, it falls back to
+        ``'no'`` at runtime. See *Notes* for meanings. Default is None.
+    to_inject_e : {'pl', 'ecpl', 'secpl'}, optional
+        Energy part of the injection law: power law, exponential cutoff PL,
+        or super-exponential cutoff PL. Default 'ecpl'.
+    to_inject_theta : {'2d', '3d'}, optional
+        Angular weighting along the curve: uniform ('2d') or ∝ sinθ ('3d').
+        Default '3d'. (You can also restrict to |θ| < ``where_cut_theta``.)
     ecut : float, optional
-        injection function cutoff energy. The default is 10^12 eV.
+        Cutoff energy for 'ecpl'/'secpl' [eV]. Default 1e12.
     p_e : float, optional
-        injection function spectral index. The default is 2..
+        Injection spectral index. Default 2.0.
     norm_e : float, optional
-        injection function normalization. The default is 1..
+        Injection normalization (particles/s). The angular–energy–integrated
+        rate in the **forward hemisphere of one horn** equals ``norm_e/4``.
+        Default 1e37.
+    beta_e : float, optional
+        Super-exponential index for 'secpl'. Default 1.
     Bs_apex : float, optional
-        opt star magn field in apex. The default is 0..
-    eta_a : float, optional
-        to scale adiabatic time. The default is 1..
-    eta_syn : float, optional
-        to scale synchrotron losses. The default is 1..
-    eta_ic : float, optional
-        to scale inverse compton losses. The default is 1.
-    emin : float, optional
-        minimum energy for the injection function. The default is 1e9.
-    emax : float, optional
-        maximum energy for the injection function. The default is 5.1e14.
+        Stellar magnetic field at the apex [G]. Default 0.
+    eta_a : float or None, optional
+        Adiabatic-time scale factor. If None, set internally to 1e20 which
+        effectively **disables** the adiabatic term in losses. Default None.
+    eta_syn, eta_ic : float, optional
+        Multipliers for synchrotron and inverse-Compton losses. Defaults 1.0.
+    emin, emax : float, optional
+        Injection energy bounds used for optional cutting [eV]. Defaults
+        1e9 and 5.1e14.
+    emin_grid, emax_grid : float, optional
+        Energy range for the solver grids [eV]. Defaults 1e8 and 5.1e14.
     to_cut_e : bool, optional
-        whether to leave only the part emin < e < emax. The default is True.
+        If True, set injection to zero outside [``emin``, ``emax``]. Default True.
     to_cut_theta : bool, optional
-        whether to inject only at theta < where_cut_theta. The default is False.
+        If True, inject only for |θ| < ``where_cut_theta``. Default False.
     where_cut_theta : float, optional
-        see above. The default is pi/2.
-    
-"""
+        Angular cut (radians) if ``to_cut_theta`` is True. Default π/2.
+
+    Attributes
+    ----------
+    ibs : IBS
+        The supplied IBS snapshot; used for s-grid, θ(s), r(s), and γ(s).
+    orbit : Orbit
+        Attached via ``ibs.winds.orbit`` (validated at init).
+    r_sp : float
+        Star–pulsar separation at the IBS epoch [cm].
+    Bp_apex, Bs_apex, B_apex : float
+        Magnetic fields at the apex [G]; ``B_apex = Bp_apex + Bs_apex``.
+    eta_a, eta_syn, eta_ic : float
+        Coefficients controlling adiabatic, synchrotron, and IC losses.
+        Note that is cooling==`stat_mimic`, ``eta_a`` is scaled along the IBS.
+    u_g_apex : float
+        Stellar photon energy density at the apex [erg/cm^3].
+    _b, _u : ndarray, shape (Ns,)
+        Dimensionless B(s)/B_apex and u(s)/u_apex along the IBS points.
+    _b_mid, _u_mid : ndarray, shape (Ns-1,)
+        Same as above at segment midpoints.
+    dNe_deds_IBS : ndarray or None, shape (Ns, Ne)
+        Electron distribution per (s, E) after :meth:`calculate` [1/s/cm/eV].
+    e_vals : ndarray or None, shape (Ne,)
+        Energy grid corresponding to ``dNe_deds_IBS`` [eV].
+    e2dNe_deds_IBS : ndarray or None, shape (Ns, Ne)
+        Convenience SED array ``E^2 dN/(dE ds)``.
+    dNe_deds_mid : ndarray or None, shape (Ns-1, Ne)
+        Distribution at segment midpoints.
+    dNe_ds_mid : ndarray or None, shape (Ns-1,)
+        Number per unit s at midpoints, integrated over energy [1/s/cm].
+    dNe_de_mid : ndarray or None, shape (Ns-1, Ne)
+        Per-segment spectra, i.e. ``(dN/dEds) * ds`` [1/s/eV].
+
+    Methods
+    -------
+    calculate(to_return=False)
+        Build the electron distribution on the IBS according to ``cooling``;
+        mirrors one horn to the full two-horn array. Optionally returns
+        both the distribution and its energy grid.
+    f_inject(s_, e_, spat_coord='s')
+        Injection law in (s, E). Supports 's' or 'theta' as the spatial density.
+    edot(s_, e_)
+        Total electron energy loss rate dE/dt at (s, E) including synchrotron,
+        IC, and optional adiabatic term.
+    vel(s)
+        Bulk flow speed along the IBS from the γ(s) profile.
+    b_and_u_s(s_)
+        Dimensionless B(s)/B_apex and u(s)/u_apex at given arc-length(s).
+    u_g_density(r_from_s)
+        Stellar photon energy density at a distance from the star.
+    t_leakage(s, e)
+        Leakage time T(s, E) used to mimic advection solutions.
+    eta_flow_mimic(s)
+        Position-dependent adiabatic factor used in 'stat_mimic' and tests.
+    analyt_adv_Ntot_self : property
+        Total number of electrons along the **upper** horn (integrated over E).
+    analyt_adv_Ntot(s_1d, f_inj_integrated)
+        Integral form for N_tot(s) given ∫ f_inject(s,E) dE.
+    peek(ax=None, to_label=True, show_many=True, **kwargs)
+        Quick-look plots of E-SEDs, s·N(s), and apex cooling time.
+
+    Notes
+    -----
+    **Cooling modes**
+      - ``'no'`` : no cooling; distribution equals the injected one.
+      - ``'stat_apex'`` : stationary; uses an IBS-averaged injection and apex losses.
+      - ``'stat_ibs'`` : stationary; uses local injection and local losses.
+      - ``'stat_mimic'`` : stationary; like 'stat_ibs' but scales adiabatic term
+        via :meth:`eta_flow_mimic` to emulate advection. 
+      - ``'leak_apex'`` / ``'leak_ibs'`` / ``'leak_mimic'`` : stationary with
+        leakage term T(s,E) from :meth:`t_leakage`; 'apex' uses averaged injection,
+        others use local. 'mimic' uses the same leakage form as 'ibs' but is
+        intended to approximate advective escape.
+      - ``'adv'`` : finite-difference solution of the advection–cooling transport
+        equation along s (uses ``evolved_e_advection``).
+
+    Adiabatic loss handling
+        If ``eta_a`` is very large (≳1e10) the adiabatic loss term is effectively
+        disabled in :func:`total_loss`. Setting ``eta_a=None`` at init enforces
+        this behavior. 
+
+    """
     def __init__(self, Bp_apex, ibs: IBS, cooling=None, to_inject_e = 'ecpl',
                  to_inject_theta = '3d', 
                  ecut = 1.e12, p_e = 2., norm_e = 1.e37, beta_e=1,
@@ -561,7 +920,8 @@ class ElectronsOnIBS: #!!!
                  where_cut_theta = pi/2):
         """
         We should provide the already initialized class ibs:IBS here with 
-        winds:Winds and orbit:Orbit in it. Probably we should fix 
+        winds:Winds and orbit:Orbit in it. But the logic is a little off here:
+            Probably we should fix 
         it sometime to set magn and photon fileds and r_sp in a more general 
         way (maybe define a class like: `B & u properties`, idk).
         
@@ -621,31 +981,29 @@ class ElectronsOnIBS: #!!!
             self.r_sp = self.ibs.winds.orbit.r(self.ibs.t_forbeta)
         except:
             raise ValueError(""""Your ibs:IBS should contain ibs.winds""")
-                             
-    # def b_and_u_s(self, s_):
-    #     r_to_p = self.ibs.s_interp(s_ = s_ / self.r_sp, what = 'r') # dimless
-    #     r_to_s = self.ibs.s_interp(s_ = s_ / self.r_sp, what = 'r1') # dimless
-    #     r_sa = (1. - self.ibs.x_apex)
-    #     B_on_shock = (self.Bp_apex * self.ibs.x_apex / r_to_p + 
-    #                   self.Bs_apex * r_sa / r_to_s)
-    #     u_g_on_shock = r_sa**2 / r_to_s**2
-    #     # return B_on_shock / (self.B_apex), u_g_on_shock
-    #     return r_to_p, r_to_s
+
     def b_and_u_s(self, s_):
         """
-        
+        Calculates dimensionless magnetic field and photon energy density
+        on the IBS at the position s_ (in cm) from the apex, in units
+        of the values in the apex. Explicitly uses that both magnetic
+        fields from the star and from the pulsar scale as 1/r, while the
+        photon energy density scales as 1/r^2.
 
         Parameters
         ----------
-        s_ : TYPE
+        s_ : np.ndarray
+            The position(s) along the IBS from the apex
             in cm.
 
         Returns
         -------
-        TYPE
-            DESCRIPTION.
-        u_g_on_shock : TYPE
-            DESCRIPTION.
+        b_on_shock : np.ndarray
+            The magnetic field on the IBS at the position s_,
+            in units of the magnetic field in the apex.
+        u_g_on_shock : np.ndarray
+            The photon energy density on the IBS at the position s_,
+            in units of the photon energy density in the apex.
 
         """
         # f_ =  self.ibs.f_
@@ -655,9 +1013,7 @@ class ElectronsOnIBS: #!!!
         B_on_shock = (self.Bp_apex * self.ibs.ibs_n.x_apex / r_to_p + 
                       self.Bs_apex * r_sa / r_to_s)
         u_g_on_shock = r_sa**2 / r_to_s**2
-        return B_on_shock / (self.B_apex), u_g_on_shock
-        # return r_to_p, r_to_s
-    
+        return B_on_shock / (self.B_apex), u_g_on_shock    
     
     def u_g_density(self, r_from_s):      
         """
@@ -679,6 +1035,15 @@ class ElectronsOnIBS: #!!!
         return u_dens
     
     def _set_b_and_u_ibs(self):
+        """
+        Sets the dimensionless magnetic field and photon energy density
+        on the IBS at all points (on the grid self.ibs.s) in the attributes
+        self._b and self._u, respectively. Also sets the photon energy density
+        in the apex in the attribute self.u_g_apex. Also sets the dimensionless
+        magnetic field and photon energy density on the IBS at the midpoints
+        of the grid self.ibs.s in the attributes self._b_mid and self._u_mid,
+        respectively.
+        """
         b_onibs, u_onibs = ElectronsOnIBS.b_and_u_s(self, s_ = self.ibs.s)
         b_mid, u_mid = ElectronsOnIBS.b_and_u_s(self, s_ = self.ibs.s_mid)
         
@@ -694,21 +1059,41 @@ class ElectronsOnIBS: #!!!
     def vel(self, s): # s --- in real units
         """
         Velocity of a bulk motion along the shock.    
-    
+        Calculated from the bulk motion Lorentz factor.
+
         Parameters
         ----------
         s : np.ndarray
             The arclength from the apex to the point of interest [cm].
         Returns
         -------
+        v : np.ndarray
         The velocity [cm/s].
     
         """
         _gammas = self.ibs.gma(s)
-        return C_LIGHT * beta_from_g(_gammas)
+        return C_LIGHT * (beta_from_g(_gammas) + 1e-5)
 
 
     def edot(self, s_, e_): 
+        """
+        The total energy loss function dE/dt [eV/s] for a single electron
+        at the position s_ (in cm) from the apex and with energy e_ (in eV).
+
+        Parameters
+        ----------
+        s_ : np.ndarray with the shape matching e_.
+            The position(s) along the IBS from the apex [cm].
+        e_ : np.ndarray with the shape matching s_.
+            The energy(ies) of electrons [eV].
+
+        Returns
+        -------
+        np.ndarray with the shape matching s_ and e_.
+            The total energy loss function dE/dt [eV/s] for a single electron
+            at the position s_ from the apex and with energy e_.
+
+        """
         r_sa_cm = (self.r_sp - self.ibs.x_apex)
         _b_s, _u_s = ElectronsOnIBS.b_and_u_s(self, s_ = s_)
         return total_loss(ee = e_, 
@@ -721,9 +1106,38 @@ class ElectronsOnIBS: #!!!
                           eta_IC = self.eta_ic * _u_s)
 
     def f_inject(self, s_, e_, spat_coord='s'): 
-        """ 
+        """
+        An injection function at the position s_ (in cm)
+        from the apex and with energy e_ (in eV).
         Essentially it is (d N_injected / dt ) / de / d spatial_coord
         where spatial_coord is eitehr theta or s.
+        The function is normalized to self.norm_e: the total number
+        of injected particles per second in the forward hemisphere
+        in one horn of the IBS is self.norm_e / 4.
+
+        Parameters
+        ----------
+        s_ : np.ndarray strictly of the shape (Ns, Ne)
+            An arclength to the points on IBS from the apex [cm].
+        e_ : np.ndarray strictly of the shape (Ns, Ne)
+            Energies of electrons [eV].
+        spat_coord : string, optional
+            The spatial coordinate in which the injection function
+            is expressed. It can be either 's' or 'theta'.
+            The default is 's'.
+
+        Raises
+        ------
+        ValueError
+            If to_inject_theta or to_inject_e or spat_coord
+            are not recognized or if the shapes of s_ and e_ do not match.
+
+        Returns
+        -------
+        np.ndarray of the shape (Ns, Ne)
+            The injection function at the position s_ from the apex
+            and with energy e_.
+
         """
         if s_.shape != e_.shape:
             raise ValueError('in f_inject, `s`-shape should be == `e`-shape')
@@ -731,10 +1145,10 @@ class ElectronsOnIBS: #!!!
         
         # print(thetas_here)
         if self.to_inject_theta == '2d':
-            integral_over_theta_quater = pi/2.
+            integral_over_theta_quarter = pi/2.
             thetas_part = np.ones(thetas_here.shape) # uniform along theta
         elif self.to_inject_theta == '3d':
-            integral_over_theta_quater = 1.
+            integral_over_theta_quarter = 1.
             thetas_part = np.abs(sin(thetas_here)) # \propto sin(th) how it should be in 3d
         else:
             raise ValueError("I don't know this to_inject_theta. It should be 2d, 3d.")
@@ -751,20 +1165,21 @@ class ElectronsOnIBS: #!!!
                           beta_e = self.beta_e)
         else:
             raise ValueError("I don't know this to_inject_e. It should be pl or ecpl or secpl.")
-            
-        result = thetas_part * e_part 
-        
+                    
         if self.to_cut_e:
             mask = (e_ < self.emin) | (e_ > self.emax)
-            result = np.where(mask, 0.0, result)
-            
+            e_part = np.where(mask, 0.0, e_part)
+        
+        integral_over_e = trapz_loglog(e_part[0, :], e_[0, :])  
+        result = thetas_part * e_part 
+    
         # now normalize the number of injected particles. I do it like this:
         # I ensure that the total number per second: N(s) = \int n(s, E) dE 
         # of electrons in  ONE horm in the forward hemisphere = 1/4 from norm:
-        # 2 pi \int_0^{pi/2} N(s(theta)) d theta = norm / 2
-
-        integral_over_e = trapezoid(e_part[0, :], e_[0, :])        
-        overall_coef = self.norm_e / 4. / integral_over_e / integral_over_theta_quater 
+        # \int_0^{pi/2} N(s(theta)) d theta = norm / 4
+              
+        # print(integral_over_e)
+        overall_coef = self.norm_e / 4. / integral_over_e / integral_over_theta_quarter 
         result = result * overall_coef
         ### what we have here is dNdot / de d theta. If we want 
         ### dNdot / de / ds, we do additional:
@@ -785,20 +1200,88 @@ class ElectronsOnIBS: #!!!
     #     f_integrated = trapezoid(f_, e, axis=1)
     #     x__ = _ga*s[:, 0] / self.ibs.s_max_g / self.r_sp
     #     return f_integrated * self.r_sp / C_LIGHT * self.s_max_g/_ga * (2 * x__ + x__**2)**0.5
+    @property
+    def analyt_adv_Ntot_self(self):
+        """
+        Analytically calculated the total number of electrons
+        on the IBS horn, i.e. integrated over energies. If 
+        f1(s) = \int f_inject(s, e) de, then
+        Ntot(s) = \int_0^s f1(s') / v(s') ds', where v(s) is the bulk
+        motion velocity along the IBS.
+
+        Returns
+        -------
+        np.ndarray of shape (Ns,)
+            The total number of electrons in a point
+              on the IBS.
+
+        """
+        s_1d_dim = np.linspace(0, np.max(self.ibs.s[self._up] ) * 1.02, 241)
+        e_vals = loggrid(self.emin_grid, self.emax_grid, 201)
+        ss_, ee_ = np.meshgrid(s_1d_dim, e_vals, indexing='ij')
+        f_se = ElectronsOnIBS.f_inject(self, ss_, ee_)
+        f_s = trapz_loglog(f_se, e_vals, axis=1)
+        v_ = C_LIGHT * (beta_from_g(self.ibs.gma(s_1d_dim)) + 1e-5)
+        res_ = cumulative_trapezoid(f_s/v_, s_1d_dim, initial=0)
+        spl_ = interp1d(s_1d_dim, res_)
+        return spl_(self.ibs.s[self._up])
+        
     
     def analyt_adv_Ntot(self, s_1d, f_inj_integrated):
-        ### s [dimless] and f_inj_integrated --- 1-dimensional
-        gammas = self.ibs.ibs_n.gma(s = s_1d)
-        betas = beta_from_g(gammas)
-        res = cumulative_trapezoid(f_inj_integrated / betas, s_1d, initial=0) / C_LIGHT
+        """
+        The total number of electrons on the IBS at
+        the arclength s_1d (in cm) from the apex,
+        given the injection function integrated over energies
+        f_inj_integrated (in 1/s/cm), i.e.
+        f_inj_integrated(s) = \int f_inject(s, e) de.
+        If f1(s) = \int f_inject(s, e) de, then
+        Ntot(s) = \int_0^s f1(s') / v(s') ds', where v(s) is the bulk
+        motion velocity along the IBS.
+
+        Parameters
+        ----------
+        s_1d : float | np.ndarray (i think?..)
+            Arclength from the apex to the point of interest [cm].
+        f_inj_integrated : np.ndarray of shape (Ns,)
+            The e-integrated injection function at the points s_1d [1/s/cm].
+
+        Returns
+        -------
+        res : np.ndarray of shape (Ns,)
+            N_tot(s_1d).
+
+        """
+        ### s [cm] and f_inj_integrated --- 1-dimensional
+        gammas = self.ibs.gma(s = s_1d)
+        vs_ = beta_from_g(gammas) * C_LIGHT
+        res = cumulative_trapezoid(f_inj_integrated / vs_, s_1d, initial=0)
         return res
     
     def t_leakage(self, s, e):
-        ### s [cm], e[eV]
+        """
+        The leakage time function T [s] for a single electron
+        as to simulate the advection equation. Defined as
+        Ntot(s) / v(s) / (dNtot/ds), where Ntot(s) is the total number
+        of electrons on the IBS horn at the arclength s from the apex,
+        and v(s) is the bulk motion velocity along the IBS.
+
+        Parameters
+        ----------
+        s : np.ndarray with the shape matching e
+            Arclength from the apex to the point of interest [cm].
+        e : np.ndarray with the shape matching s
+            Electron energies [eV].
+
+        Returns
+        -------
+        np.ndarray with the shape matching s and e
+            T_leak_mimic(s, e) [s].
+
+        """
         f_ = ElectronsOnIBS.f_inject(self, s_=s, e_=e)
-        f_integrated = trapezoid(f_, e, axis=1)
+        f_integrated = trapz_loglog(f_, e, axis=1)
         _s_1d = s[:, 0] # in cm
-        Ntot = ElectronsOnIBS.analyt_adv_Ntot(self, s_1d = _s_1d / self.r_sp,
+        Ntot = ElectronsOnIBS.analyt_adv_Ntot(self, s_1d = _s_1d,
                                               f_inj_integrated = f_integrated)
         gammas = self.ibs.gma(s = _s_1d)
         betas = beta_from_g(gammas)
@@ -819,7 +1302,40 @@ class ElectronsOnIBS: #!!!
         res_[res_ < floor_eta_a_] = floor_eta_a_
         return res_
     
-    def calculate(self, to_return=False):
+    def calculate(self, to_return=False):        ### s [cm], e[eV]
+
+        """
+        Calculates the electron spectrum on the IBS.
+        Sets the attributes: 
+            self._f_inj (f_inj calculated at s_mesh x e_mesh),
+            self._edots (edot calculated at s_mesh x e_mesh),
+            self.dNe_deds_IBS (dNe/dsde calculated at s_mesh x e_mesh),
+            self.e_vals (energy grid),
+            self.dNe_deds_mid (same as dNe_deds_IBS but at midpoints of s-grid),
+            self.dNe_ds_mid (tot number of e at midpoints, 1/s/cm),
+            self.dNe_de_mid (e-spec for every segmens at midpoints, 1/s/eV).
+
+        Parameters
+        ----------
+        to_return : bool, optional
+            Whether to return dNe_deds_IBS_2horns and e_vals.
+              The default is False.
+
+        Raises
+        ------
+        ValueError
+            If `cooling` is not recognized.
+
+        Returns
+        -------
+        dNe_deds_IBS_2horns : np.ndarray of shape (Ns, Ne)
+            The electron spectra dNedot/deds on the grid self.ibs.s 
+            and on a grid of energies evals between emin_grid and emax_grid,
+            [1/s/cm/eV].
+        e_vals : TYPE
+            The grid of energies [eV].
+
+        """
         ### we use the symmetry of ibs: calculate dNe_de only for 1 horn
 
         s_1d_dim = self.ibs.s[self.ibs.n : 2*self.ibs.n] 
@@ -829,18 +1345,21 @@ class ElectronsOnIBS: #!!!
             print(self.allowed_coolings)
             print('setting cooling = \'no\'... ')
             self.cooling = 'no'
-        ndec_e = 101 if self.cooling in ('leak_apex', 'leak_ibs', 'leak_mimic') else 301
-        e_vals = loggrid(self.emin_grid, self.emax_grid, ndec_e)
-        smesh, emesh = np.meshgrid(s_1d_dim, e_vals, indexing = 'ij')
+        # ndec_e = 101 if self.cooling in ('leak_apex', 'leak_ibs', 'leak_mimic') else 301
+        
         if self.cooling == 'no':
+            e_vals = loggrid(self.emin_grid, self.emax_grid, 301)
+            smesh, emesh = np.meshgrid(s_1d_dim, e_vals, indexing = 'ij')
             # For each s, --> injected distributions_dimless
             dNe_deds_IBS = ElectronsOnIBS.f_inject(self, smesh, emesh)
             
         elif self.cooling in ('stat_apex', 'stat_ibs', 'stat_mimic'):
+            e_vals = loggrid(self.emin_grid, self.emax_grid, 303)
+            smesh, emesh = np.meshgrid(s_1d_dim, e_vals, indexing = 'ij')
             # For each s, --> stationary distribution
             if self.cooling == 'stat_mimic':
                 eta_fl_new = ElectronsOnIBS.eta_flow_mimic(self, smesh)
-                self.eta_a = eta_fl_new
+                self.eta_a = self.eta_a * eta_fl_new
                 
             f_inj_se = ElectronsOnIBS.f_inject(self, smesh, emesh)
             edots_se = ElectronsOnIBS.edot(self, smesh, emesh)
@@ -854,6 +1373,8 @@ class ElectronsOnIBS: #!!!
                     dNe_deds_IBS[i_s, :] = stat_distr(e_vals, f_inj_se[i_s, :], edots_se[i_s, :])
 
         elif self.cooling in ('leak_apex', 'leak_ibs', 'leak_mimic'):
+            e_vals = loggrid(self.emin_grid, self.emax_grid, 107)
+            smesh, emesh = np.meshgrid(s_1d_dim, e_vals, indexing = 'ij')
             if self.cooling == 'stat_mimic':
                 eta_fl_new = ElectronsOnIBS.eta_flow_mimic(self, smesh)
                 self.eta_a = eta_fl_new
@@ -889,13 +1410,16 @@ class ElectronsOnIBS: #!!!
                 edot_func=edot_func, f_inject_func=f_inject_func, 
                 tot_loss_args=(), f_args=(), vel_func=vel_func, v_args=(),
                 emin_grid=self.emin_grid, emax_grid=self.emax_grid)
+            smesh, emesh = np.meshgrid(s_1d_dim, e_vals, indexing = 'ij')
         else:
             raise ValueError('I don\'t know this `cooling`!')
 
-        # if there were 2 horns in ibs, we fill the 2nd horn with the values 
+        # we fill the 2nd horn with the values 
         # from the 1st horn
-        dNe_deds_IBS_2horns = np.zeros(((self.ibs.s).size, e_vals.size ))
-        dNe_deds_IBS_2horns[:self.ibs.n, :] = dNe_deds_IBS[::-1, :] # in reverse order from s=smax to ~0
+        self._f_inj = ElectronsOnIBS.f_inject(self, smesh, emesh)
+        self._edot = ElectronsOnIBS.edot(self, smesh, emesh)
+        dNe_deds_IBS_2horns = np.zeros((self.ibs.s.size, e_vals.size ))
+        dNe_deds_IBS_2horns[:self.ibs.n, :] = -dNe_deds_IBS[::-1, :] # in reverse order from s=smax to ~0
         dNe_deds_IBS_2horns[self.ibs.n : 2*self.ibs.n, :] = dNe_deds_IBS        
         
         self.dNe_deds_IBS = dNe_deds_IBS_2horns
@@ -907,19 +1431,87 @@ class ElectronsOnIBS: #!!!
         dNe_deds_p = dNe_deds_IBS_2horns[1:, :]
         dNe_deds_mid = 0.5 * (dNe_deds_m + dNe_deds_p)
         self.dNe_deds_mid = dNe_deds_mid
-        dNe_ds_mid = trapezoid(dNe_deds_mid, e_vals, axis=1) # shape=(s_mid.size)
+        dNe_ds_mid = trapz_loglog(dNe_deds_mid, e_vals, axis=1) # shape=(s_mid.size)
         dNe_de_mid = dNe_deds_mid * self.ibs.ds[:, None] # basically, trapezoid rule; shape=(s_mid.size, e_vals.size)
         self.dNe_ds_mid = dNe_ds_mid
-        self.dNe_de_mid = dNe_de_mid
+        self.dNe_de_mid = np.abs(dNe_de_mid)
         
         if to_return:
             return dNe_deds_IBS_2horns, e_vals
+        
+    @property
+    def _up(self):
+        """
+        Aux function for indexes on the upper IBS horn:
+            e.g. self.dNe_deds_IBS[self._up, :] gives you the dNe/dsde on
+            the upper horn (incl zero).
+        """
+        return np.where(self.ibs.theta >= 0)[0]
+    
+    @property
+    def _low(self):
+        """
+        Aux function for indexes on the lower IBS horn:
+            e.g. self.dNe_deds_IBS[self._low, :] gives you the dNe/dsde on
+            the lower horn (without zero).
+        """
+        return np.where(self.ibs.theta < 0)[0]
+
+    @property
+    def _up_mid(self):
+        """
+        Aux function for indexes on the upper IBS horn midpoints:
+            e.g. self.dNe_deds_mid[self._up_mid, :] gives you the dNe/dsde on
+            the upper horn midpoints (incl zero).
+        """
+        return np.where(self.ibs.theta_mid >= 0)[0]
+    
+    @property
+    def _low_mid(self):
+        """
+        Aux function for indexes on the lower IBS horn midpoints:
+            e.g. self.dNe_deds_mid[self._low_mid, :] gives you the dNe/dsde on
+            the lower horn midpoints (without zero).
+        """
+        return np.where(self.ibs.theta_mid < 0)[0]
+
+        
         
 
     def peek(self, ax=None, 
              to_label=True,
             show_many = True,
             **kwargs):
+        """
+        Quick look at the results of calculation.
+        Plots the electron SED at the apex-averaged (over s) and
+        at several positions on the IBS, and the total number of electrons
+        on the IBS horn as a function of arclength from the apex.
+        Also plots the cooling time at the apex as a function of energy.
+
+        Parameters
+        ----------
+        ax : ax object of pyplot, optional
+            Axis to draw on. Either None (then they are
+              created), or axes with at least 1 row and 3 columns.
+                The default is None.
+        to_label : bool, optional
+            Whether to show legends on axes 0 and 1. 
+            The default is True.
+        show_many : bool, optional
+            Whether to show e-SEDs for several points at the IBS
+            in addition to the IBS-averages e-SED.
+              The default is True.
+        **kwargs : 
+            additional arguments, used simultaneously 
+              on axes 0 and 1.
+
+        Raises
+        ------
+        ValueError
+            If the electron spectrum is not calculated yet.
+
+        """
     
         if ax is None:
             import matplotlib.pyplot as plt
@@ -929,7 +1521,7 @@ class ElectronsOnIBS: #!!!
             raise ValueError("You should call `calculate()` first to set dNe_deds_IBS and e_vals")
         
         
-        Ne_tot_s = trapezoid(self.dNe_deds_IBS, self.e_vals, axis=1)
+        Ne_tot_s = trapz_loglog(self.dNe_deds_IBS, self.e_vals, axis=1)
         e_sed_averageS = trapezoid(self.e2dNe_deds_IBS[self.ibs.n+1 : 2*self.ibs.n-1, :],
                 self.ibs.s[self.ibs.n+1 : 2*self.ibs.n-1], axis=0) / np.max(self.ibs.s)
 
@@ -981,9 +1573,139 @@ class ElectronsOnIBS: #!!!
         
 class NonstatElectronEvol: #!!!
     """
-    A class representing the non-stationary evolution of ultrarelativistic
-    electrons in one-zone model (this zone = apex of the IBS).
-"""
+    Time-dependent (non-stationary) one-zone electron evolution at the IBS apex.
+
+    This class evolves the electron energy distribution N(E, t) in a single
+    emission zone located at the intrabinary-shock (IBS) apex, using losses and
+    injection that depend on the binary phase via a supplied :class:`Winds`
+    model. It provides helpers to compute the instantaneous loss rate at the
+    apex, the injection spectrum, a stationary comparator, and the fully
+    time-evolved spectrum on a log-energy grid. Energies are in eV and times in
+    seconds. 
+
+    Parameters
+    ----------
+    winds : Winds
+        Wind/geometry model used to obtain apex distance, fields, and stellar
+        parameters as functions of time. 
+    t_start : float
+        Start time of the evolution window [s].
+    t_stop : float
+        Stop time of the evolution window [s].
+    n_t : int, optional
+        Nominal number of time samples (currently not used in the solver).
+        Default is 105. 
+    to_inject_e : {'ecpl', 'pl'}, optional
+        Injection law in energy: exponential cut-off power law ('ecpl') or
+        pure power law ('pl'). Default 'ecpl'. 
+    to_inject_theta : {'2d','3d'}, optional
+        Angular option placeholder (not used by the one-zone model). Default '3d'.
+    ecut : float, optional
+        Cut-off energy for 'ecpl' [eV]. Default 1e12.
+    p_e : float, optional
+        Injection spectral index. Default 2.0.
+    norm_e : float, optional
+        Injection normalization [1/s]. Default 1e37. The code renormalizes the
+        spectrum so that the integrated rate in the forward hemisphere equals
+        ``norm_e/2``. 
+    eta_a : float or None, optional
+        Adiabatic-timescale factor; if ``None`` it is set to a very large value
+        (≈1e20), effectively disabling the adiabatic term. Default 1.0. 
+    eta_syn, eta_ic : float, optional
+        Multipliers for synchrotron and inverse-Compton losses. Defaults 1.0.
+    emin, emax : float, optional
+        Injection energy bounds [eV]. Defaults 1e9 and 5.1e14.
+    to_cut_e : bool, optional
+        If True, injection is zeroed outside ``[emin, emax]``. Default True. 
+    emin_grid, emax_grid : float, optional
+        Energy range for the evolution grid [eV]. Defaults 3e8 and 6e14.
+    coef_down : float, optional
+        Energy-grid parameter defining e_min_grid=emin_feid/coef_down for 
+        the solver. Default 10. 
+    n_dec_e : int, optional
+        Points per decade for the log-energy grid. Default 35. 
+    init_distr : {'stat','zero'}, optional
+        Initial condition for N(E,t) at ``t_start``. Default 'stat'. 
+    eps_small, eps_big : float, optional
+        Relative tolerances controlling the adaptive stepping heuristics.
+        Defaults 1e-3 and 3e-3. 
+    adaptive_dt : bool, optional
+        Enable adaptive time-stepping. Default False. 
+    dt_min, dt_max : float, optional
+        Minimum/maximum allowed time steps [s]. Defaults 0.01*DAY and 5*DAY.
+    dt_first : float or None, optional
+        First time step [s]; if None, chosen automatically.
+
+    Attributes
+    ----------
+    t_start, t_stop : float
+        Evolution time window [s].
+    winds : Winds
+        The supplied winds model used for apex geometry/fields.
+    eta_a, eta_syn, eta_ic : float
+        Loss scaling parameters for adiabatic, synchrotron, and IC terms.
+    emin, emax : float
+        Injection band [eV]; applied if ``to_cut_e`` is True.
+    emin_grid, emax_grid : float
+        Energy range of the solver grid [eV].
+    n_dec_e, coef_down : int, float
+        Grid control parameters.
+    ts : ndarray, shape (nt,)
+        Time grid returned by the solver [s]. Set by :meth:`calculate`. 
+    e_edg : ndarray
+        Log-energy grid produced for the spectrum (treated as bin edges). Set by
+        :meth:`calculate`. 
+    e_c : ndarray, shape (ne,)
+        Energy grid corresponding to the spectra [eV]. Set by :meth:`calculate`.
+    dNe_des : ndarray, shape (nt, ne)
+        Time-dependent spectra :math:`\\mathrm{d}N/\\mathrm{d}E` [1/eV]. Set by
+        :meth:`calculate`. 
+    edots_avg, q_avg : ndarray, shape (nt, ne)
+        Time-averaged loss rates and injection used by the solver. Set by
+        :meth:`calculate`.
+    dn_de_spl, dnstat_de_spl : scipy.interpolate.interp1d
+        Interpolants that return :math:`\\mathrm{d}N/\\mathrm{d}E` at arbitrary
+        times for the non-stationary and stationary solutions, respectively.
+        Set by :meth:`calculate`. 
+    nstat : ndarray, shape (nt, ne)
+        Stationary comparator spectra at the same time grid. 
+
+    Methods
+    -------
+    edot_apex(e_, t_)
+        Total loss rate :math:`\\dot E(E,t)` at the apex (synchrotron + IC +
+        adiabatic). 
+    f_inject(e_, t_)
+        Injection spectrum :math:`Q(E,t)` (ECPL or PL) with optional energy cuts
+        and internal renormalization. 
+    stat_distr_at_time(t_, e_=None)
+        Stationary spectrum at a given time using instantaneous losses and
+        injection. 
+    calculate(to_return=False)
+        Run the non-stationary solver and populate grids/spectra. Optionally
+        return ``ts, e_bins, dNe_des``. 
+    dn_de(t), dnstat_de(t)
+        Interpolate non-stationary / stationary spectra at time(s) ``t``.
+    n_tot(t, emin=None, emax=None), nstat_tot(t, emin=None, emax=None)
+        Integrate spectra over an energy band to get total N(t). 
+
+    Notes
+    -----
+    * **Loss model.** The apex loss rate combines synchrotron, isotropic IC, and
+      an adiabatic term (with timescale ``t_ad = eta_a * d / c``), using
+      stellar parameters and apex distance from ``winds``. Signs follow the
+      convention that losses are negative. 
+    * **Adiabatic disabling.** Passing ``eta_a=None`` sets ``eta_a≈1e20`` inside
+      the class, effectively removing the adiabatic term. 
+    * **Grids.** The solver builds a log-energy grid over ``[emin_grid, emax_grid]``
+      with ``n_dec_e`` points per decade; time sampling may be adaptive between
+      ``dt_min`` and ``dt_max``. 
+    
+    Experimental. Currently cannot be used for the spec/LC calculation.
+    My God I'm tired of writing the docs...
+    All classes docstrings are ChatGPT-generated btw.
+    """
+
     def __init__(self, winds, t_start, t_stop, n_t=105, 
                      
     to_inject_e = 'ecpl',   # el_ev
@@ -1002,7 +1724,7 @@ class NonstatElectronEvol: #!!!
        
         self.t_start = t_start
         self.t_stop = t_stop
-        self.n_t = n_t
+        self.n_t = n_t # not used???
         self.winds = winds
 
         if eta_a  is None:
@@ -1049,6 +1771,22 @@ class NonstatElectronEvol: #!!!
         # self.t_grid = np.linspace(self.t_start, self.t_stop, self.n_t)
     
     def edot_apex(self, e_, t_): 
+        """
+        Energy loss rate in the emission zone [eV/s].
+
+        Parameters
+        ----------
+        e_ : np.ndarray
+            e-energy [eV].
+        t_ : float
+            time [s].
+
+        Returns
+        -------
+        np.ndarray
+            Edot(e_, t).
+
+        """
         r_sa = self.winds.dist_se_1d(t_)
         B_p_apex, B_s_apex = self.winds.magn_fields_apex(t_)
         return total_loss(ee = e_, 
@@ -1061,6 +1799,27 @@ class NonstatElectronEvol: #!!!
                           eta_IC = self.eta_ic)
 
     def f_inject(self, e_, t_): 
+        """
+        Injection function at the emission zone dNe/dtde [1/s/eV].
+
+        Parameters
+        ----------
+        e_ : np.ndarray
+            e-energy [eV].
+        t_ : float
+            time [s]. Currently not used, but can be.
+
+        Raises
+        ------
+        ValueError
+            If to_inject_e is not recognized.
+
+        Returns
+        -------
+        np.ndarray
+            f_inject(e_, t_) [1/s/eV].
+
+        """
 
         if self.to_inject_e == 'ecpl':
             e_part = ecpl(e_, ind=self.p_e, ecut=self.ecut, norm=1.)
@@ -1071,8 +1830,10 @@ class NonstatElectronEvol: #!!!
             
             
         ### if we assume that the `emission zone` is the forward hemisphere,
-        ### then the NUMBER of e don't change with time. The density changes,
-        ### of course
+        ### then the NUMBER of injected e don't change with time. 
+        ### We can include the t-dependence if we fugure out how to do so
+        ### in a meaningful way.
+        ### The density dNtot/ds changes, of course.
         
         result = e_part * self.norm_e 
         
@@ -1083,21 +1844,65 @@ class NonstatElectronEvol: #!!!
         # now normalize the number of injected particles. I do it like this:
         # I ensure that the total number per second: N(s) = \int n(s, E) dE 
         # of electrons is half the Normalization
-        N_total = trapezoid(result, e_)
+        N_total = trapz_loglog(result, e_)
         overall_coef = self.norm_e / 2 / N_total
         return result * overall_coef
     
     def stat_distr_at_time(self, t_, e_=None):
+        """
+        Stat e-spectrum at time t_, dNe/de [1/eV].
+
+        Parameters
+        ----------
+        t_ : float
+            time [s].
+        e_ : np.ndarray
+            e-energy [eV].
+
+        Returns
+        -------
+        np.ndarray
+            dNe/de(e_) |_{at t=t_}.
+
+        """
         if e_ is None:
             e_ = self.e_grid
         return stat_distr(Es = e_,  
                     Qs = NonstatElectronEvol.f_inject(self, e_, t_),
                     Edots = NonstatElectronEvol.edot_apex(self, e_, t_)
                              )
-    
-    
 
     def calculate(self, to_return=False):
+        """
+        Calculates the non-stationary evolution of the electron spectrum
+        at the emission zone. Sets the attributes:
+        self.e_edg --- energy bin edges for dNe_des. I think, if ne is the 
+        number of energy bins, then e_edg has the shape (ne+1,)
+        self.dNe_des (shape (nt, ne)) -- the electron spectrum dNe/de at times ts
+        self.ts (shape (nt,)) -- the time grid
+        self.edots_avg (shape (nt, ne)) -- edot averaged over the time steps
+        self.q_avg = (shape (nt, ne)) -- injection function averaged over the time steps
+        self.dn_de_spl -- interp1d object for dNe/de at arbitrary time
+        self.e_c = e_bins -- the energy grid for dNe_des
+        self.nstat (shape (nt, ne)) -- the stationary spectrum at times ts
+        self.dnstat_de_spl -- interp1d object for nstat at arbitrary time
+        
+        Parameters
+        ----------
+        to_return : bool, optional
+            Whether to return ts, e_bins, dNe_des.
+              The default is False.
+
+        Returns
+        -------
+        ts : np.array of shape (nt,)
+            The time grid [s].
+        e_bins : np.array of shape (ne,)
+            The energy grid [eV].
+        dNe_des : np.array of shape (nt, ne)
+            The electron spectrum dNe/de at times ts [1/eV].
+
+        """
         _edot_func = lambda e_, t_: NonstatElectronEvol.edot_apex(self, e_, t_)
         _q_func = lambda e_, t_:  NonstatElectronEvol.f_inject(self, e_, t_)
         
@@ -1142,31 +1947,106 @@ class NonstatElectronEvol: #!!!
             return ts, e_bins, dNe_des
         
     def dn_de(self, t):
+        """
+        E-spectrum at time t, dNe/de [1/eV].
+
+        Parameters
+        ----------
+        t : np.ndarray
+            Time [s].
+
+        Raises
+        ------
+        ValueError
+            If the electron spectrum is not calculated yet.
+
+        Returns
+        -------
+        np.ndarray
+            dNe/de |_{at t}.
+
+        """
         if self.dNe_des is None:
             raise ValueError('you should calculate() first')
         return self.dn_de_spl(t)
     
     def dnstat_de(self, t):
+        """
+        Stationary E-spectrum at time t, dNe/de [1/eV].
+
+        Parameters
+        ----------
+        t : np.ndarray
+            Time [s].
+
+        Raises
+        ------
+        ValueError
+            If the electron spectrum is not calculated yet.
+
+        Returns
+        -------
+        np.ndarray
+            dNe_stat/de|_{at t}.
+
+        """
         if self.dNe_des is None:
             raise ValueError('you should calculate() first')
         return self.dnstat_de_spl(t)
     
     
     def n_tot(self, t, emin=None, emax=None):
+        """
+        The total number of electrons at time t, N_tot,
+        between emin and emax.
+
+        Parameters
+        ----------
+        t : np.ndarray
+            Times [s].
+        emin : float, optional
+            Min energy, [eV]. The default is None.
+        emax : float, optional
+            Max energy, [eV]. The default is None.
+        Returns
+        -------
+        np.ndarray
+            Ntot(t).
+
+        """
         if emin is None:
             emin = self.emin
         if emax is None:
             emax = self.emax
         mask = np.logical_and(self.e_c >= emin, self.e_c <= emax)
-        return trapezoid(self.dn_de(t)[:, mask], self.e_c[mask], axis=1)
+        return trapz_loglog(self.dn_de(t)[:, mask], self.e_c[mask], axis=1)
 
     def nstat_tot(self, t, emin=None, emax=None):
+        """
+        The total number of electrons at time t, N_tot,
+        between emin and emax, for a stationary spectrum.
+
+        Parameters
+        ----------
+        t : np.ndarray
+            Times [s].
+        emin : float, optional
+            Min energy, [eV]. The default is None.
+        emax : float, optional
+            Max energy, [eV]. The default is None.
+        Returns
+        -------
+        np.ndarray
+            N_stat_tot(t).
+
+        """
         if emin is None:
             emin = self.emin
         if emax is None:
             emax = self.emax
         mask = np.logical_and(self.e_c >= emin, self.e_c <= emax)
-        return trapezoid(self.dnstat_de(t)[:, mask], self.e_c[mask], axis=1)
+        return trapz_loglog(self.dnstat_de(t)[:, mask], self.e_c[mask], axis=1)
+
     
     
     
@@ -1260,33 +2140,56 @@ if __name__ == "__main__":
               f_d=165, f_p=0.1, delta=0.02, np_disk=3, rad_prof='pl', r_trunk=None,
              height_exp=0.25)     
     
-    from ibsen.ibs import IBS
-    # from scipy.integrate import trapezoid
-    # fig, ax = plt.subplots(2, 1)
-    t = 15 * DAY
-    Nibs = 81
+
+    t = 0 * DAY
+    Nibs = 51
     ibs = IBS(winds=winds,
-              gamma_max=1.3,
-              s_max=1.,
-              s_max_g=1.,
+              gamma_max=1.8,
+              s_max=3.,
+              s_max_g=3.,
               n=Nibs,
               t_to_calculate_beta_eff=t) # the same IBS as before
     # ibs1.peek(show_winds=True, to_label=False, showtime=(-100*DAY, 100*DAY),
     #          ibs_color='doppler')
-    els = ElectronsOnIBS(Bp_apex=0.2, ibs=ibs, cooling='stat_mimic', eta_a = 1e20,
-                     to_inject_e = 'ecpl', emin=1e9, emax=5e13, emin_grid=3e8,
-                     p_e=1.8, ecut=5e12) 
-    els.calculate(to_return=False)
-    print('el_ev calculated')
-    # els.peek()
-    plt.plot(ibs.s_mid, els.dNe_de_mid[:, 10])
-    print(els.dNe_deds_mid.shape)
-    print(ibs.s_mid.shape)
-    
-    Ntot1 = trapezoid(els.dNe_deds_mid, ibs.s_mid, axis=0)
-    Ntot2 = trapezoid(Ntot1, els.e_vals)
-    print(Ntot2)
-    print(np.sum(trapezoid(els.dNe_de_mid, els.e_vals, axis=1)))
+    ### leak_mimic
+    # for emin_grid in (1e8, 3e8, 1e9):
+    fig, ax = plt.subplots(nrows=1, ncols=3)
+    for cooling in ('adv', 'leak_mimic', 'stat_ibs', 'stat_mimic'):
+        emin_grid=1e8
+        eta_a = 6 if cooling in ('stat_ibs', 'stat_mimic') else 1e20
+        els = ElectronsOnIBS(Bp_apex=1, ibs=ibs, cooling=cooling, eta_a = eta_a,
+                         to_inject_e = 'ecpl', emin=1e9, emax=1e13, emin_grid=emin_grid,
+                         emax_grid=1e14,
+                         p_e=1.8, ecut=5e12) 
+        
+        els.calculate(to_return=False)
+        # print('el_ev calculated')
+        els.peek(ax=ax, show_many=False)
+        # plt.plot(ibs.s_mid, els.dNe_de_mid[:, 10])
+        # print(els.dNe_deds_mid.shape)
+        # print(ibs.s_mid.shape)
+        # ax[1].plot(ibs.s[els._up], ibs.s[els._up]*els.analyt_adv_Ntot_self, label=cooling+' an')
+        # print(els._up_mid)
+        # plt.loglog(els.e_vals, els._f_inj[10, :])
+        # plt.loglog(els.e_vals, els._f_inj[Nibs-1, :], ls='--')
+        # plt.loglog(els.e_vals, els._f_inj[1, :], ls=':')
+        # cond_ = np.where(
+        #     np.logical_and(els.ibs.theta[els._up]>0, els.ibs.theta[els._up]<=pi/2)
+        #     )
+        # Ntot1 = trapezoid(els._f_inj, els.e_vals, axis=1)
+        # Ntot2 = trapezoid(Ntot1[cond_], els.ibs.s[cond_])
+        # print('1 = ', Ntot2*4)
+        # print('1 / 2 = ', Ntot2*4/els.norm_e)
+        
+        
+        # plt.plot(els.ibs.s[els._up], trapz_loglog(els._f_inj, els.e_vals, axis=1))
+        
+        # Ntot1 = 2*trapezoid(els.dNe_deds_mid[els._up_mid, :], ibs.s_mid[els._up_mid], axis=0)
+        # Ntot2 = trapz_loglog(Ntot1, els.e_vals)
+        plt.legend()
+        # print(Ntot2)
+        # print(np.sum(trapz_loglog(np.abs(els.dNe_de_mid), els.e_vals, axis=1)))
+        # plt.show()
     
     # plt.plot(els.ibs.s, els._b)
     # plt.plot(els.ibs.s, els._u)

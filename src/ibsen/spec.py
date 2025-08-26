@@ -19,6 +19,10 @@ import naima
 from naima.models import Synchrotron, InverseCompton
 
 sed_unit = u.erg / u.s / u.cm**2
+from astropy import constants as const
+
+EV_TO_ERG = float(const.e.value) * 1e7
+# print(EV_TO_ERG)
 
 def pl(x, p, norm):
     return norm * x**(-p)
@@ -597,7 +601,7 @@ class SpectrumIBS: #!!!
             ### Introduce an auxillary extended grid over photon energries.
             ### Coef `2` is empirically found to be OK for later interpolation.
             ndec_ = int(2 * E.size / np.log10(np.max(E) / np.min(E)))
-            E_ext = loggrid(np.min(E)/d_max/1.1, np.max(E)*d_max*1.1,
+            E_ext = loggrid(np.min(E)/d_max/1.16, np.max(E)*d_max*1.16,
                             ndec_)
         else:
             E_ext = E
@@ -607,7 +611,7 @@ class SpectrumIBS: #!!!
         # dNe_deds_m = dNe_deds_IBS[]
         # dNtot_ds = trapezoid(dNe_deds_IBS, e_vals, axis=1)
         # Navg = trapezoid(s_2horns * dNtot_ds, s_2horns) / (np.max(s_2horns)-np.min(s_2horns))
-        Ntot = trapezoid(dNe_ds_mid, s_2horns)
+        Ntot = 2*trapezoid(dNe_ds_mid[self.els._up_mid], s_2horns[self.els._up_mid])
         _n_norm_2horns = s_2horns * dNe_ds_mid / Ntot 
 
         gammas_2horns = self._ibs.g_mid
@@ -632,12 +636,6 @@ class SpectrumIBS: #!!!
                         n_scale_2horns=_n_norm_2horns,
                         lorentz_boost=self.lorentz_boost,
                         gammas_2horns=gammas_2horns) 
-                # if not self.apex_only:
-                # print(sed_s_sy.shape)
-                # print(s_2horns.shape)
-                # print(E_ext.shape)
-                # print(E.shape)
-                # print(dopls.shape)
                 
                 sed_sy, sed_s_sy = boost_sed_from_2horns(sed_s_e=sed_s_sy,
                     s_1d_2horns=s_2horns,
@@ -688,8 +686,11 @@ class SpectrumIBS: #!!!
                 
             else:
                 raise ValueError('I don\'t know this model. Try `Syn` or `IC`.' )
-        self.sed = sed_tot
-        self.sed_s = sed_s_
+                
+        ### now SEDs are in erg / s / cm2 
+        ### but e_ph is in eV
+        self.sed = fill_nans_1d(sed_tot)
+        self.sed_s = fill_nans(sed_s_)
         self.e_ph = E
         # self.sed_spl = interp1d(E, sed_tot)
         # print(self.sed)
@@ -697,38 +698,115 @@ class SpectrumIBS: #!!!
             return E, sed_tot, sed_s_
     
     
-    def flux(self, e1, e2):
-        # try:
-        #     sed_spl_ = self.sed_spl
-        # except:
-        #     raise ValueError('The specrum has not been set yet.')
+    def flux(self, e1, e2, epow=1):
+        """
+        Flux in the band [e1, e2]: flux = \int_e1^e2 e^epow dN/de de
+
+        Parameters
+        ----------
+        e1 : float
+            Lower energy [eV].
+        e2 : float
+            Upper energy [eV].
+        epow : float, optional
+            Which moment of dN/de to integrate. epow=0 gives the number of
+            photons in [e1, e2] [s^-1]. epow=1 gives flux [erg/s].
+            The default is 1.
+
+        Raises
+        ------
+        ValueError
+            If a spline cannot be calculated. For this, your spectrum should
+            be previously calculated at least for [e1/1.15, e2*1.15]
+
+        Returns
+        -------
+        float
+            Flux in the band [e1, e2]. More precisely, a moment of order epow
+            of the photon distribution dN/de.
+
+        """
+        
         try:
             _mask = np.logical_and(self.e_ph >= e1/1.15, self.e_ph < e2*1.15)
             _spl_sed_in_this_band = interp1d(self.e_ph[_mask], self.sed[_mask])
         except:
             raise ValueError('Cannot create a spline for flux calculation.')
-        _E = loggrid(e1, e2, n_dec = 59)
-        sed_here = _spl_sed_in_this_band(_E)
+        _E = loggrid(e1, e2, n_dec = 59) # eV
+        sed_here = _spl_sed_in_this_band(_E) # erg/s/cm^2 
         # return trapz_loglog(sed_here / _E, _E)
-        return trapezoid(sed_here / _E, _E)
+        return trapz_loglog(sed_here / _E**2 * _E**epow, _E) * EV_TO_ERG**(epow-1) # erg^epow /s/cm^2
 
             
     
-    def fluxes(self,  bands):
-        fluxes_ = []
-        for band in bands:
-            e1, e2 = band
-            fluxes_.append(SpectrumIBS.flux(self, e1, e2))
-        return np.array(fluxes_)
+    def fluxes(self, bands, epows=None):
+        """
+        Compute band fluxes for multiple (e1, e2) bands.
+    
+        Parameters
+        ----------
+        bands : iterable of (e1, e2)
+            Each element is a 2-tuple or 2-list with lower/upper energy.
+        epows : None | scalar | iterable of scalars
+            If None, use epow=1 for all bands.
+            If scalar, use that same epow for all bands.
+            If iterable, must have the same length as bands (per-band epow).
+    
+        Returns
+        -------
+        np.ndarray
+            One flux value per band, in the same order as input.
+        """
+        bands = list(bands)
+        n = len(bands)
+    
+        if epows is None:
+            epows_list = [1] * n
+        else:
+            # accept scalar epows or a sequence matching length of bands
+            try:
+                m = len(epows)  # sequence?
+            except TypeError:
+                epows_list = [epows] * n  # scalar -> repeat
+            else:
+                if m != n:
+                    raise ValueError("epows must be None, a scalar, or the same length as bands")
+                epows_list = list(epows)
+    
+        fluxes_ = [
+            SpectrumIBS.flux(self, e1, e2, epow=epow)
+            for (e1, e2), epow in zip(bands, epows_list)
+        ]
+        return np.asarray(fluxes_)
     
     def index(self, e1, e2):
-        # try:
-        #     sed_spl_ = self.sed_spl
-        # except:
-        #     raise ValueError('The specrum has not been set yet.')
+        """
+        Photon index of a spectrum dN/de. Fits a dN/de in a given range 
+        [e1, e2] with a powerlaw.
+
+        Parameters
+        ----------
+        e1 : float
+            Lower energy [eV].
+        e2 : float
+            Upper energy [eV].
+
+        Raises
+        ------
+        ValueError
+            If a spline cannot be calculated. For this, your spectrum should
+            be previously calculated at least for [e1/1.15, e2*1.15].
+
+        Returns
+        -------
+        float | np.nan
+            If the fit is successful, the photon index is returned. If the 
+            curve_fit raised an error, np.nan is returned.
+
+        """
             
         try:
-            _mask = np.logical_and(self.e_ph >= e1/1.2, self.e_ph <= e2*1.2)
+            _mask = np.logical_and(self.e_ph >= e1/1.15, self.e_ph <= e2*1.15)
             _spl_sed_in_this_band = interp1d(self.e_ph[_mask], self.sed[_mask])
         except:
             raise ValueError('Cannot create a spline for index calculation.')
@@ -745,6 +823,20 @@ class SpectrumIBS: #!!!
             return np.nan
         
     def indexes(self, bands):
+        """
+        Compute photon indexes for multiple [e1, e2] bands.
+
+        Parameters
+        ----------
+        bands : iterable of (e1, e2)
+            Each element is a 2-tuple or 2-list with lower/upper energy.
+
+        Returns
+        -------
+        np.ndarray
+            One index value per band, in the same order as input.
+
+        """
         indexes_ = []
         for band in bands:
             e1, e2 = band
@@ -832,7 +924,7 @@ if __name__ == "__main__":
     # from scipy.integrate import trapezoid
     # fig, ax = plt.subplots(2, 1)
     t = -30 * DAY
-    Nibs = 12
+    Nibs = 25
     ibs = IBS(winds=winds,
               gamma_max=1.8,
               s_max=1.,
