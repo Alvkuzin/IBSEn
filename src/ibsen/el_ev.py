@@ -40,7 +40,8 @@ RAD_IN_DEG = pi / 180.0
 def syn_loss(ee, B):
     """
     Synchrotron losses, dE/dt.
-
+    https://www.mpi-hd.mpg.de/personalhomes/frieger/HEA5.pdf
+    
     Parameters
     ----------
     ee : np.ndarray
@@ -54,11 +55,8 @@ def syn_loss(ee, B):
         Synchrotron losses, dE/dt [eV/s]
 
     """
-    # return -4e5 * B**2 * (ee/1e10)**2 #eV/s ???
-    return -2.5e5 * B**2 * (ee/1e10)**2 #eV/s ???
-
-# def Gma(s, sm, G_term):
-    # return 1 + (G_term - 1) * s / sm
+    # return -4e5 * B**2 * (ee/1e10)**2 # that was Denys expression ???
+    return -2.5e5 * B**2 * (ee/1e10)**2 # that's what I get???
 
 def gfunc(x, a = -0.362, b = 0.826, alpha = 0.682, beta = 1.281): 
     """
@@ -1624,8 +1622,10 @@ class NonstatElectronEvol: #!!!
         the solver. Default 10. 
     n_dec_e : int, optional
         Points per decade for the log-energy grid. Default 35. 
-    init_distr : {'stat','zero'}, optional
-        Initial condition for N(E,t) at ``t_start``. Default 'stat'. 
+    init_distr : {'stat','zero', tuple (e, n0)}, optional
+        Initial condition for N(E,t) at ``t_start``.
+        Can be a tuple of two arrays (e_grid, n_0(e_grid)).
+        Default 'stat'. 
     eps_small, eps_big : float, optional
         Relative tolerances controlling the adaptive stepping heuristics.
         Defaults 1e-3 and 3e-3. 

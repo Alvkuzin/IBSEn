@@ -94,6 +94,190 @@ def unpack_orbit(orb_type=None, T=None, e=None, M=None, nu_los=None,
     return tuple(result)
 
 class LightCurve:
+    """
+    Broadband light curve builder for an intrabinary shock (IBS) system.
+
+    For a grid of times, this class assembles the full pipeline —
+    :class:`Orbit` → :class:`Winds` → :class:`IBS` → :class:`ElectronsOnIBS`
+    → :class:`SpectrumIBS` — and tabulates band fluxes, photon indices,
+    SEDs, and auxiliary physical quantities (separations, apex fields, etc.).
+    Energies are in eV, distances in cm, times in seconds, and SEDs in
+    erg s⁻¹ cm⁻².
+
+    Parameters
+    ----------
+    times : array_like, shape (Nt,)
+        Time grid (relative to periastron, seconds) at which to compute the LC.
+    bands : iterable of (float, float), optional
+        Energy bands [e1, e2] (eV) for band-integrated fluxes. Default ``([3e2, 1e4],)``.
+    bands_ind : iterable of (float, float), optional
+        Energy bands (eV) for photon-index fits. Default ``([3e3, 1e4],)``.
+    epows : None | scalar | iterable, optional
+        Moment order(s) for band flux integrals (see :meth:`SpectrumIBS.fluxes`).
+        If None, epow=1 is used for all bands. If scalar, the same epow is used
+        for all; if iterable, must match ``len(bands)``.
+    to_parall : bool, optional
+        If True, compute times in parallel with joblib. Default False.
+    full_spec : bool, optional
+        If True, compute SEDs on a global grid (``logspace(2,14,1000)``);
+        otherwise build per-band grids expanded by ±20% and concatenate.
+        Default False.
+
+    # Orbit / system parameters (forwarded via ``unpack_orbit``)
+    sys_name : {'psrb', 'rb', 'bw'} or None, optional
+        Named system; default parameters are loaded via ``get_parameters``.
+        Explicit values below override these defaults.
+    period, e, tot_mass, nu_los : float, optional
+        Orbital period (s), eccentricity, total mass (g), and LoS angle (rad).
+    Ropt, Topt, Mopt : float, optional
+        Optical star radius (cm), temperature (K), and mass (g).
+    distance : float or None, optional
+        Source distance (cm); if None and a named system is used, taken from
+        system defaults.
+
+    # Winds (external media & fields)
+    M_ns : float, optional
+        Neutron-star mass (g). Default ``1.4*M_SOLAR``.
+    f_p : float, optional
+        Pulsar-wind pressure normalization. Default 0.1.
+    alpha_deg, incl_deg : float, optional
+        Disk orientation angles in degrees (see :class:`Winds`). Defaults 0 and 30.
+    f_d : float, optional
+        Disk pressure normalization. Default 10.
+    np_disk : float, optional
+        Disk radial power-law index. Default 3.
+    delta : float, optional
+        Disk opening half-angle at the stellar surface. Default 0.01.
+    height_exp : float, optional
+        Exponent in the disk opening law. Default 0.5.
+    rad_prof : {'pl','bkpl'}, optional
+        Disk radial profile (power law or broken power law). Default 'pl'.
+    r_trunk : float or None, optional
+        Disk truncation radius (cm) for broken-profile models.
+    ns_field_model, ns_field_surf, ns_r_scale, ns_L_spindown, ns_sigma_magn
+        Pulsar magnetic-field model and parameters (see :class:`Winds`).
+    opt_field_model, opt_field_surf, opt_r_scale
+        Stellar magnetic-field model and parameters.
+
+    # IBS geometry
+    s_max : float, optional
+        Dimensionless arclength cutoff passed to :class:`IBS_norm`. Default 1.0.
+    gamma_max : float, optional
+        Max bulk Lorentz factor at ``s_max_g``. Default 3.0.
+    s_max_g : float, optional
+        Arclength at which ``gamma==gamma_max`` (dimensionless). Default 4.0.
+    n_ibs : int, optional
+        Sampling points (per horn) for IBS construction. Default 31.
+
+    # Electrons on IBS
+    cooling : {'no','stat_apex','stat_ibs','stat_mimic',
+               'leak_apex','leak_ibs','leak_mimic','adv'}, optional
+        Cooling/evolution mode for :class:`ElectronsOnIBS`. Default 'stat_mimic'.
+    to_inject_e : {'pl','ecpl','secpl'}, optional
+        Injection law in energy. Default 'ecpl'.
+    to_inject_theta : {'2d','3d'}, optional
+        Spatial weighting along IBS. Default '3d'.
+    ecut : float, optional
+        Cutoff energy for ECPL/SECPL (eV). Default 1e12.
+    p_e : float, optional
+        Injection spectral index. Default 2.0.
+    norm_e : float, optional
+        Injection normalization (s⁻¹). Default 1e37.
+    eta_a, eta_syn, eta_ic : float, optional
+        Multipliers for adiabatic, synchrotron, and IC terms. Defaults 1, 1, 1.
+    emin, emax : float, optional
+        Injection energy band (eV). Defaults 1e9, 5.1e14.
+    emin_grid, emax_grid : float, optional
+        Solver grid bounds (eV). Defaults 1e8, 5.1e14.
+    to_cut_e : bool, optional
+        Zero injection outside [emin, emax]. Default True.
+    to_cut_theta : bool, optional
+        Cut injection to |θ| < ``where_cut_theta``. Default False.
+    where_cut_theta : float, optional
+        Angular cut (rad) if ``to_cut_theta`` is True. Default π/2.
+
+    # Spectrum / radiation
+    delta_power : float, optional
+        Doppler weight exponent (segment integration). Default 4.
+    lorentz_boost : bool, optional
+        Apply comoving-frame treatment/boosting. Default True.
+    simple : bool, optional
+        Use apex SED + scaling instead of per-segment radiation. Default False.
+    abs_photoel : bool, optional
+        Apply photoelectric absorption. Default True.
+    abs_gg : bool, optional
+        Apply γγ absorption along LoS (system-dependent). Default False.
+    nh_tbabs : float, optional
+        Column density for photoelectric absorption (10²² cm⁻² units used by helper).
+        Default 0.8.
+    ic_ani : bool, optional
+        Use anisotropic IC (requires IBS angles). Default False.
+    apex_only : bool, optional
+        Compute only the apex contribution (no curve integration). Default False.
+    mechanisms : list of {'syn','ic'}, optional
+        Emission mechanisms to include. Default ``['syn','ic']``.
+
+    Attributes
+    ----------
+    orbit : Orbit
+        Initialized orbit object built from the provided/system parameters.
+    winds : Winds
+        Wind/disk/field model bound to the orbit.
+    r_sps : ndarray, shape (Nt,)
+        Star–pulsar separation r_sp(t) [cm].
+    r_pes : ndarray, shape (Nt,)
+        Pulsar→apex distance r_pe(t) [cm].
+    r_ses : ndarray, shape (Nt,)
+        Star→apex distance r_se(t) [cm].
+    B_p_apexs, B_opt_apexs : ndarray, shape (Nt,)
+        Pulsar/stellar magnetic fields at the apex [G].
+    ibs_classes : list of IBS
+        IBS objects at each time.
+    els_classes : list of ElectronsOnIBS
+        Electron-population objects at each time.
+    spec_classes : list of SpectrumIBS
+        Spectrum calculators at each time.
+    dNe_des : list of ndarray, length Nt
+        Electron distributions on the IBS, each with shape (Ns, Ne) [1 s⁻¹ cm⁻¹ eV⁻¹].
+    e_es : list of ndarray, length Nt
+        Energy grids corresponding to ``dNe_des`` (eV).
+    seds : list of ndarray, length Nt
+        Total SEDs per time (erg s⁻¹ cm⁻²).
+    seds_s : list of ndarray, length Nt
+        Per-segment SEDs with shape (n_segments, Ne_ph) (erg s⁻¹ cm⁻²).
+    e_phots : list of ndarray, length Nt
+        Photon-energy grids used for the SEDs (eV).
+    emiss_s : list of ndarray, length Nt
+        Emissivity integrated over photon energy along arclength [erg s⁻¹ cm⁻¹].
+    fluxes : ndarray, shape (Nt, Nb)
+        Band fluxes in ``bands`` (erg s⁻¹ cm⁻²).
+    indexes : ndarray, shape (Nt, Ni)
+        Photon indices fitted in ``bands_ind``.
+
+    Methods
+    -------
+    set_orbit()
+        Build and assign the :class:`Orbit` object from inputs/defaults.
+    set_winds()
+        Build and assign the :class:`Winds` object tied to the orbit.
+    calculate_at_time(t)
+        Compute IBS, electrons, spectrum, and derived quantities at one time;
+        returns a tuple of all per-epoch results.
+    calculate()
+        Loop over all times (optionally in parallel), fill attributes listed above.
+    peek(ax=None, **kwargs)
+        Quick-look plot with four panels: band fluxes, photon indices, SED at
+        three representative times, and emissivity along the IBS.
+
+    Notes
+    -----
+    * When ``full_spec=False``, the SED energy grid is assembled from all bands
+      expanded to [e/1.2, e*1.2] and concatenated; this accelerates LC runs focused
+      on specific bands.
+    * Parallel execution uses ``joblib.Parallel`` with up to ``cpu_count()-5``
+      workers (minimum 1).
+
+    """
     def __init__(self,
                  
                  times, bands = ( [3e2, 1e4], ), bands_ind = ( [3e3, 1e4], ),
@@ -132,15 +316,15 @@ class LightCurve:
                 ic_ani=False, apex_only=False, mechanisms=['syn', 'ic'],
                  
                 ):
-        ####################################################################
-        self.times = times
-        self.bands = bands
+        ############## ---------- LC own arguments ---------- #################
+        self.times = times # array of t to calc LC on
+        self.bands = bands # tuple of bands ([e1, e2], [e3, e4]) to calc flux in
         self.epows = epows # moment order for flux calc 
-        self.bands_ind = bands_ind
-        self.to_parall = to_parall
+        self.bands_ind = bands_ind # tuple of bands to estimate phot index in
+        self.to_parall = to_parall # whether to parall with Parallel
         self.full_spec = full_spec # if to calculate spec just in bands=bands 
                                    # or across all energies
-        #####################################################################
+        ################ ---- arguments from orbit ---- #######################
         self.sys_name = sys_name
         T_, e_, mtot_, nu_los_, Topt_, Ropt_, Mopt_, distance_ = unpack_orbit(
             orb_type=sys_name, T=period, e=e, M=tot_mass, nu_los=nu_los,
@@ -154,7 +338,7 @@ class LightCurve:
         self.Mopt = Mopt_
         self.distance = distance_
         self.M_ns = M_ns
-        ####################################################################
+        ################ ---- arguments from winds ---- #######################
         self.f_p = f_p
         self.alpha_deg = alpha_deg
         self.incl_deg = incl_deg
@@ -164,12 +348,21 @@ class LightCurve:
         self.height_exp = height_exp
         self.rad_prof = rad_prof
         self.r_trunk = r_trunk
-        ####################################################################
+        ####### --------- also from winds, about magn fields --------- ########
+        self.ns_field_model = ns_field_model
+        self.ns_field_surf = ns_field_surf
+        self.ns_r_scale = ns_r_scale
+        self.ns_L_spindown = ns_L_spindown
+        self.ns_sigma_magn = ns_sigma_magn
+        self.opt_field_model = opt_field_model
+        self.opt_field_surf = opt_field_surf
+        self.opt_r_scale = opt_r_scale
+        ################ ----- arguments from ibs ----- #######################
         self.s_max = s_max
         self.gamma_max = gamma_max
         self.s_max_g = s_max_g
         self.n_ibs = n_ibs
-        ####################################################################
+        ################ ---- arguments from el_ev ---- #######################
         self.cooling = cooling
         self.to_inject_e = to_inject_e
         self.to_inject_theta = to_inject_theta
@@ -187,16 +380,7 @@ class LightCurve:
         self.to_cut_e = to_cut_e
         self.to_cut_theta = to_cut_theta
         self.where_cut_theta = where_cut_theta
-        ####################################################################
-        self.ns_field_model = ns_field_model
-        self.ns_field_surf = ns_field_surf
-        self.ns_r_scale = ns_r_scale
-        self.ns_L_spindown = ns_L_spindown
-        self.ns_sigma_magn = ns_sigma_magn
-        self.opt_field_model = opt_field_model
-        self.opt_field_surf = opt_field_surf
-        self.opt_r_scale = opt_r_scale
-        ####################################################################
+        ################ ---- arguments from spec ----- #######################
         self.delta_power = delta_power
         self.lorentz_boost = lorentz_boost
         self.simple = simple
@@ -206,7 +390,6 @@ class LightCurve:
         self.ic_ani = ic_ani
         self.apex_only = apex_only
         self.mechanisms = mechanisms
-        # self.syn_only = syn_only
         ####################################################################
         self.orbit = None
         self.winds = None
@@ -266,9 +449,38 @@ class LightCurve:
 
     def calculate_at_time(self, t):
         """
-        return: r_sp, r_pe, r_se, Bp_apex, Bopt_apex, ibs, els, dNe_de_IBS, e_vals,
-        spec, E_ph, sed_tot, sed_s, fluxes, indexes, emissiv
+        Auxillary function to calculate a lot of stuff at one moment of time.
+        Initializes IBS, then ElectronsOnIBS, then SpectrumIBS, and calculates
+        a bunch of stuff.
+
+        Parameters
+        ----------
+        t : float
+            Time to calculate verything at [s].
+
+        Returns
+        -------
+        tuple of (
+                  r_sp (float): distance from the pulsar to the star [cm], \\
+                  r_pe (float): distance from the pulsar to the apex of IBS [cm], \\
+                  r_se (float): distance from the star to the apex of IBS [cm], \\
+                  Bp_apex (float): magnetic field at the apex of IBS due to pulsar [G], \\
+                  Bopt_apex (float): magnetic field at the apex of IBS due to star [G], \\
+                  ibs (IBS object): the IBS object at time t, \\
+                  els (ElectronsOnIBS object): the ElectronsOnIBS object at time t, \\
+                  dNe_de_IBS (2d np.array): electron distribution on IBS [1/s/cm/eV], \\
+                  e_vals (1d np.array): electron energies grid [eV], \\
+                  spec (SpectrumIBS object): the SpectrumIBS object at time t, \\
+                  E_ph (1d np.array): photon energies grid [eV], \\
+                  sed_tot (1d np.array): total SED on IBS [erg/s/cm2], \\ 
+                  sed_s (2d np.array): SED in every segment of IBS [erg/s/cm2], \\
+                  fluxes (1d np.array): fluxes in self.bands [erg/s/cm2], \\
+                  indexes (1d np.array): photon indexes in self.bands_ind, \\
+                  emissiv (1d np.array): emissivity along the IBS [erg/s/cm]. \\
+                  )
+
         """
+
         ibs_now = IBS(winds=self.winds, 
                     gamma_max=self.gamma_max, 
                     s_max=self.s_max, 
@@ -276,17 +488,11 @@ class LightCurve:
                     n=self.n_ibs, 
                     t_to_calculate_beta_eff=t,
                 )
-        # ibs_now = ibs_now_nonscaled.rescale_to_position()
         r_sp_now = self.orbit.r(t=t)
         r_se_now = self.winds.dist_se_1d(t=t)
         r_pe_now = r_sp_now - r_se_now
-        # nu_true = self.orbit.true_an(t=t)
         Bp_apex_now, Bopt_apex_now = self.winds.magn_fields_apex(t)
-        # print(Bp_apex_now, Bopt_apex_now)
-        # dopl_factors_now = ibs_now.dopl
 
-        # print('a!')
-# 
         els_now = ElectronsOnIBS(ibs = ibs_now,
                             Bp_apex = Bp_apex_now,
                             Bs_apex = Bopt_apex_now,   
@@ -331,7 +537,6 @@ class LightCurve:
             E_ = np.concatenate(E_)
 
         E_ph_now, sed_tot_now, sed_s_now = spec_now.calculate_sed_on_ibs(E =  E_,                                         
-                                        to_set_onto_ibs=True,
                                         to_return=True)
         
         emissiv_now = trapezoid(sed_s_now/E_ph_now, E_ph_now, axis=1)
@@ -345,6 +550,30 @@ class LightCurve:
 
     ############################################################
     def calculate(self):
+        """
+        Calculates a bunch of stuff on the grid self.t of times (relative
+        to the periastron passage) and sets some attributes:
+            
+        self.r_sps (np.array of size of self.times): distance from the pulsar to the star [cm], \\
+        self.r_ses (np.array of size of self.times): distance from the pulsar to the IBS apex [cm], \\
+        self.r_pes (np.array of size of self.times): distance from the star to the IBS apex [cm], \\
+        self.B_p_apexs (np.array of size of self.times): pulsar magn field the IBS apex [cm], \\
+        self.B_opt_apexs (np.array of size of self.times): star magn field the IBS apex [cm], \\
+        self.ibs_classes (list of IBS objects of size of self.times): IBS objects at every time, \\
+        self.els_classes (list of ElectronsOnIBS objects of size of self.times): 
+                            ElectronsOnIBS objects at every time, \\
+        self.spec_classes (list of SpectrumIBS objects of size of self.times):
+                                 SpectrumIBS objects at every time, \\
+        self.dNe_des = (list of 2d np.arrays of size of self.times): electron distribution on IBS [1/s/cm/eV], \\
+        self.e_es = (list of 1d np.arrays of size of self.times): electron energies grid [eV], \\
+        self.seds = (list of 1d np.arrays of size of self.times): total SED on IBS [erg/s/cm2], \\
+        self.seds_s = (list of 2d np.arrays of size of self.times): SED in every segment of IBS [erg/s/cm2], \\
+        self.e_phots = (list of 1d np.arrays of size of self.times): photon energies grid [eV], \\
+        self.emiss_s = (list of 1d np.arrays of size of self.times): emissivity along the IBS [erg/s/cm], \\
+        self.fluxes = (np.array of size of self.times x len(self.bands)): fluxes in self.bands [erg/s/cm2], \\
+        self.indexes = (np.array of size of self.times x len(self.bands_ind)): photon indexes in self.bands_ind. \\
+
+        """
 
         fluxes = np.zeros((self.times.size, len(self.bands)))
         indexes = np.zeros((self.times.size, len(self.bands_ind)))
@@ -353,7 +582,6 @@ class LightCurve:
         r_pes = np.zeros(self.times.size)
         B_p_apexs = np.zeros(self.times.size)
         B_opt_apexs = np.zeros(self.times.size)
-        nu_trues = np.zeros(self.times.size)
         ibs_classes = []
         els_classes = []
         spec_classes = []
@@ -432,7 +660,6 @@ class LightCurve:
         self.r_pes = r_pes
         self.B_p_apexs = B_p_apexs
         self.B_opt_apexs = B_opt_apexs
-        self.nu_trues = nu_trues
         self.ibs_classes = ibs_classes
         self.els_classes = els_classes
         self.spec_classes = spec_classes
@@ -448,11 +675,20 @@ class LightCurve:
     def peek(self,
                 ax=None, 
                 **kwargs):
-        
+        """
+        Quick look at the results. If ax is None, creates a new figure with
+        4 subplots: fluxes(t), indexes(t),
+          SED at 3 times, emissivity at 3 times.
 
+        Parameters
+        ----------
+        ax : pyplot ax object, optional
+            Axes to plot on. None or axes with at least 1 row and 
+             4 columns. If None, the object ax is created. The default is None.
+        **kwargs : .
+            extra arguments to pass to plot() function. Passed to all plots.
         """
-        Plot the light curve.
-        """
+        
         if ax is None:
             # import matplotlib.pyplot as plt
             fig, ax = plt.subplots(nrows=1, ncols=4,

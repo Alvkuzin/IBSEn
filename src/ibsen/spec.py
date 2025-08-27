@@ -161,8 +161,8 @@ def integrate_over_ibs_with_weights(arr_xy, x, y_extended, y_eval, weights, y_sc
     Returns
     -------
     sed_e_up : 1d np.array
-        The integral.sed_e_up
-    sed_e_down : 2d np.array
+        The integral sed_e_up
+    sed_s_e_up : 2d np.array
         The integrand evaluated at x \times y_eval.
 
     """
@@ -225,13 +225,13 @@ def calculate_sed_nonboosted_2horns(s_1d_2horns, e_ext, e_ev, dNe_de_2horns, e_e
     
     Parameters
     ----------
-    s_1d : 1d np.array
+    s_1d_2horns : 1d np.array
         Shock coordinate array (cm) defining discrete segments.
     e_ext : 1d np.array 
         Energy grid on which initial SED should be calculated (eV).
     e_ev : 1d np.array
         Photon energy grid for the final SED to be calculated on (eV).
-    dNe_de_1horn : 2D array
+    dNe_de_2horns : 2D array
         Electron spectrum per segment (dN/dE).
     e_el : 1d np.array
         Electron energy bin centers (eV).
@@ -239,8 +239,9 @@ def calculate_sed_nonboosted_2horns(s_1d_2horns, e_ext, e_ev, dNe_de_2horns, e_e
         If True, apply simple rescaling of the apex SED.
     apex_only : bool
         If True, compute only the apex SED and skip extended calculation.
-    what_model : {'syn', 'ic'}
-        Emission mechanism: 'syn' for synchrotron, 'ic' for inverse Compton.
+    what_model : {'syn', 'ic', 'ic_ani'}
+        Emission mechanism: 'syn' for synchrotron, 'ic' for isotropic inverse
+        Compton, 'ic_ani' for anisotropic IC.
     distance : float
         Distance to the source in cm.
     B_apex : float, optional
@@ -249,16 +250,19 @@ def calculate_sed_nonboosted_2horns(s_1d_2horns, e_ext, e_ev, dNe_de_2horns, e_e
         Seed photon temperature (K). Required for IC.
     ug_apex : float, optional
         Seed photon energy density at apex (erg/cm^3). Required for IC.
-    b_scale : float or array-like, optional
-        Scaling factor(s) for B-field along the shock.
-    u_scale : float or array-like, optional
-        Scaling factor(s) for photon energy density.
-    n_scale : float, optional
-        Normalization scaling for electron density.
+    b_scale_2horns : float or array-like, optional
+        Scaling factor(s) for B-field along the shock [dimensionless].
+    u_scale_2horns : float or array-like, optional
+        Scaling factor(s) for photon energy density [dimensionless].
+    n_scale_2horns : float, optional
+        Normalization scaling for electron density [dimensionless].
     lorentz_boost : bool, optional
         If True, apply Lorentz transformations to fields and electron spectra.
-    gammas_1horn : array-like, optional
+    gammas_2horns : array-like, optional
         Lorentz factors for each segment if boosted.
+    scatter_angs_2horns : 1d np.ndarray, optional
+        Scattering angle between the initial and scattered directions of the 
+        optical photon [dimensionless]. Required for an anisotropic IC.
     
     Returns
     -------
@@ -270,7 +274,8 @@ def calculate_sed_nonboosted_2horns(s_1d_2horns, e_ext, e_ev, dNe_de_2horns, e_e
     Raises
     ------
     ValueError
-        If `what_model` is not 'syn' or 'ic', or if no valid calculation mode.
+        If `what_model` is not {'syn', 'ic', 'ic_ani'}, 
+        or if no valid calculation mode.
     
     Notes
     -----
@@ -279,15 +284,10 @@ def calculate_sed_nonboosted_2horns(s_1d_2horns, e_ext, e_ev, dNe_de_2horns, e_e
       - simple: rescale the apex SED along the shock in a simplified manner.
       - full: compute SED at each segment properly, including optional Lorentz boosting.
     
-
-    
     """
     ### the number of segments on the upper horn, apex (s~0) excluded
-    
     n_ = int(  (s_1d_2horns.size-1)  /2) 
-    # print(n_)
     ### and some stuff at the upper horn excluding apex 
-    # s_1d_1horn = s_1d_2horns[n_+1:2*n_+1]
     dNe_de_1horn = dNe_de_2horns[n_+1:2*n_+1, :] 
     b_scale_1horn = b_scale_2horns[n_+1:2*n_+1] if b_scale_2horns is not None else None
     u_scale_1horn = u_scale_2horns[n_+1:2*n_+1] if u_scale_2horns is not None else None
@@ -334,7 +334,6 @@ def calculate_sed_nonboosted_2horns(s_1d_2horns, e_ext, e_ev, dNe_de_2horns, e_e
             
         
     if apex_only:
-        # sed_e_apex = sed_e_apex
         sed_e_tot = sed_e_apex
         sed_s_e_tot = sed_e_apex[None, :]
 
@@ -342,7 +341,6 @@ def calculate_sed_nonboosted_2horns(s_1d_2horns, e_ext, e_ev, dNe_de_2horns, e_e
         if what_model == 'syn':
             B_1horn = B_apex * b_scale_1horn
             if lorentz_boost:
-                # gamma_here = gammas_1horn[i_ibs]
                 B_comov = np.array([
                     lor_trans_b_iso(B_iso=B_1horn[i_ibs], gamma=gammas_1horn[i_ibs])
                                 for i_ibs in range(B_1horn.size)
@@ -368,17 +366,10 @@ def calculate_sed_nonboosted_2horns(s_1d_2horns, e_ext, e_ev, dNe_de_2horns, e_e
         #### horns due to symmetry considerations 
         sed_s_e_tot_1horn = calculate_sed_simple(sed_e_apex=sed_e_apex,
                                            rescale=rescale_simple)
-        # print(sed_s_e_tot_1horn[0, :].size)
-        # print(e_ext.size)
         sed_s_e_tot = np.concatenate((sed_s_e_tot_1horn[::-1, :],
                                       np.zeros((1, e_ext.size)),
                                       sed_s_e_tot_1horn))
-        # print(sed_s_e_tot.shape)
-        # sed_s_e_tot = fill_nans(sed_s_e_tot)
-
-        # sed_e_tot = trapezoid(sed_s_e_tot, s_1d_2horns, axis=0) /(np.max(s_1d_2horns) - np.min(s_1d_2horns))
         sed_e_tot = np.sum(sed_s_e_tot, axis=0)
-        # print(sed_e_tot)
                     
     elif (not simple) and (not apex_only):
         sed_s_e_tot = np.zeros((2*n_+1, e_ext.size))
@@ -390,8 +381,6 @@ def calculate_sed_nonboosted_2horns(s_1d_2horns, e_ext, e_ev, dNe_de_2horns, e_e
         #### which is not axisymmetric), we calculate SED properly and 
         #### independently for both horns.
         for i_ibs in range(0, 2*n_+1):
-            # if i_ibs == 0 or i_ibs == 2*n_-1:
-            #     continue
             # rescaling B and u_g to the point on an IBS. I do it even in case
             # simple = True, so that I can retrieve the values later in addition 
             # to the SED 
@@ -429,7 +418,6 @@ def calculate_sed_nonboosted_2horns(s_1d_2horns, e_ext, e_ev, dNe_de_2horns, e_e
                 # calculating an actual spectrum
                 Sync = Synchrotron(e_spec_for_naima, B = B_comov * u.G)
                 sed_synchr = Sync.sed(E_dim, distance = distance * u.cm)
-                # sed_tot = sed_syncr 
                 sed_s_e_tot[i_ibs, :] = fill_nans_1d(sed_synchr / sed_unit)
                     
  
@@ -451,7 +439,6 @@ def calculate_sed_nonboosted_2horns(s_1d_2horns, e_ext, e_ev, dNe_de_2horns, e_e
                     u_g_comov = u_g_2horns
                     e_vals_comov, dN_de_comov = e_el, dNe_de_2horns[i_ibs, :]
                     Teff_comov = Topt
-                # print(Teff_comov)
                 # Preparing e_spec so in can be fed to Naima
                 if np.max(dN_de_comov) == 0:
                     continue
@@ -471,7 +458,6 @@ def calculate_sed_nonboosted_2horns(s_1d_2horns, e_ext, e_ev, dNe_de_2horns, e_e
             else:
                 raise ValueError('I don\'t know this model. Try `syn` or `ic`.' )
         sed_s_e_tot = fill_nans(sed_s_e_tot)
-        # sed_e_tot = trapezoid(sed_s_e_tot, s_1d_2horns, axis=0) / (np.max(s_1d_2horns) - np.min(s_1d_2horns))
         sed_e_tot = np.sum(sed_s_e_tot, axis=0)
     else:
         raise ValueError('You shouldn\'t be here')
@@ -485,16 +471,16 @@ def boost_sed_from_2horns(sed_s_e, s_1d_2horns, e_ext, e_ev, dopls_2horns,
     
     Parameters
     ----------
-    sed_s_e : array-like, shape (2 * n_segments, n_e_ev)
+    sed_s_e : array-like, shape (n_segments, n_e_ev)
         Input SED for each segment of one IBS horn.
-    s_1d : array-like
+    s_1d_2horns : array-like
         Shock coordinate array (cm) defining discrete segments.
     e_ext : array-like
         Energy grid used for initial SED integration (eV).
     e_ev : array-like
         Photon energy grid for boosted SED evaluation (eV).
-    dopls : array-like, shape (2*n_segments,)
-        Doppler factors: first n_segments for downstream, next n_segments for upstream.
+    dopls_2horns : array-like, shape (n_segments,)
+        Doppler factors.
     delta_power : float
         Power-law exponent applied to Doppler weights.
     abs_tot : array-like, shape (n_e_ev,)
@@ -504,7 +490,7 @@ def boost_sed_from_2horns(sed_s_e, s_1d_2horns, e_ext, e_ev, dopls_2horns,
     -------
     sed_tot : np.ndarray
         1D array of the total boosted and absorbed SED (dimensionless).
-    sed_s_ : np.ndarray, shape (2*n_segments, n_e_ev)
+    sed_s_ : np.ndarray, shape (n_segments, n_e_ev)
         2D array of SED per segment for both downstream and upstream horns, after
         boosting and absorption.
     
@@ -513,8 +499,6 @@ def boost_sed_from_2horns(sed_s_e, s_1d_2horns, e_ext, e_ev, dopls_2horns,
     1. Integrates the input SED over IBS segments weighted by Doppler factors
        raised to `delta_power` and scaled by the Doppler factor (`y_scale`).
     2. Applies the absorption factor `abs_tot` to both total and per-segment SED.
-    
-
     
     """
     ##### we should move the condition with `if toboost...` here from
@@ -536,6 +520,108 @@ def boost_sed_from_2horns(sed_s_e, s_1d_2horns, e_ext, e_ev, dopls_2horns,
 
 
 class SpectrumIBS: #!!!
+    """
+    Spectral energy distribution (SED) from an intrabinary shock (IBS).
+
+    Builds broadband SEDs produced along the IBS at a chosen orbital epoch,
+    using the precomputed electron distribution on the shock and optionally
+    applying Lorentz boosting (segment-wise Doppler factors) and line-of-sight
+    absorption. Supports synchrotron and inverse-Compton (IC; isotropic or
+    anisotropic) emission, integrates segment contributions over both horns,
+    and exposes helpers for band fluxes, photon indexes, and quick-look plots.
+    Energies are in eV; SEDs are in erg /s/ cm2. 
+    Parameters
+    ----------
+    els : ElectronsOnIBS
+        Electron distribution and IBS geometry at the chosen epoch (provides
+        per-segment spectra, B/u scaling, Doppler factors, and arc-length grid).
+    mechanisms : list of {'syn','ic'}, optional
+        Emission mechanisms to include. Case-insensitive aliases accepted
+        (e.g., 's', 'synchrotron', 'i', 'inverse_compton'). Default ['syn','ic'].
+    ic_ani : bool, optional
+        If True, compute anisotropic IC using the IBS scattering angle; else
+        isotropic IC. Default False.
+    delta_power : float, optional
+        Exponent of the Doppler weight for SEDs used when integrating over segments,
+        i.e. weight ∝ δ^{delta_power}. Default 4. 
+    lorentz_boost : bool, optional
+        If True, transform fields and electron spectra to the comoving frame
+        before radiation calculation and use comoving scattering angles for
+        anisotropic IC. Default True. 
+    simple : bool, optional
+        If True, compute an apex SED once and rescale it along the shock
+        (mechanism-dependent scaling); if False, compute each segment's SED
+        explicitly. Default False. 
+    abs_photoel : bool, optional
+        Apply photoelectric absorption (TBABS-like) to the final SED. Default True.
+    abs_gg : bool, optional
+        Apply γγ absorption along the line of sight (currently implemented for
+        'psrb' system). Default False. 
+    nh_tbabs : float, optional
+        Hydrogen column density for photoelectric absorption (10²² cm⁻² units as
+        used by the helper). Default 0.8. 
+    distance : float or None, optional
+        Source distance [cm]. If None, taken from system defaults via
+        ``unpack_dist(orbit.name, distance)``.
+    apex_only : bool, optional
+        If True, compute only the apex contribution (no boosting/integration
+        over the curve). Default False. 
+
+    Attributes
+    ----------
+    els : ElectronsOnIBS
+        Electron/IBS container used for radiation.
+    _orb : Orbit
+        Orbit of the system (from ``els.ibs.winds.orbit``).
+    _ibs : IBS
+        IBS geometry at the evaluation time.
+    distance : float
+        Adopted distance [cm].
+    ic_ani, delta_power, lorentz_boost, simple, abs_photoel, abs_gg, nh_tbabs, apex_only
+        Stored configuration flags/parameters.
+    e_ph : ndarray
+        Photon-energy grid used for the last computed SED [eV].
+    sed : ndarray
+        Total SED integrated over the IBS [erg s⁻¹ cm⁻²].
+    sed_s : ndarray
+        Per-segment SED array with shape (n_segments, e_ph.size) [erg s⁻¹ cm⁻²].
+    sed_sy, sed_ic : ndarray, optional
+        Mechanism-separated totals (set if those mechanisms were computed). 
+
+    Methods
+    -------
+    calculate_sed_on_ibs(E=np.logspace(2,14,1000), to_return=False)
+        Compute and store SED(s) on energy grid E; optionally return (E, sed_tot, sed_s_).
+    flux(e1, e2, epow=1)
+        Band integral over [e1, e2] of order ``epow`` of dN/dE (derived from SED),
+        returned in erg^{epow} s⁻¹ cm⁻². Raises ValueError if interpolation fails.
+    fluxes(bands, epows=None)
+        Vectorized band fluxes for many (e1,e2) intervals; ``epows`` may be None,
+        a scalar, or an iterable matching ``bands``. 
+    index(e1, e2)
+        Photon index γ fitted over [e1, e2] assuming dN/dE ∝ E^{-γ}; returns NaN
+        if the fit fails. 
+    indexes(bands)
+        Vectorized photon indexes for many bands. 
+    peek(ax=None, to_label=True, show_many=True, **kwargs)
+        Quick-look plot: total SED and emissivity (energy-integrated per segment).
+
+    Notes
+    -----
+    * **Segment treatment.** With ``simple=False``, each segment’s SED is computed
+      (synchrotron or IC) using per-segment electron spectra and local B/u
+      scalings; with ``simple=True``, an apex SED is rescaled along the shock.
+      For symmetric mechanisms, the opposite horn is filled by symmetry; for
+      anisotropic IC, both horns are computed explicitly. 
+    * **Boosting & integration.** Segment SEDs are optionally Doppler-boosted
+      and integrated along arclength with weights δ^{delta_power}; absorption
+      factors are applied at the end. The internal energy grid are extended
+      by the maximum Doppler factor to avoid edge losses. 
+    * **Units.** Input energies E, e1, e2 are in eV. Stored/returned SEDs are in
+      erg s⁻¹ cm⁻². The band integral uses a log-grid and applies the necessary
+      eV→erg factor for general moment ``epow``. 
+
+    """
     def __init__(self, els, mechanisms=['syn', 'ic'], ic_ani=False,
                  delta_power=4, lorentz_boost=True, simple=False,
                  abs_photoel=True, abs_gg=False, nh_tbabs=0.8, 
@@ -558,7 +644,37 @@ class SpectrumIBS: #!!!
         self.distance = _dist
 
     def calculate_sed_on_ibs(self, E = np.logspace(2, 14, 1000),
-                             to_set_onto_ibs=True, to_return=False,):
+                             to_return=False,):
+        """
+        Calculates emission from the intrabinary shock (IBS) for given
+        mechanisms. The SED is calculated for both horns of the IBS and
+        then summed up, being doppler-boosted at the same time.
+        The SED is calculated in erg/s/cm2, and e_ph is in eV.
+
+        Parameters
+        ----------
+        E : 1d np.array, optional
+            Photon energies to calculate the SEDs on. 
+            The default is np.logspace(2, 14, 1000).
+        to_return : bool, optional
+            Whether to return E, sed (total, 1d),
+              sed-s (in every IBS segmens, 2d). The default is False.
+
+        Raises
+        ------
+        ValueError
+            If the radiation mechanism is not {'syn', 'ic'}.
+
+        Returns
+        -------
+        E : np.array
+            Photon energies (eV).
+        sed_tot : np.array of size of E
+            SED summed over the whole IBS (erg/s/cm2).
+        sed_s_ : 2d np.array of ibs.s.size x E.size
+            SED in every segment of IBS (erg/s/cm2).
+
+        """
 
         _b_2horns, _u_2horns = self.els._b_mid, self.els._u_mid
         try:
@@ -592,12 +708,6 @@ class SpectrumIBS: #!!!
         
         d_max = max(np.max(dopls), 1/np.min(dopls))
         if not self.apex_only:
-            # Nphot = int(2 * E.size * 
-            #             np.log10(d_max**2 * 1.21 * np.max(E) / np.min(E)) /
-            #             np.log10(np.max(E) / np.min(E)) )
-            # E_ext = np.logspace(np.log10(np.min(E)/d_max/1.1),
-            #                     np.log10(np.max(E)*d_max*1.1), Nphot)
-            
             ### Introduce an auxillary extended grid over photon energries.
             ### Coef `2` is empirically found to be OK for later interpolation.
             ndec_ = int(2 * E.size / np.log10(np.max(E) / np.min(E)))
@@ -607,10 +717,6 @@ class SpectrumIBS: #!!!
             E_ext = E
 
         s_2horns = self._ibs.s_mid
-        # ds_2horns = self._ibs.ds          
-        # dNe_deds_m = dNe_deds_IBS[]
-        # dNtot_ds = trapezoid(dNe_deds_IBS, e_vals, axis=1)
-        # Navg = trapezoid(s_2horns * dNtot_ds, s_2horns) / (np.max(s_2horns)-np.min(s_2horns))
         Ntot = 2*trapezoid(dNe_ds_mid[self.els._up_mid], s_2horns[self.els._up_mid])
         _n_norm_2horns = s_2horns * dNe_ds_mid / Ntot 
 
@@ -672,13 +778,10 @@ class SpectrumIBS: #!!!
                         lorentz_boost=self.lorentz_boost,
                         gammas_2horns=gammas_2horns,
                         scatter_angs_2horns=scatter_2horns) 
-                # print(sed_ic)
-                # if not self.apex_only:
                 sed_ic, sed_s_ic = boost_sed_from_2horns(sed_s_e=sed_s_ic,
                     s_1d_2horns=s_2horns, e_ext=E_ext, e_ev=E, dopls_2horns=dopls,
                     delta_power=self.delta_power, abs_tot=_abs_gg*_abs_ph,
                     toboost=(not self.apex_only)) 
-                # print(sed_ic)
                 sed_tot += sed_ic
                 sed_s_ += sed_s_ic
                 self.sed_ic = sed_ic
@@ -692,8 +795,6 @@ class SpectrumIBS: #!!!
         self.sed = fill_nans_1d(sed_tot)
         self.sed_s = fill_nans(sed_s_)
         self.e_ph = E
-        # self.sed_spl = interp1d(E, sed_tot)
-        # print(self.sed)
         if to_return:    
             return E, sed_tot, sed_s_
     
@@ -734,7 +835,6 @@ class SpectrumIBS: #!!!
             raise ValueError('Cannot create a spline for flux calculation.')
         _E = loggrid(e1, e2, n_dec = 59) # eV
         sed_here = _spl_sed_in_this_band(_E) # erg/s/cm^2 
-        # return trapz_loglog(sed_here / _E, _E)
         return trapz_loglog(sed_here / _E**2 * _E**epow, _E) * EV_TO_ERG**(epow-1) # erg^epow /s/cm^2
 
             
@@ -816,7 +916,7 @@ class SpectrumIBS: #!!!
             popt, pcov = curve_fit(f = pl, xdata = _E,
                                    ydata = sed_here,
                                    p0=(0.5, 
-                                       sed_here[0] * _E[0]**0.5
+                                       sed_here[15] * _E[15]**0.5
                                        ))
             return popt[0] + 2. 
         except:
@@ -848,6 +948,30 @@ class SpectrumIBS: #!!!
             to_label=True,
         show_many = True,
         **kwargs):
+        """
+        Quick look at the SED and emissivity along the IBS.
+        Draws on ax[0] the SED, and on ax[1] the emissivity along the IBS.
+
+        Parameters
+        ----------
+        ax : ax object of pyplot, optional
+            The axis to draw on. None or the axis with at least
+             1 row and 2 colummns. If None, the ax obect is created.
+               The default is None.
+        to_label : bool, optional
+            Whether to put legend on the ax[0]. The default is True.
+        show_many : bool, optional
+            Whether to show several SEDs from different parts of the IBS
+            in addition to the total SED. The default is True.
+        **kwargs : 
+            kwargs for ax[0] and ax[1] (same for both).
+
+        Raises
+        ------
+        ValueError
+            If SED was not calculated before with calculate().
+
+        """
     
         if ax is None:
             fig, ax = plt.subplots(1, 2, figsize=(8, 4))    
