@@ -1,6 +1,7 @@
-numpy<2
+numpy<2.0
 scipy
 astropy
 matplotlib
 joblib
 xarray
+naima

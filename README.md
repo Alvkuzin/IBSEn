@@ -3,19 +3,10 @@
 IBSEn: **I**ntra**B**inary **S**hock **E**mission **n**-**n**ot-mea**n**i**n**g-a**n**ythi**n**g is a collection of Python scripts for processing, modeling, and visualizing observational data of the gamma-ray binariy pulsars, especially PSR B1259-63. This project includes tools to handle observational data, compute intrabinary shock (IBS) emissivity: spectra and light curves, and (somewhere in future) fit theoretical models to light curves and spectra.
 
 
----
-
-
 ## Installation & Requirements 
 ### Installation
 
-Install directly from GitHub:
-
-```bash
-pip install git+https://github.com/Alvkuzin/IBSEn
-```
-
-Or clone and install manually. Normal installation
+Clone and install manually. Normal installation:
 
 ```bash
 git clone https://github.com/Alvkuzin/IBSEn
@@ -29,11 +20,17 @@ For the installation and contributing, replace the last line with
 pip install -e .
 ```
 
+After the installation, install the required packages with
+```bash
+pip install -r requirements.txt
+```
+
+
 ### Requirements
 This project requires:
- 1. Python 3 (please install yourself),
- 2. [Naima](https://naima.readthedocs.io/en/latest/index.html) (please also install yourself), 
- 3. And some standard scientific libraries. If needed, you can install them, Naima excluded, with:
+ - Python 3 (please install yourself),
+ - [Naima](https://naima.readthedocs.io/en/latest/installation.html),
+ - And some standard scientific libraries. Install them, including Naima, with:
 
 ```bash
 pip install -r requirements.txt
