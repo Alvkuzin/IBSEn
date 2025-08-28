@@ -7,10 +7,10 @@ from ibsen.orbit import Orbit
 
 orbit = Orbit('psrb')
 print('PSR B1259-63 periastron dist [au] = ', orbit.r_periastr/1.496e13)
-orbit.peek(times_pos=(10*DAY, 20*DAY,))
 
 from ibsen.winds import Winds
 print('----- at t=20 days after periastron -----')
+
 winds = Winds(orbit=orbit, sys_name='psrb', f_d=100)
 print('effective beta = ', winds.beta_eff(t=t))
 
