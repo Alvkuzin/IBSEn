@@ -50,6 +50,9 @@ or create an environment with Numpy < 2 and Naima installed (and some other pack
 ```bash
 conda env create -f environment.yml
 conda activate ibsen_env
+git clone https://github.com/Alvkuzin/IBSEn
+cd IBSEn
+pip install .
 ```
 
 **But if you just want to use IBSEn for Orbit / Winds & Stars / IBS / electron evolution and NOT for specta / light curves, you're good to go without installing Naima at all.** 
