@@ -1,0 +1,10 @@
+name: ibsen_env
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - naima
+  - numpy<2
+  - pip
+  - pip:
+      - -r requirements.txt  

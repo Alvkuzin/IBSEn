@@ -856,6 +856,8 @@ class ElectronsOnIBS: #!!!
         Number per unit s at midpoints, integrated over energy [1/s/cm].
     dNe_de_mid : ndarray or None, shape (Ns-1, Ne)
         Per-segment spectra, i.e. ``(dN/dEds) * ds`` [1/s/eV].
+    ntot : float
+        Total number of electrons on IBS
 
     Methods
     -------
@@ -1433,6 +1435,8 @@ class ElectronsOnIBS: #!!!
         dNe_de_mid = dNe_deds_mid * self.ibs.ds[:, None] # basically, trapezoid rule; shape=(s_mid.size, e_vals.size)
         self.dNe_ds_mid = dNe_ds_mid
         self.dNe_de_mid = np.abs(dNe_de_mid)
+        self.ntot = np.sum(trapz_loglog(np.abs(dNe_de_mid),
+                                        e_vals, axis=1)) # tot number of e???
         
         if to_return:
             return dNe_deds_IBS_2horns, e_vals

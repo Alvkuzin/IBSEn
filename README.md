@@ -39,33 +39,35 @@ This project requires:
 pip install -r requirements.txt
 ```
 
-**Note on Naima.** Naima, and if I understand correctly, requires Numpy v. < 2. But I had Numpy of the version 2...! So you can either downgrade Numpy to <2:
+**Note on Naima.** If you have both Naima and numpy installed and they are not in conflict, you are good to go. 
+For me though it was a problem that Naima, and if I understand correctly, requires Numpy v. < 2. But I had Numpy of the version 2...! So you can either downgrade Numpy to <2:
 ```bash
 pip install "numpy<2.0"
 ```
 
-or (what my best friend ChatGPT told me to do) create an environment with Numpy < 2 and Naima installed (and some other packages which do not seem to be in conflict with Numpy or Naima):
+or create an environment with Numpy < 2 and Naima installed (and some other packages which do not seem to be in conflict with Numpy or Naima):
 
 ```bash
-conda create -n myenv numpy<2.0 naima
-conda activate myenv
+conda env create -f environment.yml
+conda activate ibsen_env
 ```
-
-If you follow the second way, ensure that you install IBSEn in myenv. 
 
 **But if you just want to use IBSEn for Orbit / Winds & Stars / IBS / electron evolution and NOT for specta / light curves, you're good to go without installing Naima at all.** 
 
-Scripts now are not suited for running from the command line... To find out if the installation works, try doing this in some Python script:
-```python
-from ibsen.orbit import Orbit
-
-orb = Orbit('psrb')
-print(orb.T/86400, orb.e, orb.mtot/2e33)
+Scripts now are not suited for running from the command line... To find out if the installation works, try running a very basic python script that simply initializes a lot of classes with more or less default parameters:
+```bash
+python test_ibsen.py
 ```
 You should get the output of
 
 ```bash
-1236.724526 0.874 25.252805357865252
+PSR B1259-63 periastron dist [au] =  0.8351387469104009
+----- at t=20 days after periastron -----
+effective beta =  0.04164299814865532
+IBS opening angle =  2.4497037807657196
+tot number of e on IBS =  7.309978160194949e+36
+from spec, flux 0.3-10 keV =  4.360820860647597e-15
+from LC, flux 0.3-10 keV =  [4.36492365e-15]
 ```
 
 
