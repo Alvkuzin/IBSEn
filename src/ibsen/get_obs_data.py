@@ -32,26 +32,28 @@ def get_parameters(sys_name):
 
     if sys_name == 'psrb':
         Torb_here = 1236.724526*DAY; e_here = 0.874; Topt_here = 3.3e4
-        Mopt = 24  * M_SOLAR; M_ns = 1.4  * M_SOLAR
-        M_here = Mopt + M_ns; D_here = 2.4e3 * PARSEC; Ropt_here = 10 * R_SOLAR
-        nu_los = 2.3
+        Mopt = 31 * M_SOLAR; M_ns = 1.4  * M_SOLAR
+        M_here = Mopt + M_ns; D_here = 2.4e3 * PARSEC; Ropt_here = 9.2 * R_SOLAR
+        nu_los = 2.3; incl_los= 22 / 180 * np.pi
     elif sys_name == 'rb':
         Torb_here = 0.5*DAY; e_here = 0; Topt_here = 3e3 
         Mopt = 0.5  * M_SOLAR; M_ns = 1.4  * M_SOLAR
         M_here = Mopt + M_ns; D_here = 1e3 * PARSEC; Ropt_here = 0.3 * R_SOLAR
-        nu_los = 0.
+        nu_los = 0; incl_los=np.pi/4
     elif sys_name == 'bw':
         Torb_here = 0.1*DAY; e_here = 0; Topt_here = 1e3 
         Mopt = 0.1  * M_SOLAR; M_ns = 1.4  * M_SOLAR
         M_here = Mopt + M_ns; D_here = 1e3 * PARSEC; Ropt_here = 0.01 * R_SOLAR
-        nu_los = 0.
+        nu_los = 0.;  incl_los=np.pi/4
 
     res = { 'e': e_here, 'M': M_here, 'D': D_here, 'Ropt': Ropt_here, 
            'T': Torb_here, 'Topt': Topt_here, 'Mopt': Mopt, 'M_ns': M_ns,
-           'nu_los': nu_los}
+           'nu_los': nu_los, 'incl_los': incl_los}
     return res
 
 
+_here = Path(__file__).parent          
+_tabdata = _here / "absorb_tab" 
 
 # obs_fold = Path(Path.cwd(), 'ObsData')
 # exposure_S = np.array([576.8878,2157.656, 2135.181, 2614.655, 1278.609, 1917.999])

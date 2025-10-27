@@ -4,7 +4,8 @@ from numpy import pi, sin, cos, exp
 
 from ibsen.utils import lor_trans_e_spec_iso, lor_trans_b_iso, \
     lor_trans_ug_iso, loggrid, trapz_loglog, lor_trans_Teff_iso, \
-        interplg
+        interplg, fill_nans, fill_nans_1d
+        
 from scipy.integrate import trapezoid
 import astropy.units as u
 from ibsen.get_obs_data import get_parameters
@@ -57,78 +58,6 @@ def unpack_dist(sys_name=None, dist=None):
     dist_final = dist if dist is not None else defaults.get('D')
 
     return dist_final
-
-def fill_nans(sed):
-    """
-    Replace NaN values in a 2D SED array by the half-sum of their immediate
-    neighbors along the energy axis (axis=1).
-
-    Parameters
-    ----------
-    sed : array-like, shape (n_s, n_e)
-        Input 2D array with NaNs to be filled.
-
-    Returns
-    -------
-    filled : np.ndarray, shape (n_s, n_e)
-        A copy of `sed` where each NaN at position [:, j] (1 <= j < n_e-1)
-        has been replaced by 0.5*(sed[:, j-1] + sed[:, j+1]) whenever both neighbors
-        are non-NaN. Edge columns are left unchanged.
-    """
-    sed_ = np.array(sed, dtype=float, copy=True)
-    nan_mask = np.isfinite(sed)
-    
-    # Shifted arrays for left and right neighbors
-    left  = np.roll(sed,  1, axis=1)
-    right = np.roll(sed, -1, axis=1)
-    
-    # Candidate fill values
-    fill_values = 0.5 * (left + right)
-    
-    # Valid positions: not edges, original is NaN, and neighbors are non-NaN
-    valid = nan_mask.copy()
-    valid[:,  0] = False
-    valid[:, -1] = False
-    valid &= ~np.isfinite(left) & ~np.isfinite(right)
-    
-    # Fill NaNs
-    sed_[valid] = fill_values[valid]
-    return sed_    
-
-def fill_nans_1d(arr):
-    """
-    Replace NaNs in a 1D array by the half-sum of their immediate neighbors.
-
-    Parameters
-    ----------
-    arr : array-like, shape (n,)
-        Input 1D array with possible NaNs.
-
-    Returns
-    -------
-    filled : np.ndarray, shape (n,)
-        A copy of `arr` where each NaN at position i (1 <= i < n-1)
-        is replaced by 0.5*(arr[i-1] + arr[i+1]) whenever both neighbors
-        are non-NaN. Edge elements (i=0 and i=n-1) remain unchanged.
-    """
-    a = np.array(arr, dtype=float, copy=True)
-    nan_mask = np.isfinite(a)
-    
-    # neighbors
-    left  = np.roll(a,  1)
-    right = np.roll(a, -1)
-    
-    # fill values
-    fill_vals = 0.5 * (left + right)
-    
-    # valid positions: not edges, original is NaN, neighbors are valid
-    valid = nan_mask.copy()
-    valid[0] = False
-    valid[-1] = False
-    valid &= ~np.isfinite(left) & ~np.isfinite(right)
-    
-    a[valid] = fill_vals[valid]
-    return a
 
 def integrate_over_ibs_with_weights(arr_xy, x, y_extended, y_eval, weights, y_scale,
                                     ):
@@ -483,7 +412,7 @@ def boost_sed_from_2horns(sed_s_e, s_1d_2horns, e_ext, e_ev, dopls_2horns,
         Doppler factors.
     delta_power : float
         Power-law exponent applied to Doppler weights.
-    abs_tot : array-like, shape (n_e_ev,)
+    abs_tot : array-like, shape (n_s_1d_2horns, n_e_ev)
         Total absorption factor to apply after boosting.
     
     Returns
@@ -504,17 +433,20 @@ def boost_sed_from_2horns(sed_s_e, s_1d_2horns, e_ext, e_ev, dopls_2horns,
     ##### we should move the condition with `if toboost...` here from
     ##### integrate_over_...
     if toboost:
+        # this sed_tot is calculated from the unabsorbed s-dependent SED,
+        # so it is incorrect
         sed_tot, sed_s_ = integrate_over_ibs_with_weights(arr_xy=sed_s_e,
                     x=s_1d_2horns, y_extended=e_ext, y_eval=e_ev, 
                     weights=dopls_2horns**delta_power,
-                    y_scale=dopls_2horns)
+                    y_scale=dopls_2horns) 
     else:
         sed_tot = sed_s_e[0, :]
         sed_s_ = sed_tot[None, :]
 
     if abs_tot is not None:
-        sed_tot = sed_tot * abs_tot
-        sed_s_ = sed_s_ * abs_tot[None, :] 
+        # sed_tot = sed_tot * abs_tot
+        sed_s_ = sed_s_ * abs_tot
+        sed_tot = np.sum(sed_s_, axis=0)
                 
     return sed_tot, sed_s_
 
@@ -692,11 +624,12 @@ class SpectrumIBS: #!!!
         if self.abs_photoel:
             _abs_ph = absb.abs_photoel(E=E, Nh = self.nh_tbabs)
         if self.abs_gg:
-            if self._orb.name != 'psrb': 
-                print('abs_gg is only implemented for psrb orbit. Using abs_gg for psrb orbit.')
-            _abs_gg = absb.abs_gg_tab(E=E,
-                nu_los = self._orb.nu_los, t = self._ibs.t_forbeta, 
-                Teff=self._ibs.winds.Topt)
+            # if self._orb.name != 'psrb': 
+            #     print('abs_gg is only implemented for psrb orbit. Using abs_gg for psrb orbit.')
+            # _abs_gg = absb.abs_gg_tab(E=E,
+            #     nu_los = self._orb.nu_los, t = self._ibs.t_forbeta, 
+            #     Teff=self._ibs.winds.Topt)
+            _abs_gg = self._ibs.gg_abs_mid(E) # an array of size (s_mid.size, E.size)
             
             
         # -------------------------------------------------------------------------
@@ -749,7 +682,7 @@ class SpectrumIBS: #!!!
                     e_ev=E,
                     dopls_2horns=dopls,
                     delta_power=self.delta_power,
-                    abs_tot=_abs_gg*_abs_ph,
+                    abs_tot=_abs_gg*_abs_ph[None, :],
                     toboost=(not self.apex_only)) 
                 sed_tot += sed_sy
                 sed_s_ += sed_s_sy
@@ -780,7 +713,7 @@ class SpectrumIBS: #!!!
                         scatter_angs_2horns=scatter_2horns) 
                 sed_ic, sed_s_ic = boost_sed_from_2horns(sed_s_e=sed_s_ic,
                     s_1d_2horns=s_2horns, e_ext=E_ext, e_ev=E, dopls_2horns=dopls,
-                    delta_power=self.delta_power, abs_tot=_abs_gg*_abs_ph,
+                    delta_power=self.delta_power, abs_tot=_abs_gg*_abs_ph[None, :],
                     toboost=(not self.apex_only)) 
                 sed_tot += sed_ic
                 sed_s_ += sed_s_ic
@@ -830,14 +763,15 @@ class SpectrumIBS: #!!!
         
         try:
             _mask = np.logical_and(self.e_ph >= e1/1.15, self.e_ph < e2*1.15)
-            _spl_sed_in_this_band = interp1d(self.e_ph[_mask], self.sed[_mask])
+            _good = _mask & np.isfinite(self.sed)
+            # e_good, sed_good = e_masked[_good], sed_masked[_good]
+            _spl_sed_in_this_band = interp1d(self.e_ph[_good], self.sed[_good])
         except:
             raise ValueError('Cannot create a spline for flux calculation.')
         _E = loggrid(e1, e2, n_dec = 59) # eV
         sed_here = _spl_sed_in_this_band(_E) # erg/s/cm^2 
         return trapz_loglog(sed_here / _E**2 * _E**epow, _E) * EV_TO_ERG**(epow-1) # erg^epow /s/cm^2
-
-            
+ 
     
     def fluxes(self, bands, epows=None):
         """
@@ -907,7 +841,8 @@ class SpectrumIBS: #!!!
             
         try:
             _mask = np.logical_and(self.e_ph >= e1/1.15, self.e_ph <= e2*1.15)
-            _spl_sed_in_this_band = interp1d(self.e_ph[_mask], self.sed[_mask])
+            _good = _mask & np.isfinite(self.sed)
+            _spl_sed_in_this_band = interp1d(self.e_ph[_good], self.sed[_good])
         except:
             raise ValueError('Cannot create a spline for index calculation.')
         _E = loggrid(e1, e2, n_dec = 51)
@@ -979,14 +914,17 @@ class SpectrumIBS: #!!!
         if self.sed is None:
             raise ValueError("You should call `calculate()` first to set SED")
         
-        
-        emiss_s = trapezoid(self.sed_s, self.e_ph, axis=1)
-
         ax[0].plot(self.e_ph, self.sed, label=None, **kwargs)
-        emiss_s_ = emiss_s
-        emiss_s_[np.isinf(emiss_s)]=np.nan
+        
+        emiss_to_integr = np.where(np.isfinite(self.sed_s), self.sed_s, 0)
+        # emiss_to_integr[]
+        emiss_s = trapezoid(emiss_to_integr, self.e_ph, axis=1)
+        # emiss_s_ = emiss_s
+        # emiss_s_[np.isinf(emiss_s)]=np.nan
+        # emiss_s_[np.isinf(emiss_s)]=0
+        
         # print(np.nanmax(emiss_s_))
-        ax[1].plot(self._ibs.s_mid, emiss_s/np.nanmax(emiss_s_), **kwargs)
+        ax[1].plot(self._ibs.s_mid, emiss_s/np.nanmax(emiss_s), **kwargs)
 
 
 
@@ -1047,7 +985,7 @@ if __name__ == "__main__":
     from ibsen.el_ev import ElectronsOnIBS
     # from scipy.integrate import trapezoid
     # fig, ax = plt.subplots(2, 1)
-    t = -30 * DAY
+    t = 30 * DAY
     Nibs = 25
     ibs = IBS(winds=winds,
               gamma_max=1.8,
@@ -1063,15 +1001,19 @@ if __name__ == "__main__":
     print('el_ev calculated')
     
     spec = SpectrumIBS(els=els, mechanisms=['s', 'i'], simple=True,
-                       apex_only=False, lorentz_boost=True)
+                       apex_only=False, lorentz_boost=True, abs_gg=True)
     E = np.concatenate((
-        loggrid(2.9e2, 1.1e4, 100),
+        loggrid(2.9e2, 2.1e13, 100),
         ))
     spec.calculate_sed_on_ibs(E=E
                               )
     print('spec calculated')
     print(spec.flux(3e2, 1e4))
     print(spec.index(3e2, 1e4))
+    print(spec.flux(4e11, 1e13))
+    print(spec.index(4e11, 1e13))
+    
+    
     
     # print(spec.flux(4e11, 1e13))
     # print(spec.index(4e11, 1e13))

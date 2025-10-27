@@ -1,19 +1,20 @@
 import numpy as np
 from numpy import pi, sin, cos
-# import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
 from scipy.interpolate import  interp1d
-from scipy.integrate import  tplquad
+from scipy.integrate import  tplquad, dblquad
 import xarray as xr
 from pathlib import Path
-# from joblib import Parallel, delayed
-# import multiprocessing
-# import Orbit as Orb
+from ibsen.utils import n_from_v, rotated_vector, absv, vector_angle, mydot
+from joblib import Parallel, delayed
+import multiprocessing
 
 c_light = 2.998e10
 sigma_b = 5.67e-5
 h_planck_red = 1.055e-27
 k_b = 1.381e-16
 Rsun = 7e10
+Msun = 2e33
 Ropt = 10 * Rsun
 DAY = 86400.
 
@@ -27,6 +28,7 @@ sigma_t = 8/3 * pi * (e_char**2 / MC2E)**2
 
 _here = Path(__file__).parent          
 _tabdata = _here / "absorb_tab" 
+
 ### ----------------- For photoelectric absorbtion ------------------------ ###
 # file_phel = Path(Path.cwd(), 'TabData', 'sgm_tbabs_new.txt')
 file_phel = _tabdata / 'sgm_tbabs_new.txt'
@@ -35,14 +37,6 @@ _e, _sgm = da_phel[:, 0], 10**da_phel[:, 1]
 per_ = np.argsort(_e)
 _e, _sgm = _e[per_], _sgm[per_]
 spl_phel = interp1d(np.log10(_e), np.log10(_sgm), 'linear')
-
-### ----------------------- For gg- absorbtion ---------------------------- ###
-# name_gg = Path(Path.cwd(), 'TabData', 'taus.nc')
-# name_gg = Path(Path.cwd(), 'TabData', 'taus_gg_new.nc')
-name_gg = _tabdata / 'taus_gg_new.nc'
-ds_gg = xr.open_dataset(name_gg)
-ds_gg = ds_gg.rename({'__xarray_dataarray_variable__': 'data'})
-
 
 
 def abs_photoel(E, Nh): 
@@ -89,155 +83,136 @@ def abs_photoel(E, Nh):
             absorb = np.exp(-sgm_sm * Nh * 1e22)
     return absorb
 
-def abs_gg_tab(E, nu_los, t, Teff): # gamma-gamma absorbtion
+def f_helper(mu0, d0):
     """
-    Tabulated gamma-gamma absorbtion of a target photon on a seed optical photons of the 
-    star. For PSRB only. The star is a blackbody with T = 33 000 K.
-    The line of sight inclination is fixed at 22.2 deg to the orbit normal.
-    The photon is assumed to be emitted at the pulsar position at time t.
-    Temporal. Only ONE of the arguments may be an
-    array: inputs of multi-dimentional meshgrid-arrays were not tested.
+    Phase-dependent helper for a Suchch & van Soelen analytical gg-absorbtion
+    """
+    sqrt_ = np.sqrt(1-mu0**2)
+    return 1/d0 * (
+        1/sqrt_ * (pi/2 - np.arctan(mu0/sqrt_) ) - 1
+        )
+
+def phi_helper(eg, R_star, T_star):
+    """
+    Phase-independent helper for a Suchch & van Soelen analytical gg-absorbtion
+    """
+    overall_coef = 64*pi / 3 / (h_planck * c_light)**3 * sigma_t * R_star**2
+    exp_ = np.exp(-2 * MC2E / eg / k_b / T_star)
+    return (  overall_coef * 
+              (MC2E / eg)**3 * 
+              exp_ / (1 - exp_)
+              )
+
+def gg_analyt(eg, x, y, R_star, T_star, nu_los, incl_los):
+    """
+    Gamma-gamma absorbtion coefficient (e^-tau) on the seed photon field  of 
+    the star.
 
     Parameters
     ----------
-    E : np.ndarray or float
-        Energy of a photon [eV].
-    nu_los : np.ndarray or float
+    eg : np.ndarray (Ne, )
+        The photon energy E_gamma / (m_e c^2).
+    x : float
+        X-coordinate in the pulsar orbit [cm] of the VHE photon emission.
+    y : float
+        Y-coordinate in the pulsar orbit [cm] of the VHE photon emission.
+    R_star : float
+        Optical star radius [cm].
+    T_star : float
+        Optical star effective temperature.
+    nu_los : float
         The angle in the pulsar plane between the direction from
         optical star  to periastron and
-        a projection of the LoS onto the orbit [rad]. Mind: the longtitude of 
-        periastron w (for PSRB, w=138 deg) = 3pi/2 - nu_los. So for PSRB,
+        a projection of the LoS onto the orbit [rad]. Connected to the longtitude of 
+        periastron w as: w = 3pi/2 - nu_los. So for PSRB w=138 deg and
         nu_los = 132 deg = 2.30 rad.
-    t : np.ndarray or float
-        Time relative to periastron passage [sec].
-    Teff : np.ndarray or float
-        Effective temperature of the star [K]
+    incl_los : float
+        The orbit inclination: the angle between the line of sight and the 
+        angular velosity of the pulsar.
 
     Returns
     -------
-    np.ndarray or float
-        Dimentionless multiplicative absorbtion coef = e^(-tau):  0 < coef < 1.
+    np.ndarray (Ne, )
+        Coeffifient e^tau <1 for the gamma-gamma absorbtion.
+        
+    Notes:
+        There is a pseuso-vectorization for the x- and y-coordinates. It works 
+        only for a scalar energy `eg`(e.g., eg=1e6), then you can pass x and y
+        coordinates as np.arrays or lists ot tuples of the same length (Nx,).
+        In this case, the return is np.ndarray (Nx,).
+        Currently you cannot pass both `eg` and `x`/`y` as vectors. 
 
     """
-    gammas = E * 1.6e-12 / MC2E
-    taus = ds_gg['data'].interp(eg=gammas,
-             nu_los = nu_los, t=t, Teff=Teff, method = 'linear').values
-    taus[taus != taus] = 0
-    return np.exp(-taus)
-
-
-def sigma_gg(e_star, e_g, mu):
-    """
-    Cross-section of anisotropic gamma gamma --> e+ e- conversion.
-    Simple analytic expression from 1703.00680 (they cite 
-    **(Jauch & Rohrlich 1976)**) that should work for any multidimentional
-    e_star, e_g, mu
-
-    Parameters
-    ----------
-    e_star : np.ndarray
-        Star seed photon energy in units of m_e c^2.
-    e_g : np.ndarray
-        Target photon energy in units of m_e c^2.
-    mu : np.ndarray
-        The scattering angle in [rad] but I'm slightly confused in which frame.
-        I hope, in the lab frame...
-
-    Returns
-    -------
-    np.ndarray
-        gamma-gamma cross-section [cm^2].
-
-    """
-    b =  (1 - 2 / e_g / e_star / (1 - mu))**0.5
-    return 3/16 * (1 - b**2) * ( (3 - b**4) * np.log( (1 + b) / (1 - b) ) - 2 * b * (2 - b**2) ) * sigma_t
-
-def n_ph(e, dist, R_star = Ropt, T_star = 3.3e4):
-    """
-    Planckian photon number density from a star.
-
-    Parameters
-    ----------
-    e : TYPE
-        Photon energy [erg].
-    dist : TYPE
-        Distance from the star [cm].
-    R_star : TYPE
-        Star radius [cm]. The default is the radius of LS 2883, 10 R_sol.
-    R_star : TYPE
-        Star effective temperature [K]. The default is the Teff of LS 2883,
-        which is 33.000 K here.
-
-    Returns
-    -------
-    TYPE
-        DESCRIPTION.
-
-    """
-    kappa = Ropt**2 / 4 / dist**2
-    w = e / h_planck_red
-    exp_ = np.exp(- e / k_b / T_star)
-    # d n / d e (e -- dimensionless) :
-    num_coef = 1 / 4 / np.pi**3 / c_light**3 / h_planck_red * MC2E
-    return num_coef * w**2 * exp_ / (1 - exp_) * kappa 
-
-def dist_to_star(l, dt, cos_):
-    # My brother in Christ, why do you have a funciton for the cosine theorem?
-    # But mind, the sign `+` is the correct one here.
-    return (l**2 + dt**2 + 2 * l * dt * cos_)**0.5
-
-# def tau_gg(t, eg, nu_los = 2.3, incl = 22.2/180.*pi, T_star = 3.3e4):
-#     """
-#     Optical depth due to gamma-gamma pair production for a photon of energy
-#     eg (in units of electron rest-energy) emitted from the position of a pulsar
-#     at the time t from periastron.
-
-#     Parameters
-#     ----------
-#     t : float
-#         Time from periastron [s].
-#     eg : float
-#         Energy of a photon divided by m_e c^2 [dimless].
-#     nu_los : float, optional
-#         The angle between the direction from the opt. star to the orbit 
-#         periastron and the projection of the LoS onto the orbit plane.
-#         The default is 2.3.
-#     incl : float, optional
-#         Inclination of the LoS to the normal to the pulsar plane.
-#         The default is 22.2/180.*pi.
-#     T_star : float, optional
-#         The effective temperature of a star. The default is 33.000 K.
-
-#     Returns
-#     -------
-#     float
-#         DESCRIPTION.
-
-#     """
-#     dist_here = Orb.Radius(t)
-#     vec_sp = Orb.N_from_V(Orb.Vector_S_P(t))
-#     vec_obs = Orb.N_from_V(Orb.N_disk(alpha = nu_los, incl = incl)) 
-#     cos_ = Orb.mydot(vec_sp, vec_obs)
-#     n_ph_here = lambda e_, mu_, l_: ( n_ph(e = e_ * MC2E,
-#         dist = dist_to_star(l = l_, dt=dist_here, cos_ = cos_),T_star = T_star)
-#                                      )
+    if isinstance(x, np.ndarray) or isinstance(x, list) or (isinstance(x, tuple)):
+        x, y = np.asarray(x), np.asarray(y)
+        r_init=[]
+        mu_init=[]
+        for x_, y_ in zip(x, y):
+            vec_init = np.array([x_, y_, 0])
+            r_init.append(absv(vec_init))
+            n_init = n_from_v(vec_init)
+            n_los = n_from_v(rotated_vector(alpha=nu_los, incl=incl_los))
+            mu_init.append( mydot(n_init, n_los) )
+        r_init, mu_init = [np.array(ar) for ar in (r_init, mu_init)]
+    else:
+        vec_init = np.array([x, y, 0])
+        r_init = absv(vec_init)
+        n_init = n_from_v(vec_init)
+        n_los = n_from_v(rotated_vector(alpha=nu_los, incl=incl_los))
+        mu_init = mydot(n_init, n_los) 
+    return np.exp(-2 * pi * 
+                  phi_helper(eg, R_star, T_star) *
+                  f_helper(mu_init, r_init)
+                  )
     
-#     sigma_here = lambda e_, mu_, l_: (
-#         sigma_gg(e_star = e_ , e_g = eg, mu = mu_)
-#                                       )
+
+if __name__=='__main__':
+    from ibsen.orbit import Orbit
+    T = 100 * DAY
+    orb = Orbit(sys_name='psrb')
+    T = orb.T
+    # orb.peek()
+    print(orb.nu_los)
+    print(orb.incl_los*180/pi)
+    print(orb.T/DAY)
+    print(orb.e)
     
-#     under_int = lambda e_, mu_, l_: ( n_ph_here(e_, mu_, l_) *
-#                                      sigma_here(e_, mu_, l_) * (1 - mu_)
-#                                      )
-
-#     low_inner = lambda l_, mu_: 2 / eg / (1 - mu_) * (1 + 1e-6)
-#     hi_inner = lambda l_, mu_: low_inner(l_, mu_) * 1e3
-
-#     return tplquad( under_int, 0, 50 * dist_here,
-#         -1, 1, low_inner, hi_inner, epsrel = 1e-3)[0] * 2 * np.pi 
-
-
-# if __name__=='__main__':
+    # orb1 = Orbit(na)
+    N = 80
+    tplot = np.linspace(-35*DAY, 35*DAY, 50)
+    xplot, yplot = orb.x(tplot), orb.y(tplot)
+    tau = []
+    # i = 0
+    # incls = np.linspace(0, 90, 20)
+    # ws = np.linspace(0, 360, 20) 
+    # egs = np.geomspace(1e3, 1e8, N)
+    abs_ = gg_analyt(eg = 1e11/5.11e5, x=xplot, y=yplot, R_star=9.2*Rsun,
+                                 T_star=3.3e4, incl_los=22*pi/180, nu_los=2.3)
+    # plt.plot(tplot/DAY, abs_)
+    plt.plot(tplot/DAY, -np.log(abs_))
+    
+    plt.yscale('log')
+    # for ix in range(tplot.size):
+    #     def func_par(i):
+    #     # for x_, y_ in zip(xplot, yplot):
+    #         # print(i); i+= 1
+    #         # tau_ = tau_gg_iso_2d(eg = 1e12/5.11e5, x=xplot[i], y=yplot[i], R_star=10*Rsun,
+    #         #                      T_star=3e4, incl_los=45*pi/180, nu_los=(270-w)*pi/180)
+    #         tau_ = gg_analyt(eg = egs[i], x=xplot[ix], y=yplot[ix], R_star=10*Rsun,
+    #                              T_star=3.3e4, incl_los=22*pi/180, nu_los=2.3)
+    #         return tau_
+    #     n_cores = multiprocessing.cpu_count()
+    #     print('n_cores', n_cores)
+    #     res = Parallel(n_jobs = n_cores)(delayed(func_par)(i_eg) for i_eg in range(egs.size))
+    #     #             taus[i_tef, i_nu, i_ts, :] = np.array(res)   
+    #     tau = np.array(res)
+    #     c_ = (tplot[ix] + 100*DAY)/200/DAY
+    #     color = [1-c_, 0, c_]
+    #     # plt.plot(180+orb.true_an(tplot)/pi*180, tau)
+    #     plt.plot(egs*5.11e5, np.exp(-tau), color=color)
+    #     plt.xscale('log')
+        
+    
     ### ------- compare tabulated tau-gg with just-calculated ------------ ####
     # import time
     # start = time.time()

@@ -1030,7 +1030,8 @@ class ElectronsOnIBS: #!!!
             The energy density of the optical star at the distance r_from_s.
 
         """
-        factor = 2. * (1. - (1. - (self.ibs.winds.Ropt / r_from_s)**2)**0.5 )
+        A_CONST = 4 * SIGMA_BOLTZ / C_LIGHT
+        factor = 2. * (1. - (1. - (self.ibs.winds.Ropt / r_from_s)**2)**0.5 ) # --> (r/d)^2 if r<<d
         u_dens = SIGMA_BOLTZ * self.ibs.winds.Topt**4 / C_LIGHT * factor
         return u_dens
     

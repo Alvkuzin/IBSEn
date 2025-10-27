@@ -7,7 +7,7 @@ from astropy import constants as const
 
 
 from ibsen.get_obs_data import get_parameters
-from ibsen.utils import rotated_vector, mydot, mycross, n_from_v, absv#, plot_isosurface_parametric
+from ibsen.utils import rotated_vector, mydot, mycross, n_from_v, absv, enhanche_jump
 from ibsen.orbit import Orbit
 import matplotlib.pyplot as plt
 
@@ -94,6 +94,16 @@ class Winds:
         Disk axis inclination from +Z (0 means disk in the orbital plane). Default ``30 deg``.
     f_d : float, optional
         Dimensionless decretion-disk pressure normalization. Default 0.
+    t_forwinds : float, optional
+        Time on which to calculate the winds structure. Default None.
+    p_enh : list of floats and lists of length 2, optional
+        A list of multipliers for the disk pressure. Default [1,].
+    h_enh : list of floats and lists of length 2, optional
+        A list of multipliers for the disk height. Default [1,].
+    p_enh_times : list of floats, or lists of length 2, or {'t1', 't2'}, optional
+        A list of times for pressure enhancement. Default [0,].
+    h_enh_times : list of floats, or lists of length 2, or {'t1', 't2'}, optional
+        A list of times for pressure enhancement. Default [0,].
     np_disk : float, optional
         Radial power-law index for the disk pressure in-plane, ``P∝r^{-np_disk}``.
         Default 3.
@@ -187,6 +197,8 @@ class Winds:
       pulsar-wind pressure along the line connecting the star and pulsar; the
       apex star→pulsar distance is then ``r_pe = r_sp - r_se``. 
     * The neutron star mass M_ns is currently unused.
+    * If the time t_forwinds is provided, the disk pressure and height are 
+      multiplied by p_enh or h_enh at the time t_forwinds. 
 
     """
     def __init__(self, orbit: Orbit, # orb:Orbit --- the orbit to use 
@@ -209,7 +221,14 @@ class Winds:
                  rad_prof = 'pl', # rad profile for r-dependence of disk pressure
                  r_trunk = None, # if rad_prof == 'bkpl', it's used as a truncation radius
                                   # beyond which P \propto r^-2
-                 
+                 ### for modeling jumps in pressure/height of the disk with time
+                 t_forwinds = None,
+                 p_enh = [1, ],
+                 p_enh_times = [0, ],
+                 h_enh = [1, ],
+                 h_enh_times = [0, ],
+                
+                 ### for magn fields of NS and opt star
                  ns_field_model = 'linear', # model of ns magn field
                  ns_field_surf = None, # B- parameter for ns field scaling 
                  ns_r_scale = None, # r-scale for NS field
@@ -227,11 +246,13 @@ class Winds:
         self.m_ns = M_ns
         self.alpha = alpha
         self.incl = incl
-        self.f_d = f_d
+        # self.f_d = f_d
+        # self.delta = delta
+        self.initiate_disk(f_d, delta, t_forwinds, p_enh,
+                           p_enh_times, h_enh, h_enh_times) # sets self.delta and self.f_d 
         self.f_p = f_p
         
         self.np_disk = np_disk
-        self.delta = delta
         self.height_exp = height_exp
         self.rad_prof = rad_prof
         if r_trunk is None:
@@ -249,6 +270,30 @@ class Winds:
         self.opt_field_model = opt_field_model
         self.opt_field_surf = opt_field_surf
         self.opt_r_scale = opt_r_scale
+        self.unit_star = n_from_v(rotated_vector(alpha=alpha, incl=incl)  )
+        
+    
+    def initiate_disk(self, f_d, delta, t_forwinds, p_enh, p_enh_times,
+                      h_enh, h_enh_times):
+        """ sets self.f_d and self.delta at the moment t_forwinds"""
+        self.t_forwinds = t_forwinds
+        self.p_enh = p_enh
+        self.h_enh = h_enh
+        self.p_enh_times = p_enh_times
+        self.h_enh_times = h_enh_times
+        if t_forwinds is None:
+            self.f_d = f_d
+            self.delta = delta
+        else:
+            t1_, t2_ = self.times_of_disk_passage
+            # print('winds ', h_enh_times)
+            
+            f_d_mult = enhanche_jump(t = t_forwinds, t1_disk=t1_, t2_disk=t2_,
+                                     times_enh=p_enh_times, param_to_enh=p_enh)
+            h_mult = enhanche_jump(t = t_forwinds, t1_disk=t1_, t2_disk=t2_,
+                                     times_enh=h_enh_times, param_to_enh=h_enh)
+            self.f_d = f_d * f_d_mult
+            self.delta = delta * h_mult
         
     
     def ns_field(r_to_p, model='linear', B_surf = None, r_scale = None,

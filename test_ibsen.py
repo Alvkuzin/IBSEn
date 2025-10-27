@@ -1,5 +1,11 @@
+"""
+    Very stupid very dumb very primitive very basic very shallow test of the
+    code. Just testing that everything can imported OK and simple calculations
+    are performed withour errors.
+"""
 import ibsen
 import numpy as np
+
 DAY = 86400
 t = 20 * DAY
 
@@ -35,7 +41,7 @@ from ibsen.lc import LightCurve
 
 lc = LightCurve(times = np.array([t,]), sys_name='psrb',
                 bands = ([300, 1e4],), cooling='no',
-                f_d=100, 
+                f_d=100,  h_enh=[1,], h_enh_times=['t1',],
                 ns_field_surf=1, ns_r_scale=ibs.x_apex, # so that the field in the apex = 1
                 apex_only=True, mechanisms=['syn',])
 lc.calculate()

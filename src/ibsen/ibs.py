@@ -9,12 +9,13 @@ from ibsen.winds import Winds
 from ibsen.ibs_norm import IBS_norm
 from ibsen.utils import beta_from_g, absv, \
  vector_angle, rotate_z, rotate_z_xy, n_from_v, plot_with_gradient
- 
+from ibsen.absorbtion.absorbtion import gg_analyt
 from astropy import constants as const
 
 C_LIGHT = 2.998e10
 DAY = 86400
 SIGMA_BOLTZ = float(const.sigma_sb.cgs.value)
+M_E = float(const.m_e.cgs.value)
 
 class IBS: #!!!
     """
@@ -165,22 +166,32 @@ class IBS: #!!!
         _r_sp = self.winds.orbit.r(self.t_forbeta)
         _nu_tr = self.winds.orbit.true_an(self.t_forbeta)
         x_sh, y_sh = self.ibs_n.x, self.ibs_n.y
+        x_sh_mid, y_sh_mid = self.ibs_n.x_mid, self.ibs_n.y_mid
+        
         x_sh, y_sh = x_sh * _r_sp, y_sh * _r_sp
+        x_sh_mid, y_sh_mid = x_sh_mid * _r_sp, y_sh_mid * _r_sp
+        
         x_sh += _r_sp * cos(_nu_tr)
         y_sh += _r_sp * sin(_nu_tr)
+        x_sh_mid += _r_sp * cos(_nu_tr)
+        y_sh_mid += _r_sp * sin(_nu_tr)
+        
         self.x = x_sh
         self.y = y_sh
+        self.x_mid = x_sh_mid
+        self.y_mid = y_sh_mid
+        
         self.s, self.s_max, self.s_max_g, self.r, self.r1, self.x_apex, self.ds_dtheta = [
             _stuff * _r_sp for _stuff in (self.ibs_n.s, self.ibs_n.s_max, 
                             self.ibs_n.s_max_g, self.ibs_n.r, self.ibs_n.r1, 
                             self.ibs_n.x_apex, self.ibs_n.ds_dtheta)]
         
         self.s_m, self.s_p, self.s_mid, self.ds, \
-            self.x_m, self.x_p, self.x_mid, self.dx, \
-        self.y_m, self.y_p, self.y_mid, self.dy = [_stuff * _r_sp for _stuff in (
+            self.x_m, self.x_p, self.dx, \
+        self.y_m, self.y_p, self.dy = [_stuff * _r_sp for _stuff in (
             self.ibs_n.s_m, self.ibs_n.s_p, self.ibs_n.s_mid, self.ibs_n.ds, 
-            self.ibs_n.x_m, self.ibs_n.x_p, self.ibs_n.x_mid, self.ibs_n.dx,
-            self.ibs_n.y_m, self.ibs_n.y_p, self.ibs_n.y_mid, self.ibs_n.dy)]          
+            self.ibs_n.x_m, self.ibs_n.x_p, self.ibs_n.dx,
+            self.ibs_n.y_m, self.ibs_n.y_p,  self.ibs_n.dy)]          
     
     def s_interp(self, s_, what):
         """
@@ -220,6 +231,35 @@ class IBS: #!!!
     def g(self):
         """Bulk Lorentz factor along the IBS."""
         return IBS.gma(self, s = self.s)
+    
+    def gg_abs(self, e_phot):
+        """ gamma-gamma absorbtion coefficient (as e^-tau) in every point of
+        the IBS. 
+        
+        e_phot in eV
+        """
+        gg_res = np.array([gg_analyt(eg = e_phot / 5.11e5,
+                         x = self.x[i], y = self.y[i],
+                         R_star=self.winds.Ropt, T_star = self.winds.Topt,
+                         nu_los=self.winds.orbit.nu_los,
+                         incl_los=self.winds.orbit.incl_los)
+                           for i in range(self.x.size)])
+        return gg_res
+    
+    def gg_abs_mid(self, e_phot):
+        """ gamma-gamma absorbtion coefficient (as e^-tau) in every midpoint of
+        the IBS.
+        
+        e_phot in eV
+        """
+        gg_res = np.array([gg_analyt(eg = e_phot / 5.11e5,
+                         x = self.x_mid[i], y = self.y_mid[i],
+                         R_star=self.winds.Ropt, T_star = self.winds.Topt,
+                         nu_los=self.winds.orbit.nu_los,
+                         incl_los=self.winds.orbit.incl_los)
+                           for i in range(self.x_mid.size)])
+        return gg_res
+    
         
     def peek(self, fig=None, ax=None, show_winds=False,
              ibs_color='k', to_label=True,
@@ -339,14 +379,14 @@ if __name__ == "__main__":
     from ibsen.orbit import Orbit
     import matplotlib.pyplot as plt   
     # example of how to use the IBS class
-    orbit_ = Orbit(period=100*DAY, e=0, tot_mass=30*2e33, nu_los=np.pi*0.71577)
-    winds_ = Winds(orbit=orbit_, sys_name='psrb', f_d=0)
+    orbit_ = Orbit('psrb')
+    winds_ = Winds(orbit=orbit_, sys_name='psrb', f_d=100)
     
     fig, ax = plt.subplots(2, 1)
     import time
     start = time.time()
     ibs = IBS(gamma_max=5, s_max=2, s_max_g=2,
-              t_to_calculate_beta_eff=25*DAY, winds=winds_, n=21) 
+              t_to_calculate_beta_eff=0*DAY, winds=winds_, n=21) 
         # print(ibs.theta_inf/np.pi)
     ibs.peek(show_winds=True, to_label=False, showtime=(-60*DAY, 60*DAY),
              ibs_color='scattering', ax=ax[0], fig=fig)
@@ -358,10 +398,27 @@ if __name__ == "__main__":
     # ax[1].scatter(ibs.s, ibs.dopl, label='dopl', c='k', s=4)
     # ax[1].scatter(ibs.ibs_n.s*ibs.r_sp, ibs.ibs_n.dopl, label='dopl', c='b', s=4)
     # ax[1].scatter(ibs.s_mid, ibs.dopl_mid, label='dopl', c='r', s=4)
-    ax[1].scatter(ibs.s, ibs.ds_dtheta, label='dopl', c='k', s=4)
-    ax[1].scatter(ibs.s, ibs.ibs_n.ds_dtheta*ibs.r_sp, label='dopl', c='r', s=4)
+    # ax[1].scatter(ibs.s, ibs.ds_dtheta, label='dopl', c='k', s=4)
+    # ax[1].scatter(ibs.s, ibs.ibs_n.ds_dtheta*ibs.r_sp, label='dopl', c='r', s=4)
+    # ax[1].scatter(ibs.s_mid, ibs.x_mid, c='k')
+    # ax[1].scatter(ibs.s_mid, ibs.y_mid, c='r')
+    # ax[1].scatter(ibs.s, ibs.r1, c='b')
+    
+    
+    # ax[1].scatter(ibs.s, ibs.gg_abs(1e12))
+    # ax[1].scatter(ibs.s_mid, ibs.gg_abs_mid(1e12))
+    e_ph = np.geomspace(1e7, 1e14, 1000)
+    ax[1].scatter(e_ph, ibs.gg_abs(e_ph)[1])
+    ax[1].scatter(e_ph, ibs.gg_abs(e_ph)[20])
+    ax[1].scatter(e_ph, ibs.gg_abs(e_ph)[40])
+    ax[1].set_xscale('log')
+    ax[1].set_yscale('log')
+    print(ibs.gg_abs(e_ph)[1, 500])
+    print(ibs.gg_abs(e_ph)[20, 500])
+    
+    
     
     s = np.linspace(-2, 3, 51) * 1e13
-    ax[1].scatter(s, ibs.s_interp(s, 'ds_dtheta'), label='dopl', c='m', s=4)
+    # ax[1].scatter(s, ibs.s_interp(s, 'ds_dtheta'), label='dopl', c='m', s=4)
     
     

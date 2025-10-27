@@ -14,7 +14,8 @@ M_SOLAR = float(const.M_sun.cgs.value)
 PARSEC = float(const.pc.cgs.value)
 DAY = 86400
 
-def unpack_orbit(orb_type=None, T=None, e=None, M=None, nu_los=None, **kwargs):
+def unpack_orbit(orb_type=None, T=None, e=None, M=None, nu_los=None,
+                 incl_los=None, **kwargs):
     """
     Unpack orbital parameters with priority to explicit arguments.
 
@@ -23,11 +24,11 @@ def unpack_orbit(orb_type=None, T=None, e=None, M=None, nu_los=None, **kwargs):
             - If None: return the explicitly passed values.
             - If dict: use it as a source of defaults.
             - If str: use get_parameters(orb_type) to get a dict of defaults.
-        T, e, M, nu_los: float or None
+        T, e, M, nu_los, incl_los: float or None
             Explicit values that override defaults.
 
     Returns:
-        Tuple of T, e, M, nu_los
+        Tuple of T, e, M, nu_los, incl_los
     """
     # Step 1: Determine the source of defaults
     if isinstance(orb_type, str):
@@ -45,14 +46,9 @@ def unpack_orbit(orb_type=None, T=None, e=None, M=None, nu_los=None, **kwargs):
     e_final = e if e is not None else defaults.get('e')
     M_final = M if M is not None else defaults.get('M')
     nu_los_final = nu_los if nu_los is not None else defaults.get('nu_los')
-
-
-    # # Add any additional parameters you expect
-    # # For example, if you want to also unpack `omega`, `i`, etc.:
-    result = [T_final, e_final, M_final, nu_los_final]
-    # for key in kwargs:
-    #     value = kwargs[key] if kwargs[key] is not None else defaults.get(key)
-    #     result.append(value)
+    incl_los_final = incl_los if incl_los is not None else defaults.get('incl_los')
+    
+    result = [T_final, e_final, M_final, nu_los_final, incl_los_final]
 
     return tuple(result)
 
@@ -84,6 +80,8 @@ class Orbit:
   nu_los : float, optional
       Line-of-sight true anomaly (radians) in the orbital plane. Used to
       locate the time of line-of-sight passage.
+  incl_los : float, optional
+      Line-of-sight inclination.
   n : int or None, optional
       If not None (default 1000), pre-compute and store tabulated arrays of
       :math:`x(t), y(t), z(t), r(t), \\nu_\\mathrm{true}(t)` and ``t`` over
@@ -102,6 +100,8 @@ class Orbit:
       Gravitational parameter :math:`G M` (cgs).
   nu_los : float
       Line-of-sight true anomaly (rad).
+  incl_los : float
+      Line-of-sight inclination (rad).      
   name : str or None
       Value of ``sys_name`` used to initialize the orbit (if any).
   n : int or None
@@ -134,13 +134,16 @@ class Orbit:
   distances are returned in centimeters (cgs).
 
   """
-    def __init__(self, sys_name=None, period=None, e=None, tot_mass=None, nu_los=None, n=1000):
-        T_, e_, mtot_, nu_los_ = unpack_orbit(orb_type=sys_name, 
-                                T=period, e=e, M=tot_mass, nu_los=nu_los)
+    def __init__(self, sys_name=None, period=None, e=None, tot_mass=None,
+                 nu_los=None, incl_los=None, n=1000):
+        T_, e_, mtot_, nu_los_, incl_los_ = unpack_orbit(orb_type=sys_name, 
+                                T=period, e=e, M=tot_mass, nu_los=nu_los,
+                                incl_los=incl_los)
         self.e = e_
         self.T = T_
         self.mtot = mtot_
         self.nu_los = nu_los_
+        self.incl_los = incl_los_
         self.GM = G * mtot_
         self.name = sys_name
         self.xtab = None

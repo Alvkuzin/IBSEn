@@ -358,32 +358,25 @@ class IBS_norm: #!!!
 
         """
         return beta_from_g(g_vel = self.g_mid)
-    
-    
-    # def lor_trans_b_iso_on_ibs(self, B_iso):
-    #     return lor_trans_b_iso(B_iso=B_iso, gamma=self.g)
-    
-    # def lor_trans_ug_iso_on_ibs(self, ug_iso):
-    #     return lor_trans_ug_iso(ug_iso=ug_iso, gamma=self.g)
-    
-    # @property
-    # def theta_inf(self):
-    #     """
-    #     The asymptotic angle of the IBS in radians (> pi/2).
 
+    
+    @property
+    def theta_inf_analytical(self):
+        """
+        The asymptotic angle of the IBS in radians (> pi/2).
 
-    #     Returns
-    #     -------
-    #     float
-    #         theta_inf [rad].
+        Returns
+        -------
+        float
+            theta_inf [rad].
 
-    #     """
-    #     to_solve1 = lambda tinf: tinf - tan(tinf) - pi / (1. - self.beta)
-    #     try:
-    #         th_inf = brentq(to_solve1, pi/2 + 1e-5, pi - 1e-5)
-    #         return th_inf
-    #     except:
-    #         return np.nan
+        """
+        to_solve1 = lambda tinf: tinf - tan(tinf) - pi / (1. - self.beta)
+        try:
+            th_inf = brentq(to_solve1, pi/2 + 1e-5, pi - 1e-5)
+            return th_inf
+        except:
+            return np.nan
     
         
     def theta1_CRW(self, theta):

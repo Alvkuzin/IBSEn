@@ -79,6 +79,292 @@ def unpack(query, dictat):
         list_.append(dictat[name])
     return list_
 
+def fill_nans(sed):
+    """
+    Replace NaN values in a 2D SED array by the half-sum of their immediate
+    neighbors along the energy axis (axis=1).
+
+    Parameters
+    ----------
+    sed : array-like, shape (n_s, n_e)
+        Input 2D array with NaNs to be filled.
+
+    Returns
+    -------
+    filled : np.ndarray, shape (n_s, n_e)
+        A copy of `sed` where each NaN at position [:, j] (1 <= j < n_e-1)
+        has been replaced by 0.5*(sed[:, j-1] + sed[:, j+1]) whenever both neighbors
+        are non-NaN. Edge columns are left unchanged.
+    """
+    sed_ = np.array(sed, dtype=float, copy=True)
+    nan_mask = np.isfinite(sed)
+    
+    # Shifted arrays for left and right neighbors
+    left  = np.roll(sed,  1, axis=1)
+    right = np.roll(sed, -1, axis=1)
+    
+    # Candidate fill values
+    fill_values = 0.5 * (left + right)
+    
+    # Valid positions: not edges, original is NaN, and neighbors are non-NaN
+    valid = nan_mask.copy()
+    valid[:,  0] = False
+    valid[:, -1] = False
+    valid &= ~np.isfinite(left) & ~np.isfinite(right)
+    
+    # Fill NaNs
+    sed_[valid] = fill_values[valid]
+    return sed_    
+
+def fill_nans_1d(arr):
+    """
+    Replace NaNs in a 1D array by the half-sum of their immediate neighbors.
+
+    Parameters
+    ----------
+    arr : array-like, shape (n,)
+        Input 1D array with possible NaNs.
+
+    Returns
+    -------
+    filled : np.ndarray, shape (n,)
+        A copy of `arr` where each NaN at position i (1 <= i < n-1)
+        is replaced by 0.5*(arr[i-1] + arr[i+1]) whenever both neighbors
+        are non-NaN. Edge elements (i=0 and i=n-1) remain unchanged.
+    """
+    a = np.array(arr, dtype=float, copy=True)
+    nan_mask = np.isfinite(a)
+    
+    # neighbors
+    left  = np.roll(a,  1)
+    right = np.roll(a, -1)
+    
+    # fill values
+    fill_vals = 0.5 * (left + right)
+    
+    # valid positions: not edges, original is NaN, neighbors are valid
+    valid = nan_mask.copy()
+    valid[0] = False
+    valid[-1] = False
+    valid &= ~np.isfinite(left) & ~np.isfinite(right)
+    
+    a[valid] = fill_vals[valid]
+    return a
+
+def thresh_crit(x, xarr, yarr):
+    """
+    Given arrays (xarr, yarr), finds the value of y corresponding to a (scalar)
+    x, treating (xarr, yarr) either as a multiple steps function OR, if 
+    xarr[i]/yarr[i] are lists [x1, x2]/[y1, y2], the linear function between
+    (x1, y1) and (x2, y2).
+
+    Iterates through paired thresholds/intervals in ``xarr`` and values in ``yarr``
+    to compute an output ``p`` for a given scalar ``x``. Each element of ``xarr``
+    can be either:
+
+    - a **scalar threshold**: if ``xarr[i] <= x``, set ``p = yarr[i]`` and continue;
+      otherwise stop and return the current ``p``.
+    - a **list/iterable interval** (e.g., ``[xmin, xmax]``): if ``x < min(xarr[i])``,
+      stop and return the current ``p``; if ``x >= max(xarr[i])``, set
+      ``p = max(yarr[i])`` and continue; otherwise (``min <= x < max``) linearly
+      interpolate between ``min(yarr[i])`` and ``max(yarr[i])`` over the interval.
+
+    The search proceeds from ``i = 0`` upward and may exit early when ``x`` falls
+    before the current scalar/interval. The default value is ``p = 1`` if no
+    entries are applicable.
+
+    Parameters
+    ----------
+    x : float
+        Query point at which to evaluate the piecewise criterion.
+    xarr : list of (float or list-like)
+        Sequence describing breakpoints. Each element is either a scalar threshold
+        (treated as ``(-inf, threshold]`` w.r.t. updating ``p``) or a list-like
+        interval (e.g., ``[xmin, xmax]``) over which interpolation is applied.
+        **Assumed sorted in ascending order** of position along the x-axis and
+        non-overlapping.
+    yarr : list of (float or list-like)
+        Values associated with each entry of ``xarr``. For scalar thresholds,
+        ``yarr[i]`` should be a numeric scalar assigned to ``p`` when applicable.
+        For intervals, ``yarr[i]`` should be a list-like of two numeric endpoints
+        ``[pmin, pmax]`` (order does not matter; ``min``/``max`` are used) which
+        define the interpolation range.
+
+    Returns
+    -------
+    p : float
+        The mapped value at ``x`` after processing thresholds/intervals in order.
+        Defaults to ``1`` if no rule applies.
+
+    Notes
+    -----
+    - The function updates ``p`` **in order** and may update it multiple times
+      before returning; the last applicable rule wins.
+    - For interval entries, linear interpolation is computed as::
+
+          p = pmin + (pmax - pmin) * (x - xmin) / (xmax - xmin)
+
+      where ``xmin = min(xarr[i])`` and ``xmax = max(xarr[i])``.
+    - This implementation requires ``numpy`` as ``np`` in scope.
+
+    Assumptions
+    -----------
+    - ``xarr`` entries are ordered from low to high along the axis and do not
+      overlap in a way that would contradict early stopping.
+    - Interval lengths are strictly positive (``xmax > xmin``).
+
+    Raises
+    ------
+    ZeroDivisionError
+        If an interval has zero length (``xmax == xmin``).
+    TypeError, ValueError
+        If elements of ``xarr``/``yarr`` are not numeric or shape-mismatched.
+
+    Examples
+    --------
+    Scalar thresholds only:
+
+    >>> xarr = [0.0, 1.0, 2.0]
+    >>> yarr = [10.0, 20.0, 30.0]
+    >>> thresh_crit(1.5, xarr, yarr)
+    20.0
+
+    Mixed thresholds and an interpolated interval:
+
+    >>> xarr = [0.0, [1.0, 3.0], 4.0]
+    >>> yarr = [5.0, [10.0, 30.0], 40.0]
+    >>> thresh_crit(2.0, xarr, yarr)   # inside [1, 3] => interpolate from 10 to 30
+    20.0
+    >>> thresh_crit(3.5, xarr, yarr)   # beyond interval but before 4.0 => keeps last p
+    30.0
+    >>> thresh_crit(-1.0, xarr, yarr)  # before first threshold/interval
+    1
+    """
+    p = 1
+    for i in range(len(xarr)):
+        if not isinstance(xarr[i], list):
+            if xarr[i] <= x:
+                p = yarr[i]
+            else:
+                break
+        if isinstance(xarr[i], list):
+            min_here, max_here = np.min(xarr[i]), np.max(xarr[i])
+            if min_here <= x:
+                if x >= max_here:
+                    p = np.max(yarr[i])
+                else:
+                    pmin, pmax = np.min(yarr[i]), np.max(yarr[i])
+                    p = pmin + (pmax-pmin)/(max_here-min_here) * (x - min_here)
+            else:
+                break
+    return p
+
+def enhanche_jump(t, t1_disk, t2_disk, times_enh, param_to_enh): 
+    """
+    Map a time ``t`` to an enhanced parameter via placeholder-substituted thresholds,
+    ensuring the resulting schedule is ordered.
+
+    Replaces symbolic placeholders ``'t1'`` and ``'t2'`` in ``times_enh`` with the
+    concrete times ``t1_disk`` and ``t2_disk``. After substitution, verifies that the
+    sequence is **non-decreasing** along the time axis (by comparing each item's
+    position: scalars by their value, intervals by their lower bound). If not
+    ordered, raises a ``ValueError``. Finally, evaluates the mapping with
+    :func:`thresh_crit` to obtain the enhanced value.
+
+    Parameters
+    ----------
+    t : float
+        The query time at which to evaluate the enhancement.
+    t1_disk : float
+        Value that replaces any ``'t1'`` placeholders in ``times_enh``.
+    t2_disk : float
+        Value that replaces any ``'t2'`` placeholders in ``times_enh``.
+    times_enh : list of (float or list-like or {'t1','t2'})
+        Sequence of thresholds/intervals accepted by :func:`thresh_crit`.
+        Elements may be scalars, two-element intervals (e.g., ``[t_min, t_max]``),
+        or placeholders ``'t1'``/``'t2'``. The list **must be ordered in ascending
+        time** after substitution; intervals are compared by their lower bound.
+    param_to_enh : list of (float or list-like)
+        Values corresponding to ``times_enh`` (same length). Scalars for scalar
+        thresholds; two-element sequences (``[pmin, pmax]`` in any order) for
+        linearly interpolated intervals.
+
+    Returns
+    -------
+    current_H_enh : float
+        The enhanced/mapped parameter at time ``t`` after substitution and
+        evaluation via :func:`thresh_crit`.
+
+    Raises
+    ------
+    ValueError
+        If the substituted schedule (``times_enh`` with placeholders replaced) is
+        not non-decreasing by position, or if an interval is empty.
+    TypeError
+        If an entry cannot be interpreted as a scalar or a two-element interval.
+
+    Notes
+    -----
+    - This is a thin wrapper around :func:`thresh_crit` with an ordering check.
+    - Interval interpolation follows::
+
+          p = pmin + (pmax - pmin) * (t - tmin) / (tmax - tmin)
+
+      with ``tmin = min(interval)`` and ``tmax = max(interval)``.
+    - Equal positions are allowed (non-decreasing order). If multiple entries share
+      the same position, later entries may overwrite earlier ones in
+      :func:`thresh_crit`.
+
+    Examples
+    --------
+    With placeholders and an interval:
+
+    >>> t = 5.0
+    >>> t1_disk, t2_disk = 3.0, 10.0
+    >>> times_enh = ['t1', [4.0, 8.0], 't2']
+    >>> param_to_enh = [2.0, [2.0, 5.0], 7.0]
+    >>> enhanche_jump(t, t1_disk, t2_disk, times_enh, param_to_enh)
+    2.75
+
+    Unordered schedule (will raise):
+
+    >>> enhanche_jump(5.0, 3.0, 10.0, [6.0, 2.0, 't2'], [1.0, 2.0, 3.0])
+    Traceback (most recent call last):
+        ...
+    ValueError: times_enh (after substitution) must be non-decreasing by position ...
+    """
+    # print('unils ', times_enh)
+    t_enh_ = [t1_disk if t_ == 't1' else t_ for t_ in times_enh]
+    t_enh_final = [t2_disk if t_ == 't2' else t_ for t_ in t_enh_]
+    # print(t_enh_final)
+    # Determine each item's "position" for ordering:
+    #  - scalar -> value
+    #  - interval -> lower bound
+    def _position(item):
+        if isinstance(item, (list, tuple, np.ndarray)):
+            if len(item) == 0:
+                raise ValueError("Empty interval in times_enh after substitution.")
+            print(item)
+            lo = float(np.min(item))
+            # hi = float(np.max(item))
+            # zero-length is allowed for ordering, but thresh_crit would divide by zero on interpolation
+            return lo
+        try:
+            return float(item)
+        except Exception as exc:
+            raise TypeError(f"Cannot interpret entry {item!r} as scalar or interval.") from exc
+
+    positions = [_position(v) for v in t_enh_final]
+
+    # Check non-decreasing order
+    if any(positions[i] < positions[i - 1] for i in range(1, len(positions))):
+        raise ValueError(
+            "times_enh (after substitution) must be non-decreasing by position. "
+            f"Computed positions: {positions}"
+        )
+    current_H_enh = thresh_crit(t, t_enh_final, param_to_enh)
+    return current_H_enh
+
 def mydot_novec(a, b):
     """
     Scalar product of vectors a, b.
@@ -875,7 +1161,10 @@ def plot_with_gradient(fig, ax, xdata, ydata, some_param, colorbar=False, lw=2,
 #     return res
 
 # if __name__ == "__main__":
-    ### А ты сюдой зачем смотришь? Что ты хочешь тут увидеть? Вот то-то и оно.
+#     #### А ты сюдой зачем смотришь? Что ты хочешь тут увидеть? Вот то-то и оно.
+#     times_enh = [0,]
+#     param_to_enh = [1,]
+#     print(enhanche_jump(5.5, 3.0, 10.0, times_enh, param_to_enh))
 #     import matplotlib.pyplot as plt 
     # n1 = [np.array([0, -1, 0.0]),  np.array([1, 0, 0.0])]
     # n1 = n_from_v(n1)
