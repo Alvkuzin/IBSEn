@@ -83,7 +83,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 DAY = 86400
 orb = Orbit(period=25*DAY, e=0.7, tot_mass=30*2e33,
-                 nu_los=20*np.pi/180)
+                 nu_los=90*np.pi/180)
 t = np.linspace(-20*DAY, 70*DAY, 1000)
 plt.plot(orb.x(t), orb.y(t))
 ```
@@ -91,7 +91,7 @@ plt.plot(orb.x(t), orb.y(t))
 Initiate Winds with a decretion disk pressure 100 times stronger than the polar wind (in which sense - see tutorials) and plot the star-emission zone separation VS time.
 ```python
 from ibsen.winds import Winds
-winds = Winds(orbit=orb, f_d=100, Ropt=7e11, Mopt=28*2e33)
+winds = Winds(orbit=orb, f_d=100, Ropt=7e11, Mopt=28*2e33, Topt=4e4)
 t1 = np.linspace(-3*DAY, 3*DAY, 1000)
 plt.plot(t1/DAY, winds.dist_se_1d(t1))
 td1, td2 = winds.times_of_disk_passage
@@ -109,7 +109,7 @@ ibs.peek(showtime=(-3*DAY, 3*DAY), show_winds=True, ibs_color='doppler')
 Take a look at the electron spectrum over IBS if the apex magnetic field is 1G:
 ```python
 from ibsen.el_ev import ElectronsOnIBS
-elev = ElectronsOnIBS(Bp_apex=1, ibs=ibs, cooling='no')
+elev = ElectronsOnIBS(Bp_apex=10, ibs=ibs, cooling='stat_mimic')
 elev.calculate()
 elev.peek()
 ```
@@ -122,12 +122,45 @@ spec.calculate_sed_on_ibs(E = np.geomspace(3e2, 1e13, 1001))
 spec.peek()
 ```
  6. ``LightCurve`` performs the spectrum calculation for a number of moments of time calculating the light curve.
-
+```python
+from ibsen.lc import LightCurve
+t_lc = np.linspace(-3*DAY, 3*DAY, 100)
+lc = LightCurve(times = t_lc, 
+                to_parall=True,
+                period=25*DAY, e=0.7, tot_mass=30*2e33,
+                 nu_los=90*np.pi/180, 
+                 Ropt=7e11, Mopt=28*2e33, Topt=4e4,
+                distance=3e3*3e18,
+                bands = ([300, 1e4], ), cooling='stat_mimic',
+                f_d=100, 
+                ns_field_surf=10, ns_r_scale=ibs.x_apex, # so that the field in the apex (at t = 2 days) = 1
+                simple=True, mechanisms=['syn', 'ic'])
+lc.calculate()
+lc.peek()
+```
 See tutorials in `tutorials` folder for the complete description of these models.
 
 ## Notes
 
 The codebase is tailored to observational analysis of PSR B1259-63 but can be adapted to other similar systems.
+
+### TODO
+
+ 1. Clean the mess with sys_name = dict/str/None; probably separate it into name + dict\_of\_params. Generally: make it simpler to initiate an orbit/winds.
+ 2. Better names for: `tot_mass` etc. in Orbit; magnetic-field related stuff in Winds.
+ 3. Write the tutorial for the absorbtion; how to tabulate tau_gg for any system and how to use it.
+ 4. Now `spec`/`lc` essentially support gg-absorbtion only for PSRB; fix.
+ 5. Occasional NaNs in IC spectrum. Should we ignore them (e.g. by interpolating)? Are they there because of something internally Naimian or is it my fault?
+ 6. Sometimes LC has problems with calculating fluxes if more than 1 band is passed. 
+The value of E out of interpolating segment, apparently. 
+The error depends on the time grid, so probably it happens only at some times.
+ 7. In LC, write interpolators for everything, not just sed/sed_s/emiss, so that all quantities can be inferred at times t as lc.quant\_i(t).
+ 8. Make LC.peek_animate() which would make cute gifs with animated scheme of the system and SEDs (e/gamma) also animated. 
+ 9. It seems rather simple to make a 3d interactable visualisation of the IBS. The only thing that stops me is the visualisation of winds in 3d. 
+For now, the only more or less visually pleasant 3d representation of winds in Python is plot a loooot of points with densities \propto density/pressure of winds,
+but it is very time-consuming. Maybe we shoud just ignore winds in 3d visualisation.
+
+
 
 ## License 
 
