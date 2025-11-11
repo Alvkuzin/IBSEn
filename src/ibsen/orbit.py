@@ -32,7 +32,7 @@ def unpack_orbit(orb_type=None, T=None, e=None, M=None, nu_los=None,
     """
     # Step 1: Determine the source of defaults
     if isinstance(orb_type, str):
-        known_types = ['psrb', 'rb', 'bw']
+        known_types = ['psrb', 'rb', 'bw', 'ls5039', 'psrj2032', 'ls61']
         if orb_type not in known_types:
             raise ValueError(f"Unknown orbit type: {orb_type}")
         defaults = get_parameters(orb_type)
@@ -262,14 +262,14 @@ class Orbit:
             E(t).
 
         """
-
-        if isinstance(t, np.ndarray):
-            E_ = np.array([
-                Orbit._ecc_an_novec(self, t_now) for t_now in t
-                ])
-            return E_
-        else:
-            return Orbit._ecc_an_novec(self, t)
+        t_ = np.asarray(t)
+        if t_.ndim == 0:
+            return float(Orbit._ecc_an_novec(self, float(t_)))
+        
+        E_ = np.array([
+            Orbit._ecc_an_novec(self, t_now) for t_now in t_
+            ])
+        return E_
         
         
     def r(self, t):
@@ -309,6 +309,49 @@ class Orbit:
         ecc_ = Orbit.ecc_an(self, t)
         b_ = self.e / (1 + (1 - self.e**2)**0.5)
         return ecc_ + 2 * np.arctan(b_ * sin(ecc_) / (1 - b_ * cos(ecc_))) 
+    
+
+    def t_from_true_an(self, nu):
+        """
+        Time since periastron for a given true anomaly nu.
+        Inverts true_an(t): solves t such that true_an(t) == nu.
+    
+        Parameters
+        ----------
+        nu : float or array_like
+            True anomaly [rad]. May be a scalar or 1D array.
+    
+        Returns
+        -------
+        np.ndarray
+            Time(s) since periastron passage [s], same shape as `nu`.
+        """
+        nu = np.asarray(nu, dtype=float)
+        twopi = 2 * pi
+    
+        # Normalize ν to (-π, π] for a consistent branch
+        nu_norm = (nu + pi) % twopi - pi
+    
+        # Convert true anomaly -> eccentric anomaly using a quadrant-safe formula
+        # E = 2 * atan2( sqrt(1-e) * sin(ν/2), sqrt(1+e) * cos(ν/2) )
+        s = np.sin(0.5 * nu_norm)
+        c = np.cos(0.5 * nu_norm)
+        E = 2.0 * np.arctan2(np.sqrt(1.0 - self.e) * s, np.sqrt(1.0 + self.e) * c)
+    
+        # Wrap E to (-π, π] to match the chosen branch
+        E = (E + pi) % twopi - pi
+        M = E - self.e * sin(E)
+        # Add the correct number of full revolutions from the *unwrapped* ν
+        # k is the integer number of 2π turns implied by ν with t=0 at ν=0.
+        # For ν >= 0: k = floor(ν / 2π); for ν < 0: k = ceil(ν / 2π)
+        # This makes small negative ν map to small negative t (not near -T).
+        turns = np.where(nu >= 0.0, np.floor(nu / twopi+0.5),
+                         np.ceil(nu / twopi-0.5)).astype(float)
+        M_ext = M + turns * twopi
+        n = twopi / self.T
+        t = M_ext / float(n)
+        return np.asarray(t)
+
     
     @property
     def t_los(self):
@@ -496,7 +539,6 @@ class Orbit:
             ax[2].scatter(x=t_pos/x_norma,
                           y=Orbit.true_an(self, t_pos) * 180. / pi, color=color)
             
-        
 
         for ax_ in ax[1:]:
             pos = ax_.get_position()        # get [left, bottom, width, height]
@@ -509,8 +551,3 @@ class Orbit:
                 size,
             ]
             ax_.set_position(new_pos)
-    
-    # plt.show()
-            
-    
-    

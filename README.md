@@ -61,13 +61,14 @@ python test_ibsen.py
 You should get the output of
 
 ```bash
-PSR B1259-63 periastron dist [au] =  0.8351387469104009
+PSR B1259-63 periastron dist [au] =  0.9057236987554738
 ----- at t=20 days after periastron -----
-effective beta =  0.04164299814865532
-IBS opening angle =  2.4497037807657196
-tot number of e on IBS =  7.309978160194949e+36
-from spec, flux 0.3-10 keV =  4.360820860647597e-15
-from LC, flux 0.3-10 keV =  [4.36492365e-15]
+effective beta =  0.04263905625747101
+IBS opening angle =  2.444830788798784
+tot number of e on IBS =  7.282276841876412e+36
+from spec, flux 0.3-10 keV =  4.344295436885205e-15
+from LC, flux 0.3-10 keV =  [4.3471866e-15]
+
 ```
 
 
@@ -75,13 +76,54 @@ from LC, flux 0.3-10 keV =  [4.36492365e-15]
 The package consists of six main classes, you can find their description and usage examples in ``tutorials``:
  
  1. ``Orbit`` (self-explanatory);
+Let's initiate an Orbit object and plot an orbit: 
+```python
+from ibsen.orbit import Orbit
+import matplotlib.pyplot as plt   
+import numpy as np
+DAY = 86400
+orb = Orbit(period=25*DAY, e=0.7, tot_mass=30*2e33,
+                 nu_los=20*np.pi/180)
+t = np.linspace(-20*DAY, 70*DAY, 1000)
+plt.plot(orb.x(t), orb.y(t))
+```
  2. ``Winds`` in which currently all information about NS, optical star, and their winds is stored. Here you can calculate the magnetic/photon fields in the random point from stars, winds pressure, or the position of the equilibrium between pulsar and optical stars winds as a function of time;
+Initiate Winds with a decretion disk pressure 100 times stronger than the polar wind (in which sense - see tutorials) and plot the star-emission zone separation VS time.
+```python
+from ibsen.winds import Winds
+winds = Winds(orbit=orb, f_d=100, Ropt=7e11, Mopt=28*2e33)
+t1 = np.linspace(-3*DAY, 3*DAY, 1000)
+plt.plot(t1/DAY, winds.dist_se_1d(t1))
+td1, td2 = winds.times_of_disk_passage
+plt.axvline(td1/DAY)
+plt.axvline(td2/DAY)
+```
  3. ``IBS``: Intrabinary shock - an object with stuff about IBS geometry and the bulk motion along it;
+Initiate IBS at a time of 2 days after the periastron and take a look at it, colorcoding it with the doppler factor.
+```python
+from ibsen.ibs import IBS
+ibs = IBS(winds=winds, t_to_calculate_beta_eff=2*DAY)
+ibs.peek(showtime=(-3*DAY, 3*DAY), show_winds=True, ibs_color='doppler')
+```
  4. ``ElectronsOnIBS`` describes the population of ultra-relativistic electrons on the IBS, allows to calculate stationary e-spectra in each point of IBS;
- 5. ``SpectrumIBS`` computes the non-thermal spectrum of the ultra-relativistic electrons;
+Take a look at the electron spectrum over IBS if the apex magnetic field is 1G:
+```python
+from ibsen.el_ev import ElectronsOnIBS
+elev = ElectronsOnIBS(Bp_apex=1, ibs=ibs, cooling='no')
+elev.calculate()
+elev.peek()
+```
+ 5. ``SpectrumIBS`` computes the non-thermal photon spectrum emitted by the ultra-relativistic electrons;
+Calculate the synchrotron + inverse Compton spectrum from the population of electrons we obtained above:
+```python
+from ibsen.spec import SpectrumIBS
+spec = SpectrumIBS(els=elev, simple=True, mechanisms=['syn', 'ic',], distance=3e3*3e18)
+spec.calculate_sed_on_ibs(E = np.geomspace(3e2, 1e13, 1001))
+spec.peek()
+```
  6. ``LightCurve`` performs the spectrum calculation for a number of moments of time calculating the light curve.
 
-See tutorials in `tutorials` folder.
+See tutorials in `tutorials` folder for the complete description of these models.
 
 ## Notes
 

@@ -45,7 +45,7 @@ def unpack_dist(sys_name=None, dist=None):
     """
     # Step 1: Determine the source of defaults
     if isinstance(sys_name, str):
-        known_types = ['psrb', 'rb', 'bw']
+        known_types = ['psrb', 'rb', 'bw', 'ls5039', 'psrj2032', 'ls61']
         if sys_name not in known_types:
             raise ValueError(f"Unknown orbit type: {sys_name}")
         defaults = get_parameters(sys_name)
@@ -629,7 +629,7 @@ class SpectrumIBS: #!!!
             # _abs_gg = absb.abs_gg_tab(E=E,
             #     nu_los = self._orb.nu_los, t = self._ibs.t_forbeta, 
             #     Teff=self._ibs.winds.Topt)
-            _abs_gg = self._ibs.gg_abs_mid(E) # an array of size (s_mid.size, E.size)
+            _abs_gg = self._ibs.gg_abs_mid(E, analyt=False) # an array of size (s_mid.size, E.size)
             
             
         # -------------------------------------------------------------------------
@@ -762,7 +762,7 @@ class SpectrumIBS: #!!!
         """
         
         try:
-            _mask = np.logical_and(self.e_ph >= e1/1.15, self.e_ph < e2*1.15)
+            _mask = np.logical_and(self.e_ph >= e1/1.1, self.e_ph < e2*1.1)
             _good = _mask & np.isfinite(self.sed)
             # e_good, sed_good = e_masked[_good], sed_masked[_good]
             _spl_sed_in_this_band = interp1d(self.e_ph[_good], self.sed[_good])
@@ -840,7 +840,7 @@ class SpectrumIBS: #!!!
         """
             
         try:
-            _mask = np.logical_and(self.e_ph >= e1/1.15, self.e_ph <= e2*1.15)
+            _mask = np.logical_and(self.e_ph >= e1/1.1, self.e_ph <= e2*1.1)
             _good = _mask & np.isfinite(self.sed)
             _spl_sed_in_this_band = interp1d(self.e_ph[_good], self.sed[_good])
         except:
@@ -967,56 +967,4 @@ class SpectrumIBS: #!!!
         ax[1].set_yscale('log')
         ax[1].set_title(r'Emissivity along IBS')
         
-    
-    
-if __name__ == "__main__":
-    from ibsen.orbit import Orbit
-
-    DAY = 86400.
-    AU = 1.5e13
-    
-    sys_name = 'psrb' 
-    orb = Orbit(sys_name = sys_name, n=1003)
-    from ibsen.winds import Winds
-    winds = Winds(orbit=orb, sys_name = sys_name, alpha=-8/180*pi, incl=23*pi/180,
-              f_d=150, f_p=0.1, delta=0.01, np_disk=3, rad_prof='pl')     
-    
-    from ibsen.ibs import IBS
-    from ibsen.el_ev import ElectronsOnIBS
-    # from scipy.integrate import trapezoid
-    # fig, ax = plt.subplots(2, 1)
-    t = 30 * DAY
-    Nibs = 25
-    ibs = IBS(winds=winds,
-              gamma_max=1.8,
-              s_max=1.,
-              s_max_g=4.,
-              n=Nibs,
-              t_to_calculate_beta_eff=t) 
-    # ibs1.peek(show_winds=True, to_label=False, showtime=(-100*DAY, 100*DAY),
-    #          ibs_color='doppler')
-    els = ElectronsOnIBS(Bp_apex=7.768, ibs=ibs, cooling='stat_ibs', eta_a = 1e20,
-                     to_inject_e = 'ecpl', p_e=1.7) 
-    els.calculate()
-    print('el_ev calculated')
-    
-    spec = SpectrumIBS(els=els, mechanisms=['s', 'i'], simple=True,
-                       apex_only=False, lorentz_boost=True, abs_gg=True)
-    E = np.concatenate((
-        loggrid(2.9e2, 2.1e13, 100),
-        ))
-    spec.calculate_sed_on_ibs(E=E
-                              )
-    print('spec calculated')
-    print(spec.flux(3e2, 1e4))
-    print(spec.index(3e2, 1e4))
-    print(spec.flux(4e11, 1e13))
-    print(spec.index(4e11, 1e13))
-    
-    
-    
-    # print(spec.flux(4e11, 1e13))
-    # print(spec.index(4e11, 1e13))
-    
-    
-    spec.peek()
+        

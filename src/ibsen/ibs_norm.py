@@ -746,25 +746,3 @@ class IBS_norm: #!!!
         
             
         ax.legend()
-
-
-if __name__ == "__main__":
-    from ibsen.orbit import Orbit
-    import matplotlib.pyplot as plt   
-    # example of how to use the IBS class
-    orbit_ = Orbit(period=100*DAY, e=0, tot_mass=30*2e33, nu_los=np.pi*0.71577)
-    
-    ###########################################################################
-    # fig, ax = plt.subplots(1, 1)
-    # ibs_n = IBS_norm(beta=0.1, s_max=2.5, gamma_max=1.5, n=99, unit_los=[1, -1, 0])
-    # ibs_n1 = ibs_n.rotate(-135 * pi/180)
-    # ibs_n2 = IBS_norm(beta=0.01, s_max=1, gamma_max=1.5, n=37, unit_los=[1, -1, 0]).rotate(45 * pi/180)
-    # col_key = 'scattering'
-    # ibs_n.peek(ibs_color=col_key, ax=ax, fig=fig)
-    # ibs_n1.peek(ibs_color=col_key, ax=ax, fig=fig)
-    # ibs_n2.peek(ibs_color=col_key, ax=ax, fig=fig)
-    
-    # plt.scatter(ibs_n1.s, ibs_n1.scattering_angle/pi, s=2, color='k')
-    # plt.scatter(ibs_n1.s_mid, ibs_n1.scattering_angle_mid/pi, s=2, color='r')
-    
-    # plt.scatter(ibs_n1.x_mid, ibs_n1.y_mid, s=2, color='r')

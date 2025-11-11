@@ -1,7 +1,7 @@
 [project]
 name = "ibsen"
-version = "0.3.0"
-description = "A toy model for pulsar binary system"
+version = "0.3.1"
+description = "IBS emission of a pulsar+OB-star binary"
 authors = [{name = "Lesha"}]
 dependencies = ["numpy"]
 requires-python = ">=3.9"

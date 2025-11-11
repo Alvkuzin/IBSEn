@@ -39,7 +39,7 @@ def unpack_star(sys_name=None, Topt=None, Ropt=None, Mopt=None):
     """
     # Step 1: Determine the source of defaults
     if isinstance(sys_name, str):
-        known_types = ['psrb', 'rb', 'bw']
+        known_types = ['psrb', 'rb', 'bw', 'ls5039', 'psrj2032', 'ls61']
         if sys_name not in known_types:
             raise ValueError(f"Unknown orbit type: {sys_name}")
         defaults = get_parameters(sys_name)
@@ -689,11 +689,13 @@ class Winds:
             Distance from the star to the wind-wind interaction region [cm].
 
         """
-        if isinstance(t, np.ndarray):
-            res = np.array( [Winds._dist_se_1d_nonvec(self, t_) for t_ in t] )
-        else:
-            res = Winds._dist_se_1d_nonvec(self, t)
-        return res
+        t_ = np.asarray(t)
+        if t_.ndim == 0:
+            return float(Winds._dist_se_1d_nonvec(self, float(t_)))
+        
+        return np.array( [
+            Winds._dist_se_1d_nonvec(self, t_now) for t_now in t_
+            ] )
     
     def beta_eff(self, t):
         """
@@ -1071,15 +1073,3 @@ class Winds:
     #     ax0.set_xlim(-1.2*x_scale, 1.2*min(x_scale, self.orbit.r_periastr) )
     #     ax0.set_ylim(-1.2*y_scale, 1.2*y_scale) 
 
-
-if __name__ == 'main':
-    DAY = 86400.
-    AU = 1.5e13
-    
-    sys_name = 'psrb' 
-    orb = Orbit(sys_name = sys_name, n=1003)
-    winds = Winds(orbit=orb, sys_name = sys_name, alpha=-10/180*pi, incl=23*pi/180,
-                  f_d=165, f_p=0.1, delta=0.02, np_disk=3, rad_prof='pl', r_trunk=None,
-                 height_exp=0.25)
-    winds.peek()
-    # plt.show()

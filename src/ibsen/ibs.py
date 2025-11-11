@@ -9,7 +9,7 @@ from ibsen.winds import Winds
 from ibsen.ibs_norm import IBS_norm
 from ibsen.utils import beta_from_g, absv, \
  vector_angle, rotate_z, rotate_z_xy, n_from_v, plot_with_gradient
-from ibsen.absorbtion.absorbtion import gg_analyt
+from ibsen.absorbtion.absorbtion import gg_analyt, gg_tab
 from astropy import constants as const
 
 C_LIGHT = 2.998e10
@@ -232,32 +232,66 @@ class IBS: #!!!
         """Bulk Lorentz factor along the IBS."""
         return IBS.gma(self, s = self.s)
     
-    def gg_abs(self, e_phot):
+    def gg_abs(self, e_phot, analyt=False, filename='psrb'):
         """ gamma-gamma absorbtion coefficient (as e^-tau) in every point of
-        the IBS. 
+        the IBS. The absortion is supposed to be on a photon field of a central
+        star which is represented by a BB.
         
-        e_phot in eV
+        E_phot : np.ndarray
+            [eV] - energy of the VHE photon.
+        
+        analyt : bool, optional
+            Whether to use the analytical approximation of 
+            Sushch and van Soelen, 2023. Default False
+            
+        filename : str or path, optional
+            Path to the file with tabulated opacities. File should be inside
+            the absorbtion/absorb_tab folder. Default 'psrb', which reads 
+            the file corresponding to PSR B1259-63.
+            
         """
-        gg_res = np.array([gg_analyt(eg = e_phot / 5.11e5,
+        if analyt:
+            gg_res = np.array([gg_analyt(eg = e_phot / 5.11e5,
                          x = self.x[i], y = self.y[i],
                          R_star=self.winds.Ropt, T_star = self.winds.Topt,
                          nu_los=self.winds.orbit.nu_los,
                          incl_los=self.winds.orbit.incl_los)
                            for i in range(self.x.size)])
+        else:
+            gg_res = gg_tab(E=e_phot, x=self.x, y=self.y, 
+                            orb=self.winds.orbit,
+                            filename=filename)
         return gg_res
     
-    def gg_abs_mid(self, e_phot):
-        """ gamma-gamma absorbtion coefficient (as e^-tau) in every midpoint of
-        the IBS.
+    def gg_abs_mid(self, e_phot, analyt=False, filename='psrb'):
+        """ gamma-gamma absorbtion coefficient (as e^-tau) in every point of
+        the IBS. The absortion is supposed to be on a photon field of a central
+        star which is represented by a BB.
         
-        e_phot in eV
+        E_phot : np.ndarray
+            [eV] - energy of the VHE photon.
+        
+        analyt : bool, optional
+            Whether to use the analytical approximation of 
+            Sushch and van Soelen, 2023. Default False
+            
+        filename : str or path, optional
+            Path to the file with tabulated opacities. File should be inside
+            the absorbtion/absorb_tab folder. Default 'psrb', which reads 
+            the file corresponding to PSR B1259-63.
+            
         """
-        gg_res = np.array([gg_analyt(eg = e_phot / 5.11e5,
+        if analyt:
+            gg_res = np.array([gg_analyt(eg = e_phot / 5.11e5,
                          x = self.x_mid[i], y = self.y_mid[i],
                          R_star=self.winds.Ropt, T_star = self.winds.Topt,
                          nu_los=self.winds.orbit.nu_los,
                          incl_los=self.winds.orbit.incl_los)
                            for i in range(self.x_mid.size)])
+        else:
+            gg_res = gg_tab(E=e_phot, x=self.x_mid, y=self.y_mid,
+                            orb=self.winds.orbit,
+                            filename=filename)
         return gg_res
     
         
@@ -348,6 +382,8 @@ class IBS: #!!!
         ax.plot( [0, 1.5*_xp], [0, 1.5*_yp], color='k', alpha=0.3, ls='--',)
 
         ##################################################################################
+        if showtime is None:
+            showtime = [-self.winds.orbit.T/2, self.winds.orbit.T/2]
         show_cond  = np.logical_and(self.winds.orbit.ttab > showtime[0], 
                                     self.winds.orbit.ttab < showtime[1])
         orb_x, orb_y = self.winds.orbit.xtab[show_cond], self.winds.orbit.ytab[show_cond]
@@ -374,51 +410,4 @@ class IBS: #!!!
             raise AttributeError(name)
         return getattr(ibs_n_, name)
  
-            
-if __name__ == "__main__":
-    from ibsen.orbit import Orbit
-    import matplotlib.pyplot as plt   
-    # example of how to use the IBS class
-    orbit_ = Orbit('psrb')
-    winds_ = Winds(orbit=orbit_, sys_name='psrb', f_d=100)
-    
-    fig, ax = plt.subplots(2, 1)
-    import time
-    start = time.time()
-    ibs = IBS(gamma_max=5, s_max=2, s_max_g=2,
-              t_to_calculate_beta_eff=0*DAY, winds=winds_, n=21) 
-        # print(ibs.theta_inf/np.pi)
-    ibs.peek(show_winds=True, to_label=False, showtime=(-60*DAY, 60*DAY),
-             ibs_color='scattering', ax=ax[0], fig=fig)
-    # # # ax[1].plot(ibs1.s, ibs1.y, label='y(s)')
-
-    # ax[1].scatter(ibs.s, ibs.scattering_angle_comoving/pi, label='scattering / pi', c='k', s=4)
-    # ax[1].scatter(ibs.s_mid, ibs.scattering_angle_comoving_mid/pi, label='scattering / pi', c='r', s=4)
-    
-    # ax[1].scatter(ibs.s, ibs.dopl, label='dopl', c='k', s=4)
-    # ax[1].scatter(ibs.ibs_n.s*ibs.r_sp, ibs.ibs_n.dopl, label='dopl', c='b', s=4)
-    # ax[1].scatter(ibs.s_mid, ibs.dopl_mid, label='dopl', c='r', s=4)
-    # ax[1].scatter(ibs.s, ibs.ds_dtheta, label='dopl', c='k', s=4)
-    # ax[1].scatter(ibs.s, ibs.ibs_n.ds_dtheta*ibs.r_sp, label='dopl', c='r', s=4)
-    # ax[1].scatter(ibs.s_mid, ibs.x_mid, c='k')
-    # ax[1].scatter(ibs.s_mid, ibs.y_mid, c='r')
-    # ax[1].scatter(ibs.s, ibs.r1, c='b')
-    
-    
-    # ax[1].scatter(ibs.s, ibs.gg_abs(1e12))
-    # ax[1].scatter(ibs.s_mid, ibs.gg_abs_mid(1e12))
-    e_ph = np.geomspace(1e7, 1e14, 1000)
-    ax[1].scatter(e_ph, ibs.gg_abs(e_ph)[1])
-    ax[1].scatter(e_ph, ibs.gg_abs(e_ph)[20])
-    ax[1].scatter(e_ph, ibs.gg_abs(e_ph)[40])
-    ax[1].set_xscale('log')
-    ax[1].set_yscale('log')
-    print(ibs.gg_abs(e_ph)[1, 500])
-    print(ibs.gg_abs(e_ph)[20, 500])
-    
-    
-    
-    s = np.linspace(-2, 3, 51) * 1e13
-    # ax[1].scatter(s, ibs.s_interp(s, 'ds_dtheta'), label='dopl', c='m', s=4)
-    
     

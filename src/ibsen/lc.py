@@ -42,7 +42,7 @@ sed_unit = u.erg / u.s / u.cm**2
 RAD_IN_DEG = pi / 180.0
 
 
-def unpack_orbit(orb_type=None, T=None, e=None, M=None, nu_los=None, 
+def unpack_orbit(orb_type=None, T=None, e=None, M=None, nu_los=None, incl_los=None,
                  Topt=None, Ropt=None, Mopt=None,
                  dist=None):
     """
@@ -53,15 +53,15 @@ def unpack_orbit(orb_type=None, T=None, e=None, M=None, nu_los=None,
             - If None: return the explicitly passed values.
             - If dict: use it as a source of defaults.
             - If str: use get_parameters(orb_type) to get a dict of defaults.
-        T, e, M, nu_los: float or None
+        T, e, M, nu_los, incl_los: float or None
             Explicit values that override defaults.
 
     Returns:
-        Tuple of T, e, M, nu_los
+        Tuple of T, e, M, nu_los, incl_los, Topt, Ropt, Mopt, dist
     """
     # Step 1: Determine the source of defaults
     if isinstance(orb_type, str):
-        known_types = ['psrb', 'rb', 'bw']
+        known_types = ['psrb', 'rb', 'bw', 'ls5039', 'psrj2032', 'ls61']
         if orb_type not in known_types:
             raise ValueError(f"Unknown orbit type: {orb_type}")
         defaults = get_parameters(orb_type)
@@ -75,6 +75,8 @@ def unpack_orbit(orb_type=None, T=None, e=None, M=None, nu_los=None,
     e_final = e if e is not None else defaults.get('e')
     M_final = M if M is not None else defaults.get('M')
     nu_los_final = nu_los if nu_los is not None else defaults.get('nu_los')
+    incl_los_final = incl_los if incl_los is not None else defaults.get('incl_los')
+    
     Topt_final = Topt if Topt is not None else defaults.get('Topt')
     Ropt_final = Ropt if Ropt is not None else defaults.get('Ropt')
     Mopt_final = Mopt if Mopt is not None else defaults.get('Mopt')
@@ -84,7 +86,7 @@ def unpack_orbit(orb_type=None, T=None, e=None, M=None, nu_los=None,
 
     # # Add any additional parameters you expect
     # # For example, if you want to also unpack `omega`, `i`, etc.:
-    result = [T_final, e_final, M_final, nu_los_final, Topt_final,
+    result = [T_final, e_final, M_final, nu_los_final, incl_los_final, Topt_final,
               Ropt_final, Mopt_final, dist_final]
     # T_, e_, mtot_, nu_los_, Ropt_, Topt_, Mopt_, distance_
     # for key in kwargs:
@@ -239,6 +241,8 @@ class LightCurve:
         Star→apex distance r_se(t) [cm].
     B_p_apexs, B_opt_apexs : ndarray, shape (Nt,)
         Pulsar/stellar magnetic fields at the apex [G].
+    winds_classes : list of Winds 
+        Winds objects at each time.
     ibs_classes : list of IBS
         IBS objects at each time.
     els_classes : list of ElectronsOnIBS
@@ -294,6 +298,7 @@ class LightCurve:
                  full_spec = False,
                  
                  sys_name=None, period=None, e=None, tot_mass=None, nu_los=None,
+                 incl_los=None,
                  Ropt=None, Topt=None, Mopt=None,  distance = None,
                  
                  M_ns = 1.4*M_SOLAR, f_p = 0.1, 
@@ -336,13 +341,15 @@ class LightCurve:
                                    # or across all energies
         ################ ---- arguments from orbit ---- #######################
         self.sys_name = sys_name
-        T_, e_, mtot_, nu_los_, Topt_, Ropt_, Mopt_, distance_ = unpack_orbit(
+        T_, e_, mtot_, nu_los_, incl_los_, Topt_, Ropt_, Mopt_, distance_ = unpack_orbit(
             orb_type=sys_name, T=period, e=e, M=tot_mass, nu_los=nu_los,
+            incl_los=incl_los,
                 Ropt=Ropt, Topt=Topt, Mopt=Mopt, dist=distance) 
         self.period = T_
         self.e = e_  
         self.tot_mass = mtot_
         self.nu_los = nu_los_
+        self.incl_los = incl_los_
         self.Ropt = Ropt_
         self.Topt = Topt_
         self.Mopt = Mopt_
@@ -406,9 +413,7 @@ class LightCurve:
         self.mechanisms = mechanisms
         ####################################################################
         self.orbit = None
-        # self.winds = None
         self.set_orbit()
-        # self.set_winds()
 
     ############################################################
     def set_orbit(self):
@@ -420,46 +425,10 @@ class LightCurve:
                         period=self.period,
                         e=self.e,
                         tot_mass=self.tot_mass,
-                        nu_los=self.nu_los, n=None)
+                        nu_los=self.nu_los, incl_los=self.incl_los,
+                        n=1001)
             
             self.orbit = orb
-        
-    ############################################################    
-    # def set_winds(self):
-    #     """
-    #     Set the winds object based on the orbit and other parameters.
-    #     """
-    #     if self.orbit is None:
-    #         self.set_orbit()
-    #     orb = self.orbit
-        
-    #     winds = Winds(orbit=orb, 
-    #                    sys_name = self.sys_name,
-    #                    alpha=self.alpha_deg/180*pi, 
-    #                    incl=self.incl_deg*pi/180,
-    #                    f_d=self.f_d,
-    #                    # f_d=100,
-    #                    f_p=self.f_p, 
-    #                    delta=self.delta,
-    #                    np_disk=self.np_disk,
-    #                    rad_prof=self.rad_prof,
-    #                    height_exp=self.height_exp,
-    #                    r_trunk=self.r_trunk,
-
-    #                    Ropt = self.Ropt,
-    #                    Topt=self.Topt, 
-    #                    Mopt=self.Mopt,
-
-    #                    ns_field_model = self.ns_field_model,
-    #                    ns_field_surf = self.ns_field_surf,
-    #                    ns_r_scale = self.ns_r_scale,
-    #                    ns_L_spindown = self.ns_L_spindown,
-    #                    ns_sigma_magn = self.ns_sigma_magn,
-    #                    opt_field_model = self.opt_field_model,
-    #                    opt_field_surf = self.opt_field_surf,
-    #                    opt_r_scale = self.opt_r_scale,
-    #                    )
-    #     self.winds = winds
 
     def calculate_at_time(self, t):
         """
@@ -651,7 +620,6 @@ class LightCurve:
                     E_ph_now, sed_tot_now, sed_s_now, fluxes_now, indexes_now, 
                     emissiv_now,
                     ) = self.calculate_at_time(t)
-
                 ###################################
                 r_sps[i_t] = r_sp_now
                 r_pes[i_t] = r_pe_now
@@ -704,10 +672,7 @@ class LightCurve:
             e_es = list(e_es)
             spec_classes = list(spec_classes)
             e_phots = list(e_phots)
-            seds, seds_s, emiss_s = [np.array(ar) for ar in (seds, seds_s, emiss_s)]
-            # seds = [np.array(ar) for ar in seds]
-            # seds_s = [np.array(ar) for ar in seds_s]
-            # emiss_s = [np.array(ar) for ar in emiss_s]
+        seds, seds_s, emiss_s = [np.array(ar) for ar in (seds, seds_s, emiss_s)]
         
 
         self.r_sps = r_sps
@@ -729,21 +694,9 @@ class LightCurve:
         
         self.f_ds_eff = np.array([winds_.f_d for winds_ in winds_classes])
         self.deltas_eff = np.array([winds_.delta for winds_ in winds_classes])
-        
-    
-    
-        
-    # def f(self, t):
-    #     ok = np.isfinite(self.seds)
-    #     spl_ = interp1d(self.times[ok], self.seds[ok])
-    #     return spl_(t)
     
     def sed(self, t):
-        # ok = np.isfinite(self.seds)
         seds_ok = fill_nans(self.seds)
-        print(self.times.shape)
-        print(seds_ok.shape)
-        
         spl_ = interp1d(self.times, seds_ok, axis=0)
         return spl_(t)
 
@@ -836,115 +789,3 @@ class LightCurve:
         ax[2].set_ylim(1e-3*maxsed, maxsed*1.5)
 
         plt.show()
-
-if __name__ == "__main__":
-
-# from ibsen.lc import LightCurve
-    t1 = np.linspace(-650, -40, 40) * DAY
-    t2 = np.linspace(-40, 90, 30) * DAY
-    # t2 = np.linspace(-15, -15, 1) * DAY
-    t3 = np.linspace(100, 650, 40) * DAY
-    #ts = np.concatenate((t1, t2, t3))
-    ts=t2
-    lc = LightCurve(sys_name = 'psrb',
-                    n_ibs = 16,
-                    p_e = 1.7, 
-                    times = ts,
-                    bands = ([3e2, 1e4], [4e11, 1e13],
-                             ),
-                    epows=[1, 0],
-                    bands_ind = ([3e3, 1e4],),
-                    full_spec = True,
-                    to_parall = True, 
-                    f_d = 150,
-                    mechanisms=['syn', 'ic'],
-                    apex_only=False,
-                    ic_ani=True,
-                    simple = True,
-                    alpha_deg = -8.,
-                    s_max = 1,
-                    gamma_max=1.2,
-                    delta=0.01,
-                    cooling='stat_mimic',
-                    eta_a=1, # you may want to set that to 1e20 if cooling='adv'
-                    ns_field_surf=1,
-                    
-                    
-                    abs_gg=False
-                   )
-    import time
-    start = time.time()
-    lc.calculate()
-    print(f'LC done in {time.time() - start}')
-    # lc.peek()
-    print(lc.seds.shape)
-    print(lc.seds_s.shape)
-    print(lc.emiss_s.shape)
-    print(len(lc.e_phots[0]))
-    
-    
-    plt.close('all')     # closes all open figures
-    plt.plot(lc.e_phots[0], lc.seds[20])
-    plt.plot(lc.e_phots[0], lc.seds[21])
-    plt.xscale('log')
-    plt.yscale('log')
-    tplot = np.linspace(-45, 80, 120)
-    seds = lc.sed(tplot)
-    print(seds.shape)
-    print(lc.times[20]/DAY)
-    print(lc.times[21]/DAY)
-    plt.plot(lc.e_phots[0], lc.sed(lc.times[21]*0.5+lc.times[20]*0.5))
-    plt.show()
-
-    # fig, ax = plt.subplots(nrows=3, sharex=True)
-    # # DAY=86400
-    # Ne_e = []
-    # Ninj = []
-    # edots = []
-    # i_show = 0
-    # for i_t in range(lc.times.size):
-    #     e_cl_ =  lc.els_classes[i_t]
-    #     n_ = e_cl_.ibs.n
-    #     Ne_e.append( np.sum(trapezoid(lc.dNe_des[i_t], lc.e_es[i_t], axis=1)) )
-    #     # Ne_e.append( lc.dNe_des[i_t][16, 101] )
-    #     # print(e_cl_.ibs.s.size)
-    #     smesh, emesh = np.meshgrid(e_cl_.ibs.s[n_:2*n_], e_cl_.e_vals, indexing='ij')
-    #     f_inj_now = e_cl_.f_inject(smesh, emesh)
-    #     edot_a_now = e_cl_.edot(smesh, emesh)[n_-1, :]
-        
-    #     Ninj.append(np.sum(trapezoid(f_inj_now, e_cl_.e_vals)))
-    #     edots.append((e_cl_.e_vals / edot_a_now)[0])
-    # # Ninjected = np.array([ np.sum(trapezoid(lc.dNe_des[i], lc.e_es[i], axis=1))
-    #                       # 
-    #                       # for i in range(lc.times.size)])
-    # # Ne_e = np.array([ (trapezoid((trapezoid(lc.dNe_des[i], lc.e_es[i], axis=1)), lc.ibs_classes[i].s ) /
-    # #                    trapezoid(np.ones(lc.ibs_classes[i].n), lc.ibs_classes[i].s[lc.ibs_classes[i].n:2*lc.ibs_classes[i].n] )) 
-    # #                  for i in range(lc.times.size)])
-    # Ne_e = np.array(Ne_e)
-    # Ninj = np.array(Ninj)
-    # edots = np.array(edots)
-    # ax[0].plot(lc.times/DAY, lc.fluxes)
-    # # print(lc.fluxes)
-    # ax[1].plot(lc.times/DAY, Ne_e)
-    # # if i_t == 1:
-    # print(lc.times[i_show]/DAY)
-    # ax[2].plot(lc.times/DAY, edots)    
-    # # ax[2].plot(lc.spec_classes[i_show].e_ph, lc.spec_classes[i_show].sed)
-    # # ax[2].set_xscale('log')
-    # # ax[2].set_yscale('log')
-        
-    # # ax[1].plot(lc.times/DAY, lc.r_pes/lc.orbit.r_periastr)
-    # # ax[1].plot(lc.times/DAY, lc.r_ses/lc.orbit.r_periastr)
-    
-    # # ax[1].plot(lc.times/DAY, lc.B_p_apexs)
-    # # ax[1].plot(lc.times/DAY, lc.B_opt_apexs)
-    
-    
-    # ax[0].set_yscale('log')
-    
-
-
-
-
-
-        
