@@ -7,20 +7,15 @@ from scipy.integrate import trapezoid
 from numpy import pi, sin, cos
 from joblib import Parallel, delayed
 import multiprocessing
-# import time
-# import matplotlib.animation as animation
 from scipy.interpolate import interp1d
 from astropy import constants as const
 from ibsen.get_obs_data import get_parameters
 from ibsen.utils import loggrid, fill_nans
-# import ibsen
 from ibsen.orbit import Orbit
 from ibsen.winds import Winds
 from ibsen.ibs import IBS
 from ibsen.spec import SpectrumIBS
 from ibsen.el_ev import ElectronsOnIBS
-
-import pickle
 
 G = float(const.G.cgs.value)
 K_BOLTZ = float(const.k_B.cgs.value)

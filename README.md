@@ -1,6 +1,6 @@
 # IBSEn: calculates the IBS Emissivity for PSR B1259-63.
 
-IBSEn: **I**ntra**B**inary **S**hock **E**mission **n**-**n**ot-mea**n**i**n**g-a**n**ythi**n**g is a collection of Python scripts for processing, modeling, and visualizing observational data of the gamma-ray binariy pulsars, especially PSR B1259-63. This project includes tools to handle observational data, compute intrabinary shock (IBS) emissivity: spectra and light curves, and (somewhere in future) fit theoretical models to light curves and spectra.
+IBSEn: **I**ntra**B**inary **S**hock **E**mission **n**-**n**ot-mea**n**i**n**g-a**n**ythi**n**g is a collection of Python scripts for processing, modeling, and visualizing observational data of the gamma-ray binariy pulsars, especially PSR B1259-63. This project includes tools to compute intrabinary shock (IBS) emissivity: spectra and light curves, and (somewhere in future) fit theoretical models to light curves and spectra.
 
 
 ## Installation & Requirements 
@@ -37,7 +37,8 @@ pip install -r requirements.txt
 ```
 
 **Note on Naima.** If you have both Naima and numpy installed and they are not in conflict, you are good to go. 
-For me though it was a problem that Naima, and if I understand correctly, requires Numpy v. < 2. But I had Numpy of the version 2...! So you can either downgrade Numpy to <2:
+
+For me though there was a problem that Naima, if I understand correctly, requires Numpy v. < 2. But I had Numpy of the version 2...! So you can either downgrade Numpy to <2:
 ```bash
 pip install "numpy<2.0"
 ```
@@ -54,7 +55,7 @@ pip install .
 
 **But if you just want to use IBSEn for Orbit / Winds & Stars / IBS / electron evolution and NOT for specta / light curves, you're good to go without installing Naima at all.** 
 
-Scripts now are not suited for running from the command line... To find out if the installation works, try running a very basic python script that simply initializes a lot of classes with more or less default parameters:
+Scripts now are not suited for running from the command line... And I don't have proper tests yet, so to find out if the installation works, try running a very basic python script that simply initializes a lot of classes with more or less default parameters:
 ```bash
 python test_ibsen.py
 ```
@@ -153,7 +154,7 @@ The codebase is tailored to observational analysis of PSR B1259-63 but can be ad
  5. Occasional NaNs in IC spectrum. Should we ignore them (e.g. by interpolating)? Are they there because of something internally Naimian or is it my fault?
  6. Sometimes LC has problems with calculating fluxes if more than 1 band is passed. 
 The value of E out of interpolating segment, apparently. 
-The error depends on the time grid, so probably it happens only at some times.
+The error depends on the time grid, so probably it happens only at some times. **FIXED, let's watch.'**
  7. In LC, write interpolators for everything, not just sed/sed_s/emiss, so that all quantities can be inferred at times t as lc.quant\_i(t).
  8. Make LC.peek_animate() which would make cute gifs with animated scheme of the system and SEDs (e/gamma) also animated. 
  9. It seems rather simple to make a 3d interactable visualisation of the IBS. The only thing that stops me is the visualisation of winds in 3d. 

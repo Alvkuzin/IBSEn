@@ -764,8 +764,18 @@ class SpectrumIBS: #!!!
         try:
             _mask = np.logical_and(self.e_ph >= e1/1.1, self.e_ph < e2*1.1)
             _good = _mask & np.isfinite(self.sed)
-            # e_good, sed_good = e_masked[_good], sed_masked[_good]
-            _spl_sed_in_this_band = interp1d(self.e_ph[_good], self.sed[_good])
+            # Below, there's the interpolation. Without `fill_value`, the interpolation sed_here 
+            # later in this funcion sometimes raises an error saying that e1, e2 are out of
+            # interpolation bands. That should not happen, but apparently IS happening 
+            # because of `_good` mask and random NaNs that are often for IC. Idk. 
+            # Now we are filling everything to the left with the leftmost SED value
+            # and the same with the right from the good interval: e_ph[_good].
+            # It's gonna be bad only if there are a LOT of NaNs in a SED, which
+            # should not be the case...
+            _spl_sed_in_this_band = interp1d(self.e_ph[_good], self.sed[_good],
+                        fill_value=(self.sed[_good][0], self.sed[_good][-1]),
+                        bounds_error=False, ### we are shootinf ourselves in a knee, potentially
+                        )
         except:
             raise ValueError('Cannot create a spline for flux calculation.')
         _E = loggrid(e1, e2, n_dec = 59) # eV
@@ -842,7 +852,11 @@ class SpectrumIBS: #!!!
         try:
             _mask = np.logical_and(self.e_ph >= e1/1.1, self.e_ph <= e2*1.1)
             _good = _mask & np.isfinite(self.sed)
-            _spl_sed_in_this_band = interp1d(self.e_ph[_good], self.sed[_good])
+            ### see comment before `_spl_sed_in_this_band` in `flux`
+            _spl_sed_in_this_band = interp1d(self.e_ph[_good], self.sed[_good],
+                        fill_value=(self.sed[_good][0], self.sed[_good][-1]),
+                        bounds_error=False, 
+                        )
         except:
             raise ValueError('Cannot create a spline for index calculation.')
         _E = loggrid(e1, e2, n_dec = 51)
