@@ -83,8 +83,8 @@ from ibsen.orbit import Orbit
 import matplotlib.pyplot as plt   
 import numpy as np
 DAY = 86400
-orb = Orbit(period=25*DAY, e=0.7, tot_mass=30*2e33,
-                 nu_los=90*np.pi/180)
+orb = Orbit(T=25*DAY, e=0.7, M=30*2e33,
+                 nu_los=90*np.pi/180, incl_los=20*np.pi/180)
 t = np.linspace(-20*DAY, 70*DAY, 1000)
 plt.plot(orb.x(t), orb.y(t))
 ```
@@ -128,13 +128,13 @@ from ibsen.lc import LightCurve
 t_lc = np.linspace(-3*DAY, 3*DAY, 100)
 lc = LightCurve(times = t_lc, 
                 to_parall=True,
-                period=25*DAY, e=0.7, tot_mass=30*2e33,
-                 nu_los=90*np.pi/180, 
+                T=25*DAY, e=0.7, M=30*2e33,
+                 nu_los=90*np.pi/180, incl_los=20*np.pi/180, 
                  Ropt=7e11, Mopt=28*2e33, Topt=4e4,
                 distance=3e3*3e18,
                 bands = ([300, 1e4], ), cooling='stat_mimic',
                 f_d=100, 
-                ns_field_surf=10, ns_r_scale=ibs.x_apex, # so that the field in the apex (at t = 2 days) = 1
+                ns_b_ref=10, ns_r_ref=ibs.x_apex, # so that the field in the apex (at t = 2 days) = 1
                 simple=True, mechanisms=['syn', 'ic'])
 lc.calculate()
 lc.peek()
