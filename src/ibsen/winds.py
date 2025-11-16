@@ -4,9 +4,8 @@ from scipy.optimize import brentq
 
 from astropy import constants as const
 # from astropy import units as u
-
-
-from ibsen.get_obs_data import get_parameters
+from ibsen.get_obs_data import get_parameters, known_names
+from ibsen.utils import unpack_params
 from ibsen.utils import rotated_vector, mydot, mycross, n_from_v, absv, enhanche_jump
 from ibsen.orbit import Orbit
 import matplotlib.pyplot as plt
@@ -22,43 +21,7 @@ M_SOLAR = float(const.M_sun.cgs.value)
 PARSEC = float(const.pc.cgs.value)
 DAY = 86400
 
-def unpack_star(sys_name=None, Topt=None, Ropt=None, Mopt=None):
-    """
-    Unpack star parameters with priority to explicit arguments.
-
-    Parameters:
-        orb_type: dict, str, or None
-            - If None: return the explicitly passed values.
-            - If dict: use it as a source of defaults.
-            - If str: use get_parameters(orb_type) to get a dict of defaults.
-        Topt, Ropt, Mopt: float or None
-            Explicit values that override defaults.
-
-    Returns:
-        Tuple of Topt, Ropt, Mopt
-    """
-    # Step 1: Determine the source of defaults
-    if isinstance(sys_name, str):
-        known_types = ['psrb', 'rb', 'bw', 'ls5039', 'psrj2032', 'ls61']
-        if sys_name not in known_types:
-            raise ValueError(f"Unknown orbit type: {sys_name}")
-        defaults = get_parameters(sys_name)
-    elif isinstance(sys_name, dict):
-        defaults = sys_name
-    else:
-        defaults = {}
-
-    # Step 2: Build final values, giving priority to explicit arguments
-    Topt_final = Topt if Topt is not None else defaults.get('Topt')
-    Ropt_final = Ropt if Ropt is not None else defaults.get('Ropt')
-    Mopt_final = Mopt if Mopt is not None else defaults.get('Mopt')
-
-    result = [Topt_final, Ropt_final, Mopt_final]
-    return tuple(result)
-
-
-class Winds:
-    """
+winds_docstring =     f"""
     All information about the Be-star and the pulsar.
 
     This class encapsulates the outflows from the massive star (polar wind
@@ -73,11 +36,18 @@ class Winds:
     ----------
     orbit : Orbit
         The binary orbit object providing positions/vectors as functions of time.
-    sys_name : {'psrb', 'rb', 'bw'} or dict or None, optional
+    sys_name : {known_names} or None, optional
         If str, load default stellar parameters via ``get_parameters(sys_name)``.
-        If dict, use it as a source of defaults. Explicit keyword arguments
+         Explicit keyword arguments
         below override any defaults. If None, all stellar parameters must be
-        given explicitly.
+        given explicitly or be in a dict `sys_params`.
+    sys_params : dict or None, optional
+        If dict, load stellar parameters from this dictionary. Explicit keywords
+        below override any defaults. If None, all stellar parameters must be
+        given explicitly or be in `sys_name`.
+    allow_missing : bool, optional
+        Fill the missing parameters (not explicitly provided, no keyword 
+        recognized, and not found in `sys_params`) with None. Default False
     Ropt : float, optional
         Optical star radius [cm].
     Topt : float, optional
@@ -105,34 +75,34 @@ class Winds:
     h_enh_times : list of floats, or lists of length 2, or {'t1', 't2'}, optional
         A list of times for pressure enhancement. Default [0,].
     np_disk : float, optional
-        Radial power-law index for the disk pressure in-plane, ``P∝r^{-np_disk}``.
+        Radial power-law index for the disk pressure in-plane, ``P∝r^{{-np_disk}}``.
         Default 3.
     delta : float, optional
         Disk opening parameter at the stellar surface, ``z0/r`` at ``r=Ropt``. Default 0.01.
     height_exp : float, optional
-        Exponent in the disk scale-height law, ``z0/r ∝ (r/Ropt)^{height_exp}``. Default 0.5.
-    rad_prof : {'pl', 'bkpl'}, optional
+        Exponent in the disk scale-height law, ``z0/r ∝ (r/Ropt)^{{height_exp}}``. Default 0.5.
+    rad_prof : 'pl', 'bkpl', optional
         Radial profile: ``'pl'`` = single power law; ``'bkpl'`` = broken power law
-        that transitions to ``∝ r^{-2}`` beyond ``r_trunk``. Default 'pl'.
+        that transitions to ``∝ r^{{-2}}`` beyond ``r_trunk``. Default 'pl'.
     r_trunk : float or None, optional
         Truncation radius [cm] used when ``rad_prof='bkpl'``. If None, set to ``5*Ropt``.
-    ns_field_model : {'linear', 'dipole', 'from_L_sigma'}, optional
+    ns_b_model : 'linear', 'dipole', 'from_L_sigma', optional
         Model for the pulsar magnetic field with radius (see ``ns_field``). Default 'linear'.
-    ns_field_surf : float or None, optional
+    ns_b_ref : float or None, optional
         Pulsar surface field parameter ``B_surf`` [G] for 'linear'/'dipole' models.
-    ns_r_scale : float or None, optional
-        Scale radius ``r_scale`` [cm] for 'linear'/'dipole' models.
+    ns_r_ref : float or None, optional
+        Scale radius ``r_ref`` [cm] for 'linear'/'dipole' models.
     ns_L_spindown : float or None, optional
         Pulsar spin-down luminosity ``L`` [erg/s] for 'from_L_sigma'.
     ns_sigma_magn : float or None, optional
         Magnetization ``σ`` for 'from_L_sigma'.
-    opt_field_model : {'linear', 'dipole'}, optional
+    opt_b_model : 'linear', 'dipole', optional
         Model for the optical star magnetic field with radius (see ``opt_field``).
         Default 'linear'.
-    opt_field_surf : float or None, optional
+    opt_b_ref : float or None, optional
         Stellar surface field parameter ``B_surf`` [G] for 'linear'/'dipole'.
-    opt_r_scale : float or None, optional
-        Scale radius ``r_scale`` [cm] for 'linear'/'dipole'.
+    opt_r_ref : float or None, optional
+        Scale radius ``r_ref`` [cm] for 'linear'/'dipole'.
 
     Attributes
     ----------
@@ -140,7 +110,7 @@ class Winds:
         The supplied orbit object (used for geometry and timing).
     Topt, Ropt, Mopt : float
         Stellar temperature [K], radius [cm], and mass [g] used by the model.
-    m_ns : float
+    M_ns : float
         Neutron star mass [g].
     alpha, incl : float
         Disk orientation angles (radians).
@@ -148,13 +118,13 @@ class Winds:
         Disk and pulsar-wind pressure normalizations (dimensionless).
     np_disk, delta, height_exp : float
         Disk radial index, base opening, and opening exponent.
-    rad_prof : {'pl', 'bkpl'}
+    rad_prof : 'pl', 'bkpl'
         Choice of disk radial profile.
     r_trunk : float
         Disk truncation radius [cm] if using a broken power law.
-    ns_field_model, ns_field_surf, ns_r_scale, ns_L_spindown, ns_sigma_magn
+    ns_b_model, ns_b_ref, ns_r_ref, ns_L_spindown, ns_sigma_magn
         Parameters controlling the pulsar magnetic-field model.
-    opt_field_model, opt_field_surf, opt_r_scale
+    opt_b_model, opt_b_ref, opt_r_ref
         Parameters controlling the stellar magnetic-field model.
 
     Methods
@@ -192,7 +162,7 @@ class Winds:
     * Disk orientation (2): the disk normal is ``rotated_vector(alpha, incl)`` in the
       orbit frame; ``incl=0`` places the disk in the orbital plane. When the disk
       is exactly in the orbital plane, the root-finding for disk-crossing times
-      can be ill-conditioned. :contentReference[oaicite:6]{index=6}
+      can be ill-conditioned. 
     * ``dist_se_1d`` solves for ``r_se`` where disk+polar pressures equal the
       pulsar-wind pressure along the line connecting the star and pulsar; the
       apex star→pulsar distance is then ``r_pe = r_sp - r_se``. 
@@ -201,8 +171,13 @@ class Winds:
       multiplied by p_enh or h_enh at the time t_forwinds. 
 
     """
+
+class Winds:
+    __doc__ = winds_docstring
     def __init__(self, orbit: Orbit, # orb:Orbit --- the orbit to use 
-                 sys_name=None, # the system name; str, dict, or None
+                 sys_name=None, # the system name; str,  or None
+                 sys_params=None, # system parameters dict
+                 allow_missing=False,
                  Ropt=None,
                  Topt=None,
                  Mopt=None, 
@@ -229,29 +204,31 @@ class Winds:
                  h_enh_times = [0, ],
                 
                  ### for magn fields of NS and opt star
-                 ns_field_model = 'linear', # model of ns magn field
-                 ns_field_surf = None, # B- parameter for ns field scaling 
-                 ns_r_scale = None, # r-scale for NS field
+                 ns_b_model = 'linear', # model of ns magn field
+                 ns_b_ref = None, # B- parameter for ns field scaling 
+                 ns_r_ref = None, # r-scale for NS field
                  ns_L_spindown = None, # NS spin-down lum 
                  ns_sigma_magn = None, # NS PWE magnetization
-                 opt_field_model = 'linear', # model of the Be magn field
-                 opt_field_surf = None, # B- parameter for Be field scaling 
-                 opt_r_scale = None, # r-scale for Be magn field
+                 opt_b_model = 'linear', # model of the Be magn field
+                 opt_b_ref = None, # B- parameter for Be field scaling 
+                 opt_r_ref = None, # r-scale for Be magn field
                  ):
-        Topt_, Ropt_, Mopt_ = unpack_star(sys_name=sys_name, Topt=Topt, Ropt=Ropt, Mopt=Mopt)
+        Topt_, Ropt_, Mopt_ = unpack_params(('Topt', 'Ropt', 'Mopt'),
+            orb_type=sys_name, sys_params=sys_params,
+            known_types=known_names, get_defaults_func=get_parameters,
+                               Topt=Topt, Ropt=Ropt, Mopt=Mopt,
+                               allow_missing=allow_missing)
         self.orbit = orbit
         self.Topt = Topt_
         self.Ropt = Ropt_
         self.Mopt = Mopt_
-        self.m_ns = M_ns
+        self.M_ns = M_ns
+        
         self.alpha = alpha
         self.incl = incl
-        # self.f_d = f_d
-        # self.delta = delta
         self.initiate_disk(f_d, delta, t_forwinds, p_enh,
                            p_enh_times, h_enh, h_enh_times) # sets self.delta and self.f_d 
         self.f_p = f_p
-        
         self.np_disk = np_disk
         self.height_exp = height_exp
         self.rad_prof = rad_prof
@@ -260,16 +237,15 @@ class Winds:
         else:
             self.r_trunk = r_trunk
             
-        self.ns_field_model = ns_field_model
-        self.ns_field_surf = ns_field_surf
-        self.ns_r_scale = ns_r_scale
+        self.ns_b_model = ns_b_model
+        self.ns_b_ref = ns_b_ref
+        self.ns_r_ref = ns_r_ref
         self.ns_L_spindown = ns_L_spindown
         self.ns_sigma_magn = ns_sigma_magn
         
-        
-        self.opt_field_model = opt_field_model
-        self.opt_field_surf = opt_field_surf
-        self.opt_r_scale = opt_r_scale
+        self.opt_b_model = opt_b_model
+        self.opt_b_ref = opt_b_ref
+        self.opt_r_ref = opt_r_ref
         self.unit_star = n_from_v(rotated_vector(alpha=alpha, incl=incl)  )
         
     
@@ -296,7 +272,7 @@ class Winds:
             self.delta = delta * h_mult
         
     
-    def ns_field(r_to_p, model='linear', B_surf = None, r_scale = None,
+    def ns_field(r_to_p, model='linear', B_ref = None, r_ref = None,
                  L_spindown = None, sigma_magn = None):   
         """
         The magnetic field of the NS [G] at the distance r_to_p.
@@ -307,22 +283,21 @@ class Winds:
             DESCRIPTION.
         model : str, optional
             How to calculate the magnetic field from the NS. Options:
-            -  'linear': B = B_surf * (r_scale / r_to_p). You should provide 
-            B_surf and r_scale.
-            - 'dipole': B = B_surf * (r_scale / r_to_p)^3. You should provide 
-            B_surf and r_scale.
+            -  'linear': B = B_ref * (r_ref / r_to_p). You should provide 
+            B_ref and r_ref.
+            - 'dipole': B = B_ref * (r_ref / r_to_p)^3. You should provide 
+            B_ref and r_ref.
             - 'from_L_sigma': according to Kennel & Coroniti 1984a,b:
                 B = sqrt(L_spindown * sigma_magn / c / r_to_p^2). 
                 You should provide L_spindown and sigma_magn.
             
             The default is 'linear'.
             
-            
-        B_surf : float, optional
-            The field at the NS surface [G]. The default is None.
-        r_scale : float, optional
-            The scale radius for model = 'liear' or model='dipole'.
-            The default is None.
+        B_ref : float, optional
+            The field [G] at the distance r_ref from NS. Fefault is None.
+        r_ref : float, optional
+            The scale radius for model = 'linear' or model = 'dipole'.
+            Default is None.
         L_spindown : float, optional
             The spin-down luminosity of the NS [erg / s]. The default is None.
         sigma_magn : float, optional
@@ -339,16 +314,16 @@ class Winds:
             raise ValueError('the NS field model should be one of:',
                              model_opts)
         if model == 'linear':
-            B_puls = B_surf * (r_scale / r_to_p)
+            B_puls = B_ref * (r_ref / r_to_p)
         if model == 'dipole':
-            B_puls = B_surf * (r_scale / r_to_p)**3
+            B_puls = B_ref * (r_ref / r_to_p)**3
         
         if model == 'from_L_sigma':        
             B_puls = (L_spindown * sigma_magn / C_LIGHT / r_to_p**2)**0.5
         
         return B_puls
     
-    def opt_field(r_to_s, model = 'linear', r_scale=None, B_surf=None):
+    def opt_field(r_to_s, model = 'linear', r_ref=None, B_ref=None):
         """
         The magnetic field of the opt. star [G] at the distance r_to_s.
         
@@ -358,19 +333,17 @@ class Winds:
             The distance from the star [cm] to the point.
         model : str, optional
             How to calculate the magnetic field from the star. Options:
-            -  'linear': B = B_surf * (r_scale / r_to_p). You should provide 
-            B_surf and r_scale.
-            - 'dipole': B = B_surf * (r_scale / r_to_p)^3. You should provide 
-            B_surf and r_scale.
-
+            -  'linear': B = B_ref * (r_ref / r_to_p). You should provide 
+            B_ref and r_ref.
+            - 'dipole': B = B_ref * (r_ref / r_to_p)^3. You should provide 
+            B_ref and r_ref.
             The default is 'linear'.
             
-            
-        B_surf : float, optional
-            The field at the star surface [G]. The default is None.
-        r_scale : float, optional
-            The scale radius for model = 'liear' or model='dipole'.
-            The default is None.
+        B_ref : float, optional
+            The field at the star surface [G]. Default is None.
+        r_ref : float, optional
+            The scale radius for model = 'linear' or model='dipole'.
+            Default is None.
 
         Returns
         -------
@@ -383,11 +356,11 @@ class Winds:
             raise ValueError('the opt star field model should be one of:',
                              model_opts)
         if model == 'linear':
-            B_puls = B_surf * (r_scale / r_to_s)
+            B_opt = B_ref * (r_ref / r_to_s)
         if model == 'dipole':
-            B_puls = B_surf * (r_scale / r_to_s)**3
+            B_opt = B_ref * (r_ref / r_to_s)**3
         
-        return B_puls
+        return B_opt
     
     def u_g_density(r_from_s, r_star, T_star):      
         """
@@ -409,8 +382,8 @@ class Winds:
               distance r_from_s [erg / cm^3].
 
         """
-        factor = 2. * (1. - (1. - (r_star / r_from_s)**2)**0.5 )
-        u_dens = SIGMA_BOLTZ * T_star**4 / C_LIGHT * factor
+        factor = 2. * (1. - (1. - (r_star / r_from_s)**2)**0.5 ) # checked!
+        u_dens = SIGMA_BOLTZ * T_star**4 / C_LIGHT * factor # checked!
         return u_dens
     
     @property
@@ -537,7 +510,6 @@ class Winds:
             The unit vector of the Keplerian disk matter velocity at the point of the pulsar location.
 
         """
-        # Torb_, e_, Mtot_ = unpack_orbit(orb_p, Torb, e, Mtot, to_return='T e M')   
         n_indisk = n_from_v(Winds.vec_r_in_sp(self, t))
         ndisk = self.n_disk
         return mycross(ndisk, n_indisk)
@@ -738,15 +710,15 @@ class Winds:
         """
         r_se = Winds.dist_se_1d(self, t)
         r_pe = self.orbit.r(t) - r_se
-        B_ns_apex = Winds.ns_field(r_to_p =r_pe, model=self.ns_field_model,
-                              B_surf = self.ns_field_surf,
-                              r_scale = self.ns_r_scale,
+        B_ns_apex = Winds.ns_field(r_to_p =r_pe, model=self.ns_b_model,
+                              B_ref = self.ns_b_ref,
+                              r_ref = self.ns_r_ref,
                               L_spindown = self.ns_L_spindown,
                               sigma_magn =self.ns_sigma_magn)
         B_opt_apex = Winds.opt_field(r_to_s = r_se,
-                                     model = self.opt_field_model,
-                                     r_scale=self.opt_r_scale,
-                                     B_surf=self.opt_field_surf)
+                                     model = self.opt_b_model,
+                                     r_ref=self.opt_r_ref,
+                                     B_ref=self.opt_b_ref)
         
         return B_ns_apex, B_opt_apex
     

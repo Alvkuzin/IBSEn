@@ -5,8 +5,9 @@ from scipy.optimize import brentq
 import matplotlib.pyplot as plt
 
 from astropy import constants as const
-from astropy import units as u
-from ibsen.get_obs_data import get_parameters
+# from astropy import units as u
+from ibsen.get_obs_data import get_parameters, known_names
+from ibsen.utils import unpack_params
 G = float(const.G.cgs.value)
 
 R_SOLAR = float(const.R_sun.cgs.value)
@@ -14,137 +15,129 @@ M_SOLAR = float(const.M_sun.cgs.value)
 PARSEC = float(const.pc.cgs.value)
 DAY = 86400
 
-def unpack_orbit(orb_type=None, T=None, e=None, M=None, nu_los=None,
-                 incl_los=None, **kwargs):
-    """
-    Unpack orbital parameters with priority to explicit arguments.
-
-    Parameters:
-        orb_type: dict, str, or None
-            - If None: return the explicitly passed values.
-            - If dict: use it as a source of defaults.
-            - If str: use get_parameters(orb_type) to get a dict of defaults.
-        T, e, M, nu_los, incl_los: float or None
-            Explicit values that override defaults.
-
-    Returns:
-        Tuple of T, e, M, nu_los, incl_los
-    """
-    # Step 1: Determine the source of defaults
-    if isinstance(orb_type, str):
-        known_types = ['psrb', 'rb', 'bw', 'ls5039', 'psrj2032', 'ls61']
-        if orb_type not in known_types:
-            raise ValueError(f"Unknown orbit type: {orb_type}")
-        defaults = get_parameters(orb_type)
-    elif isinstance(orb_type, dict):
-        defaults = orb_type
-    else:
-        defaults = {}
-
-    # Step 2: Build final values, giving priority to explicit arguments
-    T_final = T if T is not None else defaults.get('T')
-    e_final = e if e is not None else defaults.get('e')
-    M_final = M if M is not None else defaults.get('M')
-    nu_los_final = nu_los if nu_los is not None else defaults.get('nu_los')
-    incl_los_final = incl_los if incl_los is not None else defaults.get('incl_los')
+orbit_docstring = """
+    Keplerian binary orbit in the orbital plane (CGS units).
     
-    result = [T_final, e_final, M_final, nu_los_final, incl_los_final]
+    This class represents a two-body elliptical orbit with the periastron
+    aligned with the +X axis and motion confined to the XY-plane (Z=0).
+    It provides geometry and anomalies as functions of time measured from
+    periastron passage and pre-tabulates the orbit for quick
+    plotting/evaluation.
+    
+    Parameters
+    ----------
+    sys_name : %s, or None, optional
+        If provided, load default orbital parameters via
+        ``ibsen.get_obs_data.get_parameters(sys_name)``; explicit arguments
+        below override those defaults. 
+        If None, all parameters must be contained in `sys_params` dictionary or
+        given explicitly.
+    sys_params : dict or None, optional
+          If provided, a dictionary of orbital parameters to use instead of
+          default values from ``get_parameters``. Keys are: `T`, `e`, `M`,
+          `nu_los`, `incl_los`. Explicit arguments below override those in
+          this dictionary. If None, all parameters must be given explicitly.  
+    T : float, optional
+        Orbital period `T` in seconds.
+    e : float, optional
+        Orbital eccentricity (`0 <= e < 1`).
+    M : float, optional
+        Total system mass `M` in grams. Used to form ``GM = G*M``.
+    nu_los : float, optional
+        Line-of-sight true anomaly (radians) in the orbital plane. Used to
+        locate the time of line-of-sight passage.
+    incl_los : float, optional
+        Line-of-sight inclination.
+    n : int or None, optional
+        If not None (default 1000), pre-compute and store tabulated arrays of
+        `x(t), y(t), z(t), r(t), \\nu_\\mathrm{{true}}(t)` and ``t`` over
+        one period for quick access/plotting. If None, no tabulation is
+        performed at initialization.
+    allow_missing : bool, optional
+        Fill the missing parameters (not explicitly provided, no keyword 
+        recognized, and not found in `sys_params`) with None. Default False
+    
+    Attributes
+    ----------
+    e : float
+        Eccentricity.
+    T : float
+        Orbital period (s).
+    M : float
+        Total system mass (g).
+    GM : float
+        Gravitational parameter :math:`G M` (cgs).
+    nu_los : float
+        Line-of-sight true anomaly (rad).
+    incl_los : float
+        Line-of-sight inclination (rad).      
+    name : str or None
+        Value of ``sys_name`` used to initialize the orbit (if any).
+    n : int or None
+        Requested number of tabulation points.
+    a : float
+        Semi-major axis (cm), computed from Kepler's third law.
+    b : float
+        Semi-minor axis (cm).
+    r_periastr : float
+        Periastron distance (cm).
+    r_apoastr : float
+        Apoastron distance (cm).
+    t_los: float
+        Time of the line of sight crossing [s].
+    xtab, ytab, ztab : ndarray or None
+        Tabulated coordinates (cm) if ``n`` is not None. ``ztab`` is identically
+        zero for the planar orbit.
+    ttab : ndarray or None
+        Tabulated times (s) relative to periastron.
+    rtab : ndarray or None
+        Tabulated separation :math:`r(t)` (cm).
+    nu_truetab : ndarray or None
+        Tabulated true anomaly :math:`\\nu_\\mathrm{{true}}(t)` (rad).
+        
+    Methods
+    ----------
+    mean_motion(t)
+        Mean motion at time(s) `t`.
+    ecc_an(t)
+        Eccentric anomaly at time(s) `t`.
+    r(t)
+        Separation at time(s) `t`.
+    true_an(t)
+        True anomaly at time(s) `t`.
+    t_from_true_an(nu)
+        Time(s) since periastron for given true anomaly(ies) `nu`.
+    x(t), y(t), z(t)
+        Coordinates at time(s) `t`.
+    vector_sp(t)
+        3D position vector at time(s) `t`.
+    peek(ax=None, showtime=None, times_pos=(), color='k', xplot='time')
+        Quick look at the orbit.
+    
+    
+    Notes
+    -----
+    Times ``t`` are interpreted as offsets from periastron passage (``t=0``).
+    All distances are returned in centimeters (cgs).
 
-    return tuple(result)
-
-# print(unpack_orbit('psrb', kwargs='Ropt'))
+  """%(known_names,)
 
 class Orbit:
-    """
-  Keplerian binary orbit in the orbital plane (CGS units).
-
-  This class represents a two-body elliptical orbit with the periastron
-  aligned with the +X axis and motion confined to the XY-plane (Z=0).
-  It provides geometry and anomalies as functions of time measured from
-  periastron passage and pre-tabulates the orbit for quick
-  plotting/evaluation.
-
-  Parameters
-  ----------
-  sys_name : {'psrb', 'rb', 'bw'}, or dict, or None, optional
-      If provided, load default orbital parameters via
-      ``ibsen.get_obs_data.get_parameters(sys_name)``; explicit arguments
-      below override those defaults. If dict, the parameters are fetched from it.
-      If None, all parameters must be given explicitly.
-  period : float, optional
-      Orbital period :math:`T` in seconds.
-  e : float, optional
-      Orbital eccentricity (:math:`0 \\le e < 1`).
-  tot_mass : float, optional
-      Total system mass :math:`M` in grams. Used to form ``GM = G*M``.
-  nu_los : float, optional
-      Line-of-sight true anomaly (radians) in the orbital plane. Used to
-      locate the time of line-of-sight passage.
-  incl_los : float, optional
-      Line-of-sight inclination.
-  n : int or None, optional
-      If not None (default 1000), pre-compute and store tabulated arrays of
-      :math:`x(t), y(t), z(t), r(t), \\nu_\\mathrm{true}(t)` and ``t`` over
-      one period for quick access/plotting. If None, no tabulation is
-      performed at initialization.
-
-  Attributes
-  ----------
-  e : float
-      Eccentricity.
-  T : float
-      Orbital period (s).
-  mtot : float
-      Total system mass (g).
-  GM : float
-      Gravitational parameter :math:`G M` (cgs).
-  nu_los : float
-      Line-of-sight true anomaly (rad).
-  incl_los : float
-      Line-of-sight inclination (rad).      
-  name : str or None
-      Value of ``sys_name`` used to initialize the orbit (if any).
-  n : int or None
-      Requested number of tabulation points.
-  a : float
-      Semi-major axis (cm), computed from Kepler's third law.
-  b : float
-      Semi-minor axis (cm).
-  r_periastr : float
-      Periastron distance (cm).
-  r_apoastr : float
-      Apoastron distance (cm).
-  t_los: float
-      Time of the line of sight crossing [s].
-  xtab, ytab, ztab : ndarray or None
-      Tabulated coordinates (cm) if ``n`` is not None. ``ztab`` is identically
-      zero for the planar orbit.
-  ttab : ndarray or None
-      Tabulated times (s) relative to periastron.
-  rtab : ndarray or None
-      Tabulated separation :math:`r(t)` (cm).
-  nu_truetab : ndarray or None
-      Tabulated true anomaly :math:`\\nu_\\mathrm{true}(t)` (rad).
-
-  Notes
-  -----
-  Times ``t`` are interpreted as offsets from periastron passage (``t=0``).
-  The mean anomaly is :math:`M(t) = 2\\pi t/T`. The eccentric anomaly
-  :math:`E(t)` solves Kepler's equation :math:`E - e\\sin E = M(t)`. All
-  distances are returned in centimeters (cgs).
-
-  """
-    def __init__(self, sys_name=None, period=None, e=None, tot_mass=None,
-                 nu_los=None, incl_los=None, n=1000):
-        T_, e_, mtot_, nu_los_, incl_los_ = unpack_orbit(orb_type=sys_name, 
-                                T=period, e=e, M=tot_mass, nu_los=nu_los,
-                                incl_los=incl_los)
+    __doc__ = orbit_docstring
+    def __init__(self, sys_name=None, sys_params=None, T=None, e=None, M=None,
+                 nu_los=None, incl_los=None, n=1000, allow_missing=False):
+        T_, e_, M_, nu_los_, incl_los_ = unpack_params(('T', 'e', 'M',
+                                                        'nu_los', 'incl_los'),
+            orb_type=sys_name, sys_params=sys_params,
+            known_types=known_names, get_defaults_func=get_parameters,
+                                T=T, e=e, M=M, nu_los=nu_los,
+                                incl_los=incl_los, allow_missing=allow_missing)
         self.e = e_
         self.T = T_
-        self.mtot = mtot_
+        self.M = M_
         self.nu_los = nu_los_
         self.incl_los = incl_los_
-        self.GM = G * mtot_
+        self.GM = G * M_
         self.name = sys_name
         self.xtab = None
         self.ytab = None
@@ -239,7 +232,7 @@ class Orbit:
             E(t).
 
         """
-        func_to_solve = lambda E: E - self.e * np.sin(E) - Orbit.mean_motion(self, t)
+        func_to_solve = lambda E: E - self.e * sin(E) - Orbit.mean_motion(self, t)
         try:
             E = brentq(func_to_solve, -1e3, 1e3)
             return E
@@ -287,7 +280,7 @@ class Orbit:
             r(t).
 
         """
-        return self.a * (1 - self.e * np.cos(Orbit.ecc_an(self, t)))
+        return self.a * (1 - self.e * cos(Orbit.ecc_an(self, t)))
        
         
     def true_an(self, t):
@@ -334,8 +327,8 @@ class Orbit:
     
         # Convert true anomaly -> eccentric anomaly using a quadrant-safe formula
         # E = 2 * atan2( sqrt(1-e) * sin(ν/2), sqrt(1+e) * cos(ν/2) )
-        s = np.sin(0.5 * nu_norm)
-        c = np.cos(0.5 * nu_norm)
+        s = sin(0.5 * nu_norm)
+        c = cos(0.5 * nu_norm)
         E = 2.0 * np.arctan2(np.sqrt(1.0 - self.e) * s, np.sqrt(1.0 + self.e) * c)
     
         # Wrap E to (-π, π] to match the chosen branch
@@ -452,7 +445,7 @@ class Orbit:
 
         """
         _E_tab = np.linspace(-2.5 * pi, 2.5 * pi, int(self.n))
-        t_tab = self.T/ (2 * pi) * (_E_tab - self.e * np.sin(_E_tab))
+        t_tab = self.T/ (2 * pi) * (_E_tab - self.e * sin(_E_tab))
         # t_tab = np.linspace(-self.T * 1.1, self.T * 1.1, int(self.n))
         self.xtab = Orbit.x(self, t_tab)
         self.ytab = Orbit.y(self, t_tab)

@@ -33,7 +33,8 @@ print('tot number of e on IBS = ', elev.ntot)
 
 from ibsen.spec import SpectrumIBS
 
-spec = SpectrumIBS(els=elev, apex_only=True, mechanisms=['syn',])
+spec = SpectrumIBS(sys_name='psrb', 
+                   els=elev, apex_only=True, mechanisms=['syn',])
 spec.calculate_sed_on_ibs(E = np.logspace(2., 4.3, 101))
 print('from spec, flux 0.3-10 keV = ', spec.flux(300, 1e4))
 
@@ -42,7 +43,7 @@ from ibsen.lc import LightCurve
 lc = LightCurve(times = np.array([t,]), sys_name='psrb',
                 bands = ([300, 1e4],), cooling='no',
                 f_d=100,  h_enh=[1,], h_enh_times=['t1',],
-                ns_field_surf=1, ns_r_scale=ibs.x_apex, # so that the field in the apex = 1
+                ns_b_ref=1, ns_r_ref=ibs.x_apex, # so that the field in the apex = 1
                 apex_only=True, mechanisms=['syn',])
 lc.calculate()
 print('from LC, flux 0.3-10 keV = ', lc.fluxes[0])

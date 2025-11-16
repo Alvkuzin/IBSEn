@@ -8,7 +8,8 @@ from ibsen.utils import lor_trans_e_spec_iso, lor_trans_b_iso, \
         
 from scipy.integrate import trapezoid
 import astropy.units as u
-from ibsen.get_obs_data import get_parameters
+from ibsen.get_obs_data import get_parameters, known_names
+from ibsen.utils import unpack_params
 import ibsen.absorbtion.absorbtion as absb
 from scipy.optimize import curve_fit
 
@@ -28,36 +29,6 @@ EV_TO_ERG = float(const.e.value) * 1e7
 def pl(x, p, norm):
     return norm * x**(-p)
 
-def unpack_dist(sys_name=None, dist=None):
-    """
-    Unpack distance with priority to explicit arguments.
-
-    Parameters:
-        orb_type: dict, str, or None
-            - If None: return the explicitly passed values.
-            - If dict: use it as a source of defaults.
-            - If str: use get_parameters(orb_type) to get a dict of defaults.
-        dist: float or None
-            Explicit values that override defaults.
-
-    Returns:
-        float dist
-    """
-    # Step 1: Determine the source of defaults
-    if isinstance(sys_name, str):
-        known_types = ['psrb', 'rb', 'bw', 'ls5039', 'psrj2032', 'ls61']
-        if sys_name not in known_types:
-            raise ValueError(f"Unknown orbit type: {sys_name}")
-        defaults = get_parameters(sys_name)
-    elif isinstance(sys_name, dict):
-        defaults = sys_name
-    else:
-        defaults = {}
-
-    # Step 2: Build final values, giving priority to explicit arguments
-    dist_final = dist if dist is not None else defaults.get('D')
-
-    return dist_final
 
 def integrate_over_ibs_with_weights(arr_xy, x, y_extended, y_eval, weights, y_scale,
                                     ):
@@ -450,9 +421,7 @@ def boost_sed_from_2horns(sed_s_e, s_1d_2horns, e_ext, e_ev, dopls_2horns,
                 
     return sed_tot, sed_s_
 
-
-class SpectrumIBS: #!!!
-    """
+docstr_specibs =  f"""
     Spectral energy distribution (SED) from an intrabinary shock (IBS).
 
     Builds broadband SEDs produced along the IBS at a chosen orbital epoch,
@@ -473,9 +442,18 @@ class SpectrumIBS: #!!!
     ic_ani : bool, optional
         If True, compute anisotropic IC using the IBS scattering angle; else
         isotropic IC. Default False.
+    sys_name : {known_names} or None, optional
+        If str, load default distance to the system via ``get_parameters(sys_name)``.
+         Explicit keyword arguments
+        below override any defaults. If None, distance must be
+        given explicitly or be in a dict `sys_params`.
+    sys_params : dict or None, optional
+        If dict, load distance from this dictionary. Explicit keywords
+        below override any defaults. If None, distance must be
+        given explicitly or be in `sys_name`.
     delta_power : float, optional
         Exponent of the Doppler weight for SEDs used when integrating over segments,
-        i.e. weight ∝ δ^{delta_power}. Default 4. 
+        i.e. weight ∝ δ^{{delta_power}}. Default 4. 
     lorentz_boost : bool, optional
         If True, transform fields and electron spectra to the comoving frame
         before radiation calculation and use comoving scattering angles for
@@ -526,12 +504,12 @@ class SpectrumIBS: #!!!
         Compute and store SED(s) on energy grid E; optionally return (E, sed_tot, sed_s_).
     flux(e1, e2, epow=1)
         Band integral over [e1, e2] of order ``epow`` of dN/dE (derived from SED),
-        returned in erg^{epow} s⁻¹ cm⁻². Raises ValueError if interpolation fails.
+        returned in erg^{{epow}} s⁻¹ cm⁻². Raises ValueError if interpolation fails.
     fluxes(bands, epows=None)
         Vectorized band fluxes for many (e1,e2) intervals; ``epows`` may be None,
         a scalar, or an iterable matching ``bands``. 
     index(e1, e2)
-        Photon index γ fitted over [e1, e2] assuming dN/dE ∝ E^{-γ}; returns NaN
+        Photon index γ fitted over [e1, e2] assuming dN/dE ∝ E^{{-γ}}; returns NaN
         if the fit fails. 
     indexes(bands)
         Vectorized photon indexes for many bands. 
@@ -546,7 +524,7 @@ class SpectrumIBS: #!!!
       For symmetric mechanisms, the opposite horn is filled by symmetry; for
       anisotropic IC, both horns are computed explicitly. 
     * **Boosting & integration.** Segment SEDs are optionally Doppler-boosted
-      and integrated along arclength with weights δ^{delta_power}; absorption
+      and integrated along arclength with weights δ^{{delta_power}}; absorption
       factors are applied at the end. The internal energy grid are extended
       by the maximum Doppler factor to avoid edge losses. 
     * **Units.** Input energies E, e1, e2 are in eV. Stored/returned SEDs are in
@@ -554,7 +532,10 @@ class SpectrumIBS: #!!!
       eV→erg factor for general moment ``epow``. 
 
     """
-    def __init__(self, els, mechanisms=['syn', 'ic'], ic_ani=False,
+class SpectrumIBS: #!!!
+    __doc__ = docstr_specibs
+    def __init__(self, els, mechanisms=['syn', 'ic'], ic_ani=False, 
+                 sys_name=None, sys_params=None,
                  delta_power=4, lorentz_boost=True, simple=False,
                  abs_photoel=True, abs_gg=False, nh_tbabs=0.8, 
                  distance = None, apex_only=False):
@@ -572,7 +553,10 @@ class SpectrumIBS: #!!!
         self.mechanisms = mechanisms
         self.apex_only = apex_only
         
-        _dist = unpack_dist(self._orb.name, distance)
+        _dist = unpack_params(('D', ),
+            orb_type=sys_name, sys_params=sys_params,
+            known_types=known_names, get_defaults_func=get_parameters,
+                               D=distance)
         self.distance = _dist
 
     def calculate_sed_on_ibs(self, E = np.logspace(2, 14, 1000),

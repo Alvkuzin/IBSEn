@@ -9,7 +9,8 @@ from joblib import Parallel, delayed
 import multiprocessing
 from scipy.interpolate import interp1d
 from astropy import constants as const
-from ibsen.get_obs_data import get_parameters
+from ibsen.get_obs_data import get_parameters, known_names
+from ibsen.utils import unpack_params
 from ibsen.utils import loggrid, fill_nans
 from ibsen.orbit import Orbit
 from ibsen.winds import Winds
@@ -36,255 +37,213 @@ DAY = 86400.
 sed_unit = u.erg / u.s / u.cm**2
 RAD_IN_DEG = pi / 180.0
 
+docstr_lc = f"""
+Broadband light curve builder for an intrabinary shock (IBS) system.
 
-def unpack_orbit(orb_type=None, T=None, e=None, M=None, nu_los=None, incl_los=None,
-                 Topt=None, Ropt=None, Mopt=None,
-                 dist=None):
-    """
-    Unpack orbital parameters with priority to explicit arguments.
+For a grid of times, this class assembles the full pipeline —
+:class:`Orbit` → :class:`Winds` → :class:`IBS` → :class:`ElectronsOnIBS`
+→ :class:`SpectrumIBS` — and tabulates band fluxes, photon indices,
+SEDs, and auxiliary physical quantities (separations, apex fields, etc.).
+Energies are in eV, distances in cm, times in seconds, and SEDs in
+erg s⁻¹ cm⁻².
 
-    Parameters:
-        orb_type: dict, str, or None
-            - If None: return the explicitly passed values.
-            - If dict: use it as a source of defaults.
-            - If str: use get_parameters(orb_type) to get a dict of defaults.
-        T, e, M, nu_los, incl_los: float or None
-            Explicit values that override defaults.
+Parameters
+----------
+times : array_like, shape (Nt,)
+    Time grid (relative to periastron, seconds) at which to compute the LC.
+bands : iterable of (float, float), optional
+    Energy bands [e1, e2] (eV) for band-integrated fluxes. Default ``([3e2, 1e4],)``.
+bands_ind : iterable of (float, float), optional
+    Energy bands (eV) for photon-index fits. Default ``([3e3, 1e4],)``.
+epows : None | scalar | iterable, optional
+    Moment order(s) for band flux integrals (see :meth:`SpectrumIBS.fluxes`).
+    If None, epow=1 is used for all bands. If scalar, the same epow is used
+    for all; if iterable, must match ``len(bands)``.
+to_parall : bool, optional
+    If True, compute times in parallel with joblib. Default False.
+full_spec : bool, optional
+    If True, compute SEDs on a global grid (``logspace(2,14,1000)``);
+    otherwise build per-band grids expanded by ±20% and concatenate.
+    Default False.
 
-    Returns:
-        Tuple of T, e, M, nu_los, incl_los, Topt, Ropt, Mopt, dist
-    """
-    # Step 1: Determine the source of defaults
-    if isinstance(orb_type, str):
-        known_types = ['psrb', 'rb', 'bw', 'ls5039', 'psrj2032', 'ls61']
-        if orb_type not in known_types:
-            raise ValueError(f"Unknown orbit type: {orb_type}")
-        defaults = get_parameters(orb_type)
-    elif isinstance(orb_type, dict):
-        defaults = orb_type
-    else:
-        defaults = {}
+# Orbit / system parameters (forwarded via ``unpack_orbit``)
+    sys_name : {known_names}, or None, optional
+        If provided, load default systep parameters via
+        ``ibsen.get_obs_data.get_parameters(sys_name)``; explicit arguments
+        below override those defaults. 
+        If None, all parameters must be contained in `sys_params` dictionary or
+        given explicitly.
+    sys_params : dict or None, optional
+          If provided, a dictionary of orbital parameters to use instead of
+          default values from ``get_parameters``. Keys are: 
+            `T`, `e`, `M`, `nu_los`, `incl_los`, 'Ropt', 'Mopt', 'Topt', 'D'.
+          Explicit arguments below override those in
+          this dictionary. If None, all parameters must be given explicitly.  
+T, e, M, nu_los, incl_los : float, optional
+    Orbital period (s), eccentricity, total mass (g), LoS positional 
+    angle (rad), LoS inclination (rad).
+Ropt, Topt, Mopt : float, optional
+    Optical star radius (cm), temperature (K), and mass (g).
+distance : float or None, optional
+    Source distance (cm); if None and a named system is used, taken from
+    system defaults.
 
-    # Step 2: Build final values, giving priority to explicit arguments
-    T_final = T if T is not None else defaults.get('T')
-    e_final = e if e is not None else defaults.get('e')
-    M_final = M if M is not None else defaults.get('M')
-    nu_los_final = nu_los if nu_los is not None else defaults.get('nu_los')
-    incl_los_final = incl_los if incl_los is not None else defaults.get('incl_los')
-    
-    Topt_final = Topt if Topt is not None else defaults.get('Topt')
-    Ropt_final = Ropt if Ropt is not None else defaults.get('Ropt')
-    Mopt_final = Mopt if Mopt is not None else defaults.get('Mopt')
-    # Handle distance, if provided
-    dist_final = dist if dist is not None else defaults.get('D')
+# Winds (external media & fields)
+M_ns : float, optional
+    Neutron-star mass (g). Default ``1.4*M_SOLAR``.
+f_p : float, optional
+    Pulsar-wind pressure normalization. Default 0.1.
+alpha_deg, incl_deg : float, optional
+    Disk orientation angles in degrees (see :class:`Winds`). Defaults 0 and 30.
+f_d : float, optional
+    Disk pressure normalization. Default 10.
+p_enh : list of floats and lists of length 2, optional
+    A list of multipliers for the disk pressure. Default [1,].
+h_enh : list of floats and lists of length 2, optional
+    A list of multipliers for the disk height. Default [1,].
+p_enh_times : list of floats, or lists of length 2, or {'t1', 't2'}, optional
+    A list of times for pressure enhancement. Default [0,].
+h_enh_times : list of floats, or lists of length 2, or {'t1', 't2'}, optional
+    A list of times for pressure enhancement. Default [0,].
+np_disk : float, optional
+    Disk radial power-law index. Default 3.
+delta : float, optional
+    Disk opening half-angle at the stellar surface. Default 0.01.
+height_exp : float, optional
+    Exponent in the disk opening law. Default 0.5.
+rad_prof : {'pl','bkpl'}, optional
+    Disk radial profile (power law or broken power law). Default 'pl'.
+r_trunk : float or None, optional
+    Disk truncation radius (cm) for broken-profile models.
+ns_b_model, ns_b_ref, ns_r_ref, ns_L_spindown, ns_sigma_magn
+    Pulsar magnetic-field model and parameters (see :class:`Winds`).
+opt_b_model, opt_b_ref, opt_r_ref
+    Stellar magnetic-field model and parameters.
 
+# IBS geometry
+s_max : float, optional
+    Dimensionless arclength cutoff passed to :class:`IBS_norm`. Default 1.0.
+gamma_max : float, optional
+    Max bulk Lorentz factor at ``s_max_g``. Default 3.0.
+s_max_g : float, optional
+    Arclength at which ``gamma==gamma_max`` (dimensionless). Default 4.0.
+n_ibs : int, optional
+    Sampling points (per horn) for IBS construction. Default 31.
 
-    # # Add any additional parameters you expect
-    # # For example, if you want to also unpack `omega`, `i`, etc.:
-    result = [T_final, e_final, M_final, nu_los_final, incl_los_final, Topt_final,
-              Ropt_final, Mopt_final, dist_final]
-    # T_, e_, mtot_, nu_los_, Ropt_, Topt_, Mopt_, distance_
-    # for key in kwargs:
-    #     value = kwargs[key] if kwargs[key] is not None else defaults.get(key)
-    #     result.append(value)
+# Electrons on IBS
+cooling : {'no','stat_apex','stat_ibs','stat_mimic',
+           'leak_apex','leak_ibs','leak_mimic','adv'}, optional
+    Cooling/evolution mode for :class:`ElectronsOnIBS`. Default 'stat_mimic'.
+to_inject_e : {'pl','ecpl','secpl'}, optional
+    Injection law in energy. Default 'ecpl'.
+to_inject_theta : {'2d','3d'}, optional
+    Spatial weighting along IBS. Default '3d'.
+ecut : float, optional
+    Cutoff energy for ECPL/SECPL (eV). Default 1e12.
+p_e : float, optional
+    Injection spectral index. Default 2.0.
+norm_e : float, optional
+    Injection normalization (s⁻¹). Default 1e37.
+eta_a, eta_syn, eta_ic : float, optional
+    Multipliers for adiabatic, synchrotron, and IC terms. Defaults 1, 1, 1.
+emin, emax : float, optional
+    Injection energy band (eV). Defaults 1e9, 5.1e14.
+emin_grid, emax_grid : float, optional
+    Solver grid bounds (eV). Defaults 1e8, 5.1e14.
+to_cut_e : bool, optional
+    Zero injection outside [emin, emax]. Default True.
+to_cut_theta : bool, optional
+    Cut injection to |θ| < ``where_cut_theta``. Default False.
+where_cut_theta : float, optional
+    Angular cut (rad) if ``to_cut_theta`` is True. Default π/2.
 
-    return tuple(result)
+# Spectrum / radiation
+delta_power : float, optional
+    Doppler weight exponent (segment integration). Default 4.
+lorentz_boost : bool, optional
+    Apply comoving-frame treatment/boosting. Default True.
+simple : bool, optional
+    Use apex SED + scaling instead of per-segment radiation. Default False.
+abs_photoel : bool, optional
+    Apply photoelectric absorption. Default True.
+abs_gg : bool, optional
+    Apply γγ absorption along LoS (system-dependent). Default False.
+nh_tbabs : float, optional
+    Column density for photoelectric absorption (10²² cm⁻² units used by helper).
+    Default 0.8.
+ic_ani : bool, optional
+    Use anisotropic IC (requires IBS angles). Default False.
+apex_only : bool, optional
+    Compute only the apex contribution (no curve integration). Default False.
+mechanisms : list of {'syn','ic'}, optional
+    Emission mechanisms to include. Default ``['syn','ic']``.
+
+Attributes
+----------
+orbit : Orbit
+    Initialized orbit object built from the provided/system parameters.
+winds : Winds
+    Wind/disk/field model bound to the orbit.
+r_sps : ndarray, shape (Nt,)
+    Star–pulsar separation r_sp(t) [cm].
+r_pes : ndarray, shape (Nt,)
+    Pulsar→apex distance r_pe(t) [cm].
+r_ses : ndarray, shape (Nt,)
+    Star→apex distance r_se(t) [cm].
+B_p_apexs, B_opt_apexs : ndarray, shape (Nt,)
+    Pulsar/stellar magnetic fields at the apex [G].
+winds_classes : list of Winds 
+    Winds objects at each time.
+ibs_classes : list of IBS
+    IBS objects at each time.
+els_classes : list of ElectronsOnIBS
+    Electron-population objects at each time.
+spec_classes : list of SpectrumIBS
+    Spectrum calculators at each time.
+dNe_des : list of ndarray, length Nt
+    Electron distributions on the IBS, each with shape (Ns, Ne) [1 s⁻¹ cm⁻¹ eV⁻¹].
+e_es : list of ndarray, length Nt
+    Energy grids corresponding to ``dNe_des`` (eV).
+seds : list of ndarray, length Nt
+    Total SEDs per time (erg s⁻¹ cm⁻²).
+seds_s : list of ndarray, length Nt
+    Per-segment SEDs with shape (n_segments, Ne_ph) (erg s⁻¹ cm⁻²).
+e_phots : list of ndarray, length Nt
+    Photon-energy grids used for the SEDs (eV).
+emiss_s : list of ndarray, length Nt
+    Emissivity integrated over photon energy along arclength [erg s⁻¹ cm⁻¹].
+fluxes : ndarray, shape (Nt, Nb)
+    Band fluxes in ``bands`` (erg s⁻¹ cm⁻²).
+indexes : ndarray, shape (Nt, Ni)
+    Photon indices fitted in ``bands_ind``.
+
+Methods
+-------
+set_orbit()
+    Build and assign the :class:`Orbit` object from inputs/defaults.
+set_winds()
+    Build and assign the :class:`Winds` object tied to the orbit.
+calculate_at_time(t)
+    Compute IBS, electrons, spectrum, and derived quantities at one time;
+    returns a tuple of all per-epoch results.
+calculate()
+    Loop over all times (optionally in parallel), fill attributes listed above.
+peek(ax=None, **kwargs)
+    Quick-look plot with four panels: band fluxes, photon indices, SED at
+    three representative times, and emissivity along the IBS.
+
+Notes
+-----
+* When ``full_spec=False``, the SED energy grid is assembled from all bands
+  expanded to [e/1.2, e*1.2] and concatenated; this accelerates LC runs focused
+  on specific bands.
+* Parallel execution uses ``joblib.Parallel`` with up to ``cpu_count()-5``
+  workers (minimum 1).
+
+"""
 
 class LightCurve:
-    """
-    Broadband light curve builder for an intrabinary shock (IBS) system.
-
-    For a grid of times, this class assembles the full pipeline —
-    :class:`Orbit` → :class:`Winds` → :class:`IBS` → :class:`ElectronsOnIBS`
-    → :class:`SpectrumIBS` — and tabulates band fluxes, photon indices,
-    SEDs, and auxiliary physical quantities (separations, apex fields, etc.).
-    Energies are in eV, distances in cm, times in seconds, and SEDs in
-    erg s⁻¹ cm⁻².
-
-    Parameters
-    ----------
-    times : array_like, shape (Nt,)
-        Time grid (relative to periastron, seconds) at which to compute the LC.
-    bands : iterable of (float, float), optional
-        Energy bands [e1, e2] (eV) for band-integrated fluxes. Default ``([3e2, 1e4],)``.
-    bands_ind : iterable of (float, float), optional
-        Energy bands (eV) for photon-index fits. Default ``([3e3, 1e4],)``.
-    epows : None | scalar | iterable, optional
-        Moment order(s) for band flux integrals (see :meth:`SpectrumIBS.fluxes`).
-        If None, epow=1 is used for all bands. If scalar, the same epow is used
-        for all; if iterable, must match ``len(bands)``.
-    to_parall : bool, optional
-        If True, compute times in parallel with joblib. Default False.
-    full_spec : bool, optional
-        If True, compute SEDs on a global grid (``logspace(2,14,1000)``);
-        otherwise build per-band grids expanded by ±20% and concatenate.
-        Default False.
-
-    # Orbit / system parameters (forwarded via ``unpack_orbit``)
-    sys_name : {'psrb', 'rb', 'bw'} or None, optional
-        Named system; default parameters are loaded via ``get_parameters``.
-        Explicit values below override these defaults.
-    period, e, tot_mass, nu_los : float, optional
-        Orbital period (s), eccentricity, total mass (g), and LoS angle (rad).
-    Ropt, Topt, Mopt : float, optional
-        Optical star radius (cm), temperature (K), and mass (g).
-    distance : float or None, optional
-        Source distance (cm); if None and a named system is used, taken from
-        system defaults.
-
-    # Winds (external media & fields)
-    M_ns : float, optional
-        Neutron-star mass (g). Default ``1.4*M_SOLAR``.
-    f_p : float, optional
-        Pulsar-wind pressure normalization. Default 0.1.
-    alpha_deg, incl_deg : float, optional
-        Disk orientation angles in degrees (see :class:`Winds`). Defaults 0 and 30.
-    f_d : float, optional
-        Disk pressure normalization. Default 10.
-    p_enh : list of floats and lists of length 2, optional
-        A list of multipliers for the disk pressure. Default [1,].
-    h_enh : list of floats and lists of length 2, optional
-        A list of multipliers for the disk height. Default [1,].
-    p_enh_times : list of floats, or lists of length 2, or {'t1', 't2'}, optional
-        A list of times for pressure enhancement. Default [0,].
-    h_enh_times : list of floats, or lists of length 2, or {'t1', 't2'}, optional
-        A list of times for pressure enhancement. Default [0,].
-    np_disk : float, optional
-        Disk radial power-law index. Default 3.
-    delta : float, optional
-        Disk opening half-angle at the stellar surface. Default 0.01.
-    height_exp : float, optional
-        Exponent in the disk opening law. Default 0.5.
-    rad_prof : {'pl','bkpl'}, optional
-        Disk radial profile (power law or broken power law). Default 'pl'.
-    r_trunk : float or None, optional
-        Disk truncation radius (cm) for broken-profile models.
-    ns_field_model, ns_field_surf, ns_r_scale, ns_L_spindown, ns_sigma_magn
-        Pulsar magnetic-field model and parameters (see :class:`Winds`).
-    opt_field_model, opt_field_surf, opt_r_scale
-        Stellar magnetic-field model and parameters.
-
-    # IBS geometry
-    s_max : float, optional
-        Dimensionless arclength cutoff passed to :class:`IBS_norm`. Default 1.0.
-    gamma_max : float, optional
-        Max bulk Lorentz factor at ``s_max_g``. Default 3.0.
-    s_max_g : float, optional
-        Arclength at which ``gamma==gamma_max`` (dimensionless). Default 4.0.
-    n_ibs : int, optional
-        Sampling points (per horn) for IBS construction. Default 31.
-
-    # Electrons on IBS
-    cooling : {'no','stat_apex','stat_ibs','stat_mimic',
-               'leak_apex','leak_ibs','leak_mimic','adv'}, optional
-        Cooling/evolution mode for :class:`ElectronsOnIBS`. Default 'stat_mimic'.
-    to_inject_e : {'pl','ecpl','secpl'}, optional
-        Injection law in energy. Default 'ecpl'.
-    to_inject_theta : {'2d','3d'}, optional
-        Spatial weighting along IBS. Default '3d'.
-    ecut : float, optional
-        Cutoff energy for ECPL/SECPL (eV). Default 1e12.
-    p_e : float, optional
-        Injection spectral index. Default 2.0.
-    norm_e : float, optional
-        Injection normalization (s⁻¹). Default 1e37.
-    eta_a, eta_syn, eta_ic : float, optional
-        Multipliers for adiabatic, synchrotron, and IC terms. Defaults 1, 1, 1.
-    emin, emax : float, optional
-        Injection energy band (eV). Defaults 1e9, 5.1e14.
-    emin_grid, emax_grid : float, optional
-        Solver grid bounds (eV). Defaults 1e8, 5.1e14.
-    to_cut_e : bool, optional
-        Zero injection outside [emin, emax]. Default True.
-    to_cut_theta : bool, optional
-        Cut injection to |θ| < ``where_cut_theta``. Default False.
-    where_cut_theta : float, optional
-        Angular cut (rad) if ``to_cut_theta`` is True. Default π/2.
-
-    # Spectrum / radiation
-    delta_power : float, optional
-        Doppler weight exponent (segment integration). Default 4.
-    lorentz_boost : bool, optional
-        Apply comoving-frame treatment/boosting. Default True.
-    simple : bool, optional
-        Use apex SED + scaling instead of per-segment radiation. Default False.
-    abs_photoel : bool, optional
-        Apply photoelectric absorption. Default True.
-    abs_gg : bool, optional
-        Apply γγ absorption along LoS (system-dependent). Default False.
-    nh_tbabs : float, optional
-        Column density for photoelectric absorption (10²² cm⁻² units used by helper).
-        Default 0.8.
-    ic_ani : bool, optional
-        Use anisotropic IC (requires IBS angles). Default False.
-    apex_only : bool, optional
-        Compute only the apex contribution (no curve integration). Default False.
-    mechanisms : list of {'syn','ic'}, optional
-        Emission mechanisms to include. Default ``['syn','ic']``.
-
-    Attributes
-    ----------
-    orbit : Orbit
-        Initialized orbit object built from the provided/system parameters.
-    winds : Winds
-        Wind/disk/field model bound to the orbit.
-    r_sps : ndarray, shape (Nt,)
-        Star–pulsar separation r_sp(t) [cm].
-    r_pes : ndarray, shape (Nt,)
-        Pulsar→apex distance r_pe(t) [cm].
-    r_ses : ndarray, shape (Nt,)
-        Star→apex distance r_se(t) [cm].
-    B_p_apexs, B_opt_apexs : ndarray, shape (Nt,)
-        Pulsar/stellar magnetic fields at the apex [G].
-    winds_classes : list of Winds 
-        Winds objects at each time.
-    ibs_classes : list of IBS
-        IBS objects at each time.
-    els_classes : list of ElectronsOnIBS
-        Electron-population objects at each time.
-    spec_classes : list of SpectrumIBS
-        Spectrum calculators at each time.
-    dNe_des : list of ndarray, length Nt
-        Electron distributions on the IBS, each with shape (Ns, Ne) [1 s⁻¹ cm⁻¹ eV⁻¹].
-    e_es : list of ndarray, length Nt
-        Energy grids corresponding to ``dNe_des`` (eV).
-    seds : list of ndarray, length Nt
-        Total SEDs per time (erg s⁻¹ cm⁻²).
-    seds_s : list of ndarray, length Nt
-        Per-segment SEDs with shape (n_segments, Ne_ph) (erg s⁻¹ cm⁻²).
-    e_phots : list of ndarray, length Nt
-        Photon-energy grids used for the SEDs (eV).
-    emiss_s : list of ndarray, length Nt
-        Emissivity integrated over photon energy along arclength [erg s⁻¹ cm⁻¹].
-    fluxes : ndarray, shape (Nt, Nb)
-        Band fluxes in ``bands`` (erg s⁻¹ cm⁻²).
-    indexes : ndarray, shape (Nt, Ni)
-        Photon indices fitted in ``bands_ind``.
-
-    Methods
-    -------
-    set_orbit()
-        Build and assign the :class:`Orbit` object from inputs/defaults.
-    set_winds()
-        Build and assign the :class:`Winds` object tied to the orbit.
-    calculate_at_time(t)
-        Compute IBS, electrons, spectrum, and derived quantities at one time;
-        returns a tuple of all per-epoch results.
-    calculate()
-        Loop over all times (optionally in parallel), fill attributes listed above.
-    peek(ax=None, **kwargs)
-        Quick-look plot with four panels: band fluxes, photon indices, SED at
-        three representative times, and emissivity along the IBS.
-
-    Notes
-    -----
-    * When ``full_spec=False``, the SED energy grid is assembled from all bands
-      expanded to [e/1.2, e*1.2] and concatenated; this accelerates LC runs focused
-      on specific bands.
-    * Parallel execution uses ``joblib.Parallel`` with up to ``cpu_count()-5``
-      workers (minimum 1).
-
-    """
+    __doc__ = docstr_lc
     def __init__(self,
                  
                  times, bands = ( [3e2, 1e4], ), bands_ind = ( [3e3, 1e4], ),
@@ -292,9 +251,11 @@ class LightCurve:
                     to_parall=False, # lc itself
                  full_spec = False,
                  
-                 sys_name=None, period=None, e=None, tot_mass=None, nu_los=None,
+                 sys_name=None, sys_params=None,
+                 T=None, e=None, M=None, nu_los=None,
                  incl_los=None,
                  Ropt=None, Topt=None, Mopt=None,  distance = None,
+                 allow_missing=False,
                  
                  M_ns = 1.4*M_SOLAR, f_p = 0.1, 
                  alpha_deg=0, incl_deg=30.,   
@@ -316,9 +277,9 @@ class LightCurve:
                 to_cut_theta =  False, 
                 where_cut_theta = pi/2,
 
-                ns_field_model = 'linear', ns_field_surf = 1, ns_r_scale = 1e13,
+                ns_b_model = 'linear', ns_b_ref = 1, ns_r_ref = 1e13,
                 ns_L_spindown = None, ns_sigma_magn = None,
-                opt_field_model = 'linear', opt_field_surf = 0, opt_r_scale = 1e12,
+                opt_b_model = 'linear', opt_b_ref = 0, opt_r_ref = 1e12,
                              
                              
                 delta_power=4, lorentz_boost=True, simple=False,          # spec
@@ -336,13 +297,21 @@ class LightCurve:
                                    # or across all energies
         ################ ---- arguments from orbit ---- #######################
         self.sys_name = sys_name
-        T_, e_, mtot_, nu_los_, incl_los_, Topt_, Ropt_, Mopt_, distance_ = unpack_orbit(
-            orb_type=sys_name, T=period, e=e, M=tot_mass, nu_los=nu_los,
-            incl_los=incl_los,
-                Ropt=Ropt, Topt=Topt, Mopt=Mopt, dist=distance) 
-        self.period = T_
+        self.sys_params=sys_params
+        self.allow_missing = allow_missing
+        (T_, e_, M_, nu_los_, incl_los_, Topt_, Ropt_,
+         Mopt_, distance_) = unpack_params(('T', 'e', 'M', 'nu_los',
+            'incl_los', 'Topt', 'Ropt', 'Mopt', 'D'),
+            orb_type=sys_name, 
+            sys_params=sys_params,
+            known_types=known_names,
+            get_defaults_func=get_parameters,
+            T=T, e=e, M=M, nu_los=nu_los, incl_los=incl_los,
+            Topt=Topt, Ropt=Ropt, Mopt=Mopt, D=distance,
+            allow_missing=allow_missing)
+        self.T = T_
         self.e = e_  
-        self.tot_mass = mtot_
+        self.M = M_
         self.nu_los = nu_los_
         self.incl_los = incl_los_
         self.Ropt = Ropt_
@@ -365,14 +334,14 @@ class LightCurve:
         self.rad_prof = rad_prof
         self.r_trunk = r_trunk
         ####### --------- also from winds, about magn fields --------- ########
-        self.ns_field_model = ns_field_model
-        self.ns_field_surf = ns_field_surf
-        self.ns_r_scale = ns_r_scale
+        self.ns_b_model = ns_b_model
+        self.ns_b_ref = ns_b_ref
+        self.ns_r_ref = ns_r_ref
         self.ns_L_spindown = ns_L_spindown
         self.ns_sigma_magn = ns_sigma_magn
-        self.opt_field_model = opt_field_model
-        self.opt_field_surf = opt_field_surf
-        self.opt_r_scale = opt_r_scale
+        self.opt_b_model = opt_b_model
+        self.opt_b_ref = opt_b_ref
+        self.opt_r_ref = opt_r_ref
         ################ ----- arguments from ibs ----- #######################
         self.s_max = s_max
         self.gamma_max = gamma_max
@@ -417,10 +386,13 @@ class LightCurve:
         if self.orbit is None:
 
             orb = Orbit(sys_name = self.sys_name,
-                        period=self.period,
+                        sys_params=self.sys_params,
+                        T=self.T,
                         e=self.e,
-                        tot_mass=self.tot_mass,
-                        nu_los=self.nu_los, incl_los=self.incl_los,
+                        M=self.M,
+                        nu_los=self.nu_los,
+                        incl_los=self.incl_los,
+                        allow_missing=self.allow_missing,
                         n=1001)
             
             self.orbit = orb
@@ -481,14 +453,15 @@ class LightCurve:
                 Topt=self.Topt, 
                 Mopt=self.Mopt,
 
-                ns_field_model = self.ns_field_model,
-                ns_field_surf = self.ns_field_surf,
-                ns_r_scale = self.ns_r_scale,
+                ns_b_model = self.ns_b_model,
+                ns_b_ref = self.ns_b_ref,
+                ns_r_ref = self.ns_r_ref,
                 ns_L_spindown = self.ns_L_spindown,
                 ns_sigma_magn = self.ns_sigma_magn,
-                opt_field_model = self.opt_field_model,
-                opt_field_surf = self.opt_field_surf,
-                opt_r_scale = self.opt_r_scale,
+                opt_b_model = self.opt_b_model,
+                opt_b_ref = self.opt_b_ref,
+                opt_r_ref = self.opt_r_ref,
+                allow_missing=self.allow_missing,
                 )
 
         ibs_now = IBS(winds=winds_now, 

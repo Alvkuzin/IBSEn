@@ -1,9 +1,11 @@
 README.md
 pyproject.toml
+src/ibsen/Animation_tests.py
 src/ibsen/__init__.py
 src/ibsen/el_ev.py
 src/ibsen/get_obs_data.py
 src/ibsen/ibs.py
+src/ibsen/ibs_norm.py
 src/ibsen/lc.py
 src/ibsen/orbit.py
 src/ibsen/spec.py
@@ -16,5 +18,8 @@ src/ibsen.egg-info/requires.txt
 src/ibsen.egg-info/top_level.txt
 src/ibsen/absorbtion/__init__.py
 src/ibsen/absorbtion/absorbtion.py
+src/ibsen/absorbtion/absorb_tab/gg_abs_psrb.nc
+src/ibsen/absorbtion/absorb_tab/sgm_tbabs_new.txt
+src/ibsen/tab_data/Shocks4.nc
 src/ibsen/transport_solvers/__init__.py
 src/ibsen/transport_solvers/transport_on_ibs_solvers.py

@@ -1,21 +1,132 @@
-# pulsar/orbit_utis.py
+# ibsen/utils.py
 import numpy as np
 # from scipy.optimize import brentq
 from scipy.interpolate import interp1d
 from scipy.integrate import trapezoid
 from numpy import pi, sin, cos
 import warnings
-import astropy.units as u
+# import astropy.units as u
+from astropy import constants as const
 
 
 from matplotlib.collections import LineCollection
 from matplotlib.colors import Normalize
 
-G = 6.67e-8
+G = float(const.G.cgs.value)
 DAY = 86400.
-AU = 1.5e13
-# def is_list_of_vecs(x):
-#     return isinstance(x, list) and all(isinstance(xx, np.ndarray) for xx in x)
+
+def unpack_params(
+    param_names,
+    *,
+    orb_type=None,
+    sys_params=None,
+    known_types=None,
+    get_defaults_func=None,
+    overrides=None,
+    allow_missing=False,
+    missing=None,
+    return_dict=False,
+    **kwargs
+):
+    """
+    Generic parameter unpacker with priority to explicit overrides, then defaults.
+
+    Parameters
+    ----------
+    param_names : sequence of str
+        Names to extract (order defines the returned tuple order).
+    orb_type : str or None, optional
+        If a known type, defaults are loaded via `get_defaults_func(orb_type)`
+        (or global `get_parameters(orb_type)` if available).
+        If None or unknown, fall back to `sys_params`.
+    sys_params : dict or None, optional
+        Fallback defaults dictionary when `orb_type` is None/unknown or when
+        no type-specific defaults are available.
+    known_types : iterable of str, optional
+        Set/list of valid types for which `get_defaults_func` will be called.
+    get_defaults_func : callable or None, optional
+        Function taking `orb_type -> dict`. Defaults to `get_parameters`
+        if available; else may be omitted if explicit values suffice.
+    overrides : dict or None, optional
+        Explicit overrides mapping; merged with `**kwargs` (kwargs win on conflicts).
+    allow_missing : bool, optional
+        If True, missing values are filled with `missing` instead of raising.
+    missing : any, optional
+        Value used when `allow_missing=True` and a parameter is not found.
+    return_dict : bool, optional
+        If True, return a dict; otherwise return a tuple in `param_names` order.
+    **kwargs
+        Additional explicit overrides (e.g., T=..., e=...).
+
+    Returns
+    -------
+    tuple or dict
+        Tuple in the same order as `param_names`, or a dict if `return_dict=True`.
+
+    Raises
+    ------
+    ValueError
+        If a required parameter is missing and `allow_missing` is False.
+    TypeError
+        If `orb_type` is not a string or None.
+    """
+    if orb_type is not None and not isinstance(orb_type, str):
+        raise TypeError("`orb_type` must be str or None.")
+
+    # 1) Collect explicit overrides: overrides dict + kwargs (kwargs win)
+    explicit = {}
+    if overrides:
+        explicit.update(overrides)
+    for k, v in kwargs.items():
+        if k in param_names:
+            explicit[k] = v
+
+    # 2) Determine which parameters still need defaults
+    needed = [name for name in param_names
+              if (name not in explicit) or (explicit[name] is None)]
+
+    # If everything is provided explicitly (and not None), we can skip defaults.
+    if not needed:
+        out = {name: explicit[name] for name in param_names}
+        return out if return_dict else tuple(out[n] for n in param_names)
+
+    # 3) We do need some defaults; resolve a defaults dict
+    defaults = {}
+
+    if orb_type is not None and orb_type in set(known_types):
+        # Try type-specific defaults via provided function or global get_parameters
+        fn = get_defaults_func if get_defaults_func is not None else globals().get('get_parameters', None)
+        if fn is not None:
+            defaults = dict(fn(orb_type) or {})
+        elif sys_params is not None:
+            # Fall back to sys_params if available
+            defaults = dict(sys_params or {})
+        else:
+            # No defaults source at all. We may still allow missing.
+            if not allow_missing:
+                raise ValueError(
+                    "No defaults source available for orb_type "
+                    f"`{orb_type}` and `allow_missing` is False."
+                )
+            defaults = {}
+    else:
+        # Type unknown or None: just use sys_params (or empty dict)
+        defaults = dict(sys_params or {})
+
+    # 4) Build result with precedence: explicit (not None) -> defaults.get -> missing/error
+    out = {}
+    for name in param_names:
+        if name in explicit and explicit[name] is not None:
+            out[name] = explicit[name]
+        elif name in defaults and defaults[name] is not None:
+            out[name] = defaults[name]
+        elif allow_missing:
+            out[name] = missing
+        else:
+            raise ValueError(f"Missing required parameter `{name}`")
+
+    return out if return_dict else tuple(out[n] for n in param_names)
+
 
 def vectorize_func(func_simple):
     """
@@ -1126,176 +1237,3 @@ def plot_with_gradient(fig, ax, xdata, ydata, some_param, colorbar=False, lw=2,
         
     ax.set_xlim(xdata.min(), xdata.max())
     ax.set_ylim(ydata.min(), ydata.max())
-
-# def Get_PSRB_params(orb_p = 'psrb'):
-#     """
-#     Quickly access some PSRB orbital parameters: orbital period P [days],
-#     orbital period T [s], major half-axis a [cm], e, M [g], GM, 
-#     distance to the system D [cm], star radius Ropt [cm].
-
-#     Returns : dictionary
-#     -------
-#     'P' [days], 'a' [cm], 'e', 'M' [g], 'GM': cgs, 'D' [cm], 'Ropt' [cm],
-#     'T' [s]
-
-#     """
-#     MoptPSRB = 24
-#     MxNStyp = 1.4
-#     GMPSRB = G * (MoptPSRB + MxNStyp) * 2e33
-#     PPSRB = 1236.724526
-#     TorbPSRB = PPSRB * DAY
-#     aPSRB = (TorbPSRB**2 * GMPSRB / 4 / pi**2)**(1/3)
-#     ePSRB = 0.874
-#     MPSRB_cgs = (MoptPSRB + MxNStyp) * 2e33
-#     DPSRB = 2.4e3 * 206265 * AU
-    
-#     if orb_p == 'psrb':
-#         P_here = PPSRB; Torb_here = TorbPSRB; a_here = aPSRB; e_here = ePSRB 
-#         M_here = MPSRB_cgs; GM_here = GMPSRB; D_here = DPSRB; Ropt_here = 10 * 7e10
-#     elif orb_p == 'circ':
-#         P_here = PPSRB; Torb_here = TorbPSRB; a_here = aPSRB; e_here = 0 
-#         M_here = MPSRB_cgs; GM_here = GMPSRB; D_here = DPSRB; Ropt_here = 10 * 7e10
-
-#     res = {'P': P_here, 'a': a_here, 'e': e_here, 'M': M_here, 'GM': GM_here,
-#            'D': D_here, 'Ropt': Ropt_here, 'T': Torb_here}
-#     return res
-
-# if __name__ == "__main__":
-#     #### А ты сюдой зачем смотришь? Что ты хочешь тут увидеть? Вот то-то и оно.
-#     times_enh = [0,]
-#     param_to_enh = [1,]
-#     print(enhanche_jump(5.5, 3.0, 10.0, times_enh, param_to_enh))
-#     import matplotlib.pyplot as plt 
-    # n1 = [np.array([0, -1, 0.0]),  np.array([1, 0, 0.0])]
-    # n1 = n_from_v(n1)
-    # n2 = [np.array([1, -1, 0.0]), np.array([1, -1, 0.0])]
-    # n2 = n_from_v(n2)
-    # gamma = 2.23
-    # b_ = beta_from_g(gamma)
-    # gamma1 = 3.23
-    # b1_ = beta_from_g(gamma1)
-    
-    # beta = [np.array([1, 0, 0]) * b_, np.array([1, 0, 0]) * b1_]
-    # print('n1 = ', n1)
-    # print('n2 = ', n2)
-    
-    # print(b_)
-    # print(lor_trans_vec( n1, beta))
-    # # print([ (1/2**0.5-b_)/(1-b_/2**0.5), 1/2**0.5/gamma/(1-b_/2**0.5), 0 ])
-    
-    
-
-    # print(lor_trans_vec( n2, beta))
-    
-    # print(np.array(vector_angle(n1, n2, beta, True))/np.pi)
-    # print('between 0 and 90', np.arccos(-b_)/np.pi) # between 0 and 90
-    # print('between 0 and 45', np.arccos( (1/2**0.5-b_)/(1-b_/2**0.5))/np.pi) # between 0 and 45
-    # print('between 45 and 90', np.arccos(-b_)/np.pi-np.arccos( (1/2**0.5-b_)/(1-b_/2**0.5))/np.pi) # between 45 and 90
-    
-    # print('between 0 and 90 new', np.arccos(-b1_)/np.pi) # between 0 and 90
-    # print('between 0 and 45 new', np.arccos( (1/2**0.5-b1_)/(1-b1_/2**0.5))/np.pi) # between 0 and 45
-    # print('between 45 and 90 new', np.arccos(-b1_)/np.pi-np.arccos( (1/2**0.5-b1_)/(1-b1_/2**0.5))/np.pi) # between 45 and 90
-    
-    # for ang1 in (0, 30, 45, 60, 90, 120):
-    #     diff = np.linspace(0, 180-ang1, 100) / 180 * np.pi
-    #     ang1 = ang1  / 180 * np.pi
-
-    #     vec0 = np.array([cos(ang1), sin(ang1), 0])
-    #     beta_vec = 0.86 * np.array([1, 0, 0])
-    #     vecs = []
-    #     for d_ in diff:
-    #         vecs.append(np.array([cos(ang1 + d_), sin(ang1 + d_), 0 ]))
-    #     angs = np.array(vector_angle(vecs, vec0, beta_vec, True))
-    #     plt.plot(diff*180/pi, diff*180/pi, color='k', ls='--')
-    #     plt.plot(diff*180/pi, angs*180/pi, label = f'diff = {ang1 * 180 / np.pi}')
-    #     plt.legend()
-    
-    # x = np.linspace(-1.1, 3.4, 17)
-    # x = 4
-    # print(wrap_grid(x, frac=0.1, num_points=21, single_num_points=12))
-        
-    
-# from skimage.measure import marching_cubes
-# from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
-
-# def plot_isosurface_parametric(ax,
-#                                h_forp, r_forp, phi,
-#                                u_be, v, w,
-#                                values,                  # disk_ps3, shape (Nh, Nr, Nphi)
-#                                levels,
-#                                color=(1.0, 0.5, 0.0),   # orange
-#                                alpha=0.30,
-#                                step_size=1,
-#                                allow_degenerate=True):
-#     """
-#     Plot one or more isosurfaces of 'values' defined on a parametric grid (h, r, phi)
-#     with axisymmetric embedding x = h*u + r*(cosφ v + sinφ w).
-
-#     Parameters
-#     ----------
-#     ax : 3D axes
-#     h_forp, r_forp, phi : 1D arrays (uniformly spaced recommended)
-#         h = coordinate along the axis u_be
-#         r = radius from the axis in the slice plane
-#         φ = rotation angle around u_be (radians)
-#     u_be, v, w : (3,) arrays, orthonormal basis (u_be is the symmetry axis)
-#     values : ndarray, shape (Nh, Nr, Nphi)
-#         Scalar field on the (h,r,φ) grid (e.g., log10 pressure)
-#     levels : float or sequence of float
-#         Isosurface level(s) in the same units as 'values' (e.g., np.nanmax(values)-k)
-#     color : RGB tuple
-#     alpha : float
-#     step_size : marching cubes step size (increase for speed, decrease for quality)
-#     """
-
-#     # Input checks
-#     values = np.asarray(values, float)
-#     assert values.shape == (h_forp.size, r_forp.size, phi.size), \
-#         f"'values' must have shape (Nh, Nr, Nphi) = {(h_forp.size, r_forp.size, phi.size)}, got {values.shape}"
-
-#     # Replace NaNs with very low values so they won't appear at high iso levels
-#     vmin_finite = np.nanmin(values[np.isfinite(values)])
-#     vol = np.where(np.isfinite(values), values, vmin_finite - 1e6)
-
-#     # Precompute linear spacing info (we assume uniform spacing here)
-#     # marching_cubes returns verts in index order (z,y,x) == (ih, ir, iphi)
-#     Nh, Nr, Np = values.shape
-#     h0, r0, p0 = h_forp[0], r_forp[0], phi[0]
-#     dh = (h_forp[-1] - h_forp[0]) / (Nh - 1) if Nh > 1 else 1.0
-#     dr = (r_forp[-1] - r_forp[0]) / (Nr - 1) if Nr > 1 else 1.0
-#     dp = (phi[-1] - phi[0]) / (Np - 1) if Np > 1 else 1.0
-
-#     # Ensure numpy arrays
-#     u_be = np.asarray(u_be, float); v = np.asarray(v, float); w = np.asarray(w, float)
-
-#     # Multiple or single level
-#     if np.isscalar(levels):
-#         levels = [levels]
-
-#     artists = []
-#     for lvl in levels:
-#         verts, faces, _, _ = marching_cubes(
-#             vol, level=lvl, step_size=step_size, allow_degenerate=allow_degenerate
-#         )
-#         if verts.size == 0 or faces.size == 0:
-#             continue  # nothing at this level
-
-#         # verts[:,0]=ih (along h), verts[:,1]=ir (along r), verts[:,2]=ip (along phi)
-#         hv = h0 + dh * verts[:, 0]
-#         rv = r0 + dr * verts[:, 1]
-#         pv = p0 + dp * verts[:, 2]
-
-#         # Map to physical 3D: x = h*u + r*cosφ*v + r*sinφ*w
-#         cos_p = np.cos(pv)[:, None]
-#         sin_p = np.sin(pv)[:, None]
-#         verts_xyz = (hv[:, None] * u_be[None, :]
-#                      + rv[:, None] * cos_p * v[None, :]
-#                      + rv[:, None] * sin_p * w[None, :])
-
-#         tri = ax.plot_trisurf(verts_xyz[:, 0],
-#                               verts_xyz[:, 1],
-#                               faces,
-#                               verts_xyz[:, 2],
-#                               color=color, alpha=alpha, linewidth=0)
-#         artists.append(tri)
-#     return artists

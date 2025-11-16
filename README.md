@@ -147,17 +147,20 @@ The codebase is tailored to observational analysis of PSR B1259-63 but can be ad
 
 ### TODO
 
- 1. Clean the mess with sys_name = dict/str/None; probably separate it into name + dict\_of\_params. Generally: make it simpler to initiate an orbit/winds.
- 2. Better names for: `tot_mass` etc. in Orbit; magnetic-field related stuff in Winds.
- 3. Write the tutorial for the absorbtion; how to tabulate tau_gg for any system and how to use it.
- 4. Now `spec`/`lc` essentially support gg-absorbtion only for PSRB; fix.
- 5. Occasional NaNs in IC spectrum. Should we ignore them (e.g. by interpolating)? Are they there because of something internally Naimian or is it my fault?
- 6. Sometimes LC has problems with calculating fluxes if more than 1 band is passed. 
+ 1. Write the tutorial for the absorbtion; how to tabulate tau_gg for any system and how to use it.
+ 2. Now `spec`/`lc` essentially support gg-absorbtion only for PSRB; fix.
+ 3. Calculate magn and photon fields on ibs in `IBS` class, not in `Electrons`, as well as their values in a co-moving frame. But there's a problem:
+the Electrons require only B at apex + model (so we can recalculate B at the whole IBS), while magn fields are specified
+already at `Winds` stage. Maybe in `Winds` we can make it an option  "calculate from apex", so at `IBS` stage we'll recalculate
+the fields  on an IBS as if from the apex value... Anyway, it should be done somehow in `IBS`, because it is ridiculous to perform a Lorentz boost
+at `Spectrum` level. 
+ 4. Occasional NaNs in IC spectrum. Should we ignore them (e.g. by interpolating)? Are they there because of something internally Naimian or is it my fault?
+ 5.  Sometimes LC has problems with calculating fluxes if more than 1 band is passed. 
 The value of E out of interpolating segment, apparently. 
 The error depends on the time grid, so probably it happens only at some times. **FIXED, let's watch.'**
- 7. In LC, write interpolators for everything, not just sed/sed_s/emiss, so that all quantities can be inferred at times t as lc.quant\_i(t).
- 8. Make LC.peek_animate() which would make cute gifs with animated scheme of the system and SEDs (e/gamma) also animated. 
- 9. It seems rather simple to make a 3d interactable visualisation of the IBS. The only thing that stops me is the visualisation of winds in 3d. 
+ 6. In LC, write interpolators for everything, not just sed/sed_s/emiss, so that all quantities can be inferred at times t as lc.quant\_i(t).
+ 7. Make LC.peek_animate() which would make cute gifs with animated scheme of the system and SEDs (e/gamma) also animated. 
+ 8. It seems rather simple to make a 3d interactable visualisation of the IBS. The only thing that stops me is the visualisation of winds in 3d. 
 For now, the only more or less visually pleasant 3d representation of winds in Python is plot a loooot of points with densities \propto density/pressure of winds,
 but it is very time-consuming. Maybe we shoud just ignore winds in 3d visualisation.
 
