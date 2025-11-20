@@ -219,6 +219,7 @@ class Winds:
                                Topt=Topt, Ropt=Ropt, Mopt=Mopt,
                                allow_missing=allow_missing)
         self.orbit = orbit
+        self.sys_name = sys_name
         self.Topt = Topt_
         self.Ropt = Ropt_
         self.Mopt = Mopt_

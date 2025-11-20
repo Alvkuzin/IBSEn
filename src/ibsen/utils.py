@@ -844,7 +844,7 @@ def loggrid(x1, x2, n_dec):
         raise ValueError('x2 should be > x1 for loggrid.')
     n_points = max(int( np.log10(x2 / x1) * n_dec) + 1,
                    2)
-    return np.logspace(np.log10(x1), np.log10(x2), n_points)
+    return np.geomspace(x1, x2, n_points)
 
 def logrep(xdata, ydata):
     """
@@ -892,7 +892,7 @@ def logev(x, logspl):
     """
     return 10**( logspl( np.log10(x) ) )
 
-def interplg(x, xdata, ydata):
+def interplg(x, xdata, ydata, **kwargs):
     """
     Interpolates ydata at x, given xdata/ydata in logarithmic scale.
 
@@ -913,7 +913,7 @@ def interplg(x, xdata, ydata):
     """
     asc = np.argsort(xdata)
     xdata, ydata = xdata[asc], ydata[asc] 
-    spl_ = interp1d(np.log10(xdata), np.log10(ydata))
+    spl_ = interp1d(np.log10(xdata), np.log10(ydata), **kwargs)
     return 10**( spl_( np.log10(x) ) )
 
 
@@ -1171,69 +1171,127 @@ def wrap_grid(x, frac=0.10, num_points=1000, single_num_points=15):
 ########## some helper function for drawing, whatev ############################ 
 ####################################################################################
 ####################################################################################
-def plot_with_gradient(fig, ax, xdata, ydata, some_param, colorbar=False, lw=2,
-                       ls='-', colorbar_label='grad', minimum=None, maximum=None):
-    """
+# def plot_with_gradient(fig, ax, xdata, ydata, some_param, colorbar=False, lw=2,
+#                        ls='-', colorbar_label='grad', minimum=None, maximum=None,
+#                        scatter=False):
+#     """
     
-    Draw the plot (xdata, ydata) on the axis ax with color along the curve
-    marking some_param. The color changes from blue to red as some_param increases.
-    You may provide your own min and max values for some_param:
-    minimum and maximum, then the color will be scaled according to them.
+#     Draw the plot (xdata, ydata) on the axis ax with color along the curve
+#     marking some_param. The color changes from blue to red as some_param increases.
+#     You may provide your own min and max values for some_param:
+#     minimum and maximum, then the color will be scaled according to them.
     
 
-    Parameters
-    ----------
-    fig : pyplot figure
-        The figure on which to draw the plot.
-    ax : pyplot axis
-        The axis on which to draw the plot. 
-    xdata : np.ndarray
-        1D array of x-coordinates.
-    ydata : np.ndarray
-        1D array of y-coordinates. Should be the same length as xdata.
-    some_param : np.ndarray
-        1D array of values to color the line by. Should be the same length as xdata.
-    colorbar : bool, optional
-        Whether to draw a colorbar. The default is False.
-    lw : float, optional
-        A linewidth keyword for pyplot.plot. The default is 2.
-    ls : string, optional
-        A linestyle keyword for pyplot.plot.. The default is '-'.
-    colorbar_label : string | float, optional
-        Label for a colorbar. The default is 'grad'.
-    minimum : float, optional
-        If provided, it is used as a minimum value for the 
-        colorcoding of some_param. The default is None.
-    maximum : float, optional
-        If provided, it is used as a maximum value for the 
-        colorcoding of some_param. The default is None.
+#     Parameters
+#     ----------
+#     fig : pyplot figure
+#         The figure on which to draw the plot.
+#     ax : pyplot axis
+#         The axis on which to draw the plot. 
+#     xdata : np.ndarray
+#         1D array of x-coordinates.
+#     ydata : np.ndarray
+#         1D array of y-coordinates. Should be the same length as xdata.
+#     some_param : np.ndarray
+#         1D array of values to color the line by. Should be the same length as xdata.
+#     colorbar : bool, optional
+#         Whether to draw a colorbar. The default is False.
+#     lw : float, optional
+#         A linewidth keyword for pyplot.plot. The default is 2.
+#     ls : string, optional
+#         A linestyle keyword for pyplot.plot.. The default is '-'.
+#     colorbar_label : string | float, optional
+#         Label for a colorbar. The default is 'grad'.
+#     minimum : float, optional
+#         If provided, it is used as a minimum value for the 
+#         colorcoding of some_param. The default is None.
+#     maximum : float, optional
+#         If provided, it is used as a maximum value for the 
+#         colorcoding of some_param. The default is None.
+#     scatter : bool, optional
+#         Whether to plot as ax.scatter (True) or ax.plot (False, default).
 
-    Returns
-    -------
-    None.
+#     Returns
+#     -------
+#     None.
 
-    """
-    # Prepare line segments
-    points = np.array([xdata, ydata]).T.reshape(-1, 1, 2)
-    segments = np.concatenate([points[:-1], points[1:]], axis=1)
+#     """
+#     # Prepare line segments
+#     points = np.array([xdata, ydata]).T.reshape(-1, 1, 2)
+#     segments = np.concatenate([points[:-1], points[1:]], axis=1)
     
-    # Normalize some_p values to the range [0, 1] for colormap
-    vmin_here = minimum if minimum is not None else np.min(some_param)
-    vmax_here = maximum if maximum is not None else np.max(some_param)
+#     # Normalize some_p values to the range [0, 1] for colormap
+#     vmin_here = minimum if minimum is not None else np.min(some_param)
+#     vmax_here = maximum if maximum is not None else np.max(some_param)
     
-    norm = Normalize(vmin=vmin_here, vmax=vmax_here)
+#     norm = Normalize(vmin=vmin_here, vmax=vmax_here)
     
-    # Create the LineCollection with colormap
-    lc = LineCollection(segments, cmap='coolwarm', norm=norm)
-    lc.set_array(some_param[:-1])  # color per segment; same length as segments
-    lc.set_linewidth(lw)
+#     # Create the LineCollection with colormap
+#     lc = LineCollection(segments, cmap='coolwarm', norm=norm)
+#     lc.set_array(some_param[:-1])  # color per segment; same length as segments
+#     lc.set_linewidth(lw)
     
-    # Plot
+#     # Plot
 
-    line = ax.add_collection(lc)
+#     line = ax.add_collection(lc)
     
-    if colorbar:
-        fig.colorbar(line, ax=ax, label=colorbar_label)  # optional colorbar
+#     if colorbar:
+#         fig.colorbar(line, ax=ax, label=colorbar_label)  # optional colorbar
         
-    ax.set_xlim(xdata.min(), xdata.max())
-    ax.set_ylim(ydata.min(), ydata.max())
+#     ax.set_xlim(xdata.min(), xdata.max())
+#     ax.set_ylim(ydata.min(), ydata.max())
+
+
+def plot_with_gradient(fig, ax, xdata, ydata, some_param, colorbar=False, lw=2,
+                       ls='-', colorbar_label='grad', minimum=None, maximum=None,
+                       scatter=False, marker='o', s=20, alpha=1.0, cmap='coolwarm'):
+    """
+    Draw (xdata, ydata) colored by some_param.
+    If scatter=True -> per-point scatter; else -> continuous line with gradient.
+    """
+
+    # sanitize to 1D arrays and drop NaNs consistently
+    xdata = np.asarray(xdata).ravel()
+    ydata = np.asarray(ydata).ravel()
+    some_param = np.asarray(some_param).ravel()
+    m = np.isfinite(xdata) & np.isfinite(ydata) & np.isfinite(some_param)
+    xdata, ydata, some_param = xdata[m], ydata[m], some_param[m]
+    if xdata.size == 0:
+        return
+
+    # normalization range
+    vmin_here = np.min(some_param) if minimum is None else minimum
+    vmax_here = np.max(some_param) if maximum is None else maximum
+    norm = Normalize(vmin=vmin_here, vmax=vmax_here)
+
+    if scatter:
+        # point-by-point scatter colored by some_param
+        sc = ax.scatter(xdata, ydata, c=some_param, cmap=cmap, norm=norm,
+                        s=s, marker=marker, linewidths=0, alpha=alpha)
+        mappable = sc
+    else:
+        # colored segments along the curve
+        if xdata.size < 2:
+            # nothing to segment; fall back to a single point
+            sc = ax.scatter(xdata, ydata, c=some_param, cmap=cmap, norm=norm,
+                            s=s, marker=marker, linewidths=0, alpha=alpha)
+            mappable = sc
+        else:
+            points = np.array([xdata, ydata]).T.reshape(-1, 1, 2)
+            segments = np.concatenate([points[:-1], points[1:]], axis=1)
+            lc = LineCollection(segments, cmap=cmap, norm=norm)
+            lc.set_array(some_param[:-1])  # one color per segment
+            lc.set_linewidth(lw)
+            lc.set_linestyle(ls)
+            lc.set_alpha(alpha)
+            line = ax.add_collection(lc)
+            mappable = line
+    # let autoscale handle limits; or set explicit:
+    range_x = np.max(xdata) - np.min(xdata)
+    range_y = np.max(ydata) - np.min(ydata)
+    
+    ax.set_xlim(np.min(xdata) - 0.1*range_x, np.max(xdata) + 0.1*range_x)
+    ax.set_ylim(np.min(ydata) - 0.1*range_y, np.max(ydata) + 0.1*range_y)
+
+    if colorbar:
+        fig.colorbar(mappable, ax=ax, label=colorbar_label)

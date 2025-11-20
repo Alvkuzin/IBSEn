@@ -413,10 +413,7 @@ class Orbit:
             z(t).
 
         """
-        if isinstance(t, np.ndarray):
-            return np.zeros(t.size)
-        else:
-            return 0.
+        return Orbit.x(self, t) * 0
 
     def vector_sp(self, t):
         """

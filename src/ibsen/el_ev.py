@@ -1,20 +1,12 @@
 import numpy as np
-# from matplotlib import pyplot as plt
 from numpy import pi, sin, cos, exp
 import astropy.units as u
 from astropy import constants as const
 from scipy.integrate import trapezoid, cumulative_trapezoid, solve_ivp
 from scipy.interpolate import interp1d
-# import time
-# from joblib import Parallel, delayed
+
 from ibsen.utils import  beta_from_g, loggrid, t_avg_func, wrap_grid, trapz_loglog
-import matplotlib.pyplot as plt
-
 from ibsen.transport_solvers.transport_on_ibs_solvers import solve_for_n, nonstat_characteristic_solver
-# import xarray as xr
-# from pathlib import Path
-
-
 from ibsen.ibs import IBS
 
 

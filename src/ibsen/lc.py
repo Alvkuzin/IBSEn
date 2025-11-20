@@ -61,6 +61,9 @@ epows : None | scalar | iterable, optional
     for all; if iterable, must match ``len(bands)``.
 to_parall : bool, optional
     If True, compute times in parallel with joblib. Default False.
+n_cores : int, or 'all', or None, optional
+    Number of CPU cores to use in paralleling. If 'all' or None (default),
+    all cores are used. 
 full_spec : bool, optional
     If True, compute SEDs on a global grid (``logspace(2,14,1000)``);
     otherwise build per-band grids expanded by ±20% and concatenate.
@@ -79,104 +82,109 @@ full_spec : bool, optional
             `T`, `e`, `M`, `nu_los`, `incl_los`, 'Ropt', 'Mopt', 'Topt', 'D'.
           Explicit arguments below override those in
           this dictionary. If None, all parameters must be given explicitly.  
-T, e, M, nu_los, incl_los : float, optional
-    Orbital period (s), eccentricity, total mass (g), LoS positional 
-    angle (rad), LoS inclination (rad).
-Ropt, Topt, Mopt : float, optional
-    Optical star radius (cm), temperature (K), and mass (g).
-distance : float or None, optional
-    Source distance (cm); if None and a named system is used, taken from
-    system defaults.
+    T, e, M, nu_los, incl_los : float, optional
+        Orbital period (s), eccentricity, total mass (g), LoS positional 
+        angle (rad), LoS inclination (rad).
+
 
 # Winds (external media & fields)
-M_ns : float, optional
-    Neutron-star mass (g). Default ``1.4*M_SOLAR``.
-f_p : float, optional
-    Pulsar-wind pressure normalization. Default 0.1.
-alpha_deg, incl_deg : float, optional
-    Disk orientation angles in degrees (see :class:`Winds`). Defaults 0 and 30.
-f_d : float, optional
-    Disk pressure normalization. Default 10.
-p_enh : list of floats and lists of length 2, optional
-    A list of multipliers for the disk pressure. Default [1,].
-h_enh : list of floats and lists of length 2, optional
-    A list of multipliers for the disk height. Default [1,].
-p_enh_times : list of floats, or lists of length 2, or {'t1', 't2'}, optional
-    A list of times for pressure enhancement. Default [0,].
-h_enh_times : list of floats, or lists of length 2, or {'t1', 't2'}, optional
-    A list of times for pressure enhancement. Default [0,].
-np_disk : float, optional
-    Disk radial power-law index. Default 3.
-delta : float, optional
-    Disk opening half-angle at the stellar surface. Default 0.01.
-height_exp : float, optional
-    Exponent in the disk opening law. Default 0.5.
-rad_prof : {'pl','bkpl'}, optional
-    Disk radial profile (power law or broken power law). Default 'pl'.
-r_trunk : float or None, optional
-    Disk truncation radius (cm) for broken-profile models.
-ns_b_model, ns_b_ref, ns_r_ref, ns_L_spindown, ns_sigma_magn
-    Pulsar magnetic-field model and parameters (see :class:`Winds`).
-opt_b_model, opt_b_ref, opt_r_ref
-    Stellar magnetic-field model and parameters.
+    Ropt, Topt, Mopt : float, optional
+        Optical star radius (cm), temperature (K), and mass (g).
+    M_ns : float, optional
+        Neutron-star mass (g). Default ``1.4*M_SOLAR``.
+    f_p : float, optional
+        Pulsar-wind pressure normalization. Default 0.1.
+    alpha_deg, incl_deg : float, optional
+        Disk orientation angles in degrees (see :class:`Winds`). Defaults 0 and 30.
+    f_d : float, optional
+        Disk pressure normalization. Default 10.
+    p_enh : list of floats and lists of length 2, optional
+        A list of multipliers for the disk pressure. Default [1,].
+    h_enh : list of floats and lists of length 2, optional
+        A list of multipliers for the disk height. Default [1,].
+    p_enh_times : list of floats, or lists of length 2, or {'t1', 't2'}, optional
+        A list of times for pressure enhancement. Default [0,].
+    h_enh_times : list of floats, or lists of length 2, or {'t1', 't2'}, optional
+        A list of times for pressure enhancement. Default [0,].
+    np_disk : float, optional
+        Disk radial power-law index. Default 3.
+    delta : float, optional
+        Disk opening half-angle at the stellar surface. Default 0.01.
+    height_exp : float, optional
+        Exponent in the disk opening law. Default 0.5.
+    rad_prof : {'pl','bkpl'}, optional
+        Disk radial profile (power law or broken power law). Default 'pl'.
+    r_trunk : float or None, optional
+        Disk truncation radius (cm) for broken-profile models.
+    ns_b_model, ns_b_ref, ns_r_ref, ns_L_spindown, ns_sigma_magn
+        Pulsar magnetic-field model and parameters (see :class:`Winds`).
+    opt_b_model, opt_b_ref, opt_r_ref
+        Stellar magnetic-field model and parameters.
 
 # IBS geometry
-s_max : float, optional
-    Dimensionless arclength cutoff passed to :class:`IBS_norm`. Default 1.0.
-gamma_max : float, optional
-    Max bulk Lorentz factor at ``s_max_g``. Default 3.0.
-s_max_g : float, optional
-    Arclength at which ``gamma==gamma_max`` (dimensionless). Default 4.0.
-n_ibs : int, optional
-    Sampling points (per horn) for IBS construction. Default 31.
-
-# Electrons on IBS
-cooling : {'no','stat_apex','stat_ibs','stat_mimic',
-           'leak_apex','leak_ibs','leak_mimic','adv'}, optional
-    Cooling/evolution mode for :class:`ElectronsOnIBS`. Default 'stat_mimic'.
-to_inject_e : {'pl','ecpl','secpl'}, optional
-    Injection law in energy. Default 'ecpl'.
-to_inject_theta : {'2d','3d'}, optional
-    Spatial weighting along IBS. Default '3d'.
-ecut : float, optional
-    Cutoff energy for ECPL/SECPL (eV). Default 1e12.
-p_e : float, optional
-    Injection spectral index. Default 2.0.
-norm_e : float, optional
-    Injection normalization (s⁻¹). Default 1e37.
-eta_a, eta_syn, eta_ic : float, optional
-    Multipliers for adiabatic, synchrotron, and IC terms. Defaults 1, 1, 1.
-emin, emax : float, optional
-    Injection energy band (eV). Defaults 1e9, 5.1e14.
-emin_grid, emax_grid : float, optional
-    Solver grid bounds (eV). Defaults 1e8, 5.1e14.
-to_cut_e : bool, optional
-    Zero injection outside [emin, emax]. Default True.
-to_cut_theta : bool, optional
-    Cut injection to |θ| < ``where_cut_theta``. Default False.
-where_cut_theta : float, optional
-    Angular cut (rad) if ``to_cut_theta`` is True. Default π/2.
+    s_max : float, optional
+        Dimensionless arclength cutoff passed to :class:`IBS_norm`. Default 1.0.
+    gamma_max : float, optional
+        Max bulk Lorentz factor at ``s_max_g``. Default 3.0.
+    s_max_g : float, optional
+        Arclength at which ``gamma==gamma_max`` (dimensionless). Default 4.0.
+    n_ibs : int, optional
+        Sampling points (per horn) for IBS construction. Default 31.
+    
+    # Electrons on IBS
+    cooling : {'no','stat_apex','stat_ibs','stat_mimic',
+               'leak_apex','leak_ibs','leak_mimic','adv'}, optional
+        Cooling/evolution mode for :class:`ElectronsOnIBS`. Default 'stat_mimic'.
+    to_inject_e : {'pl','ecpl','secpl'}, optional
+        Injection law in energy. Default 'ecpl'.
+    to_inject_theta : {'2d','3d'}, optional
+        Spatial weighting along IBS. Default '3d'.
+    ecut : float, optional
+        Cutoff energy for ECPL/SECPL (eV). Default 1e12.
+    p_e : float, optional
+        Injection spectral index. Default 2.0.
+    norm_e : float, optional
+        Injection normalization (s⁻¹). Default 1e37.
+    eta_a, eta_syn, eta_ic : float, optional
+        Multipliers for adiabatic, synchrotron, and IC terms. Defaults 1, 1, 1.
+    emin, emax : float, optional
+        Injection energy band (eV). Defaults 1e9, 5.1e14.
+    emin_grid, emax_grid : float, optional
+        Solver grid bounds (eV). Defaults 1e8, 5.1e14.
+    to_cut_e : bool, optional
+        Zero injection outside [emin, emax]. Default True.
+    to_cut_theta : bool, optional
+        Cut injection to |θ| < ``where_cut_theta``. Default False.
+    where_cut_theta : float, optional
+        Angular cut (rad) if ``to_cut_theta`` is True. Default π/2.
 
 # Spectrum / radiation
-delta_power : float, optional
-    Doppler weight exponent (segment integration). Default 4.
-lorentz_boost : bool, optional
-    Apply comoving-frame treatment/boosting. Default True.
-simple : bool, optional
-    Use apex SED + scaling instead of per-segment radiation. Default False.
-abs_photoel : bool, optional
-    Apply photoelectric absorption. Default True.
-abs_gg : bool, optional
-    Apply γγ absorption along LoS (system-dependent). Default False.
-nh_tbabs : float, optional
-    Column density for photoelectric absorption (10²² cm⁻² units used by helper).
-    Default 0.8.
-ic_ani : bool, optional
-    Use anisotropic IC (requires IBS angles). Default False.
-apex_only : bool, optional
-    Compute only the apex contribution (no curve integration). Default False.
-mechanisms : list of {'syn','ic'}, optional
-    Emission mechanisms to include. Default ``['syn','ic']``.
+    distance : float or None, optional
+        Source distance (cm); if None and a named system is used, taken from
+        system defaults.
+    delta_power : float, optional
+        Doppler weight exponent (segment integration). Default 4.
+    lorentz_boost : bool, optional
+        Apply comoving-frame treatment/boosting. Default True.
+    simple : bool, optional
+        Use apex SED + scaling instead of per-segment radiation. Default False.
+    abs_photoel : bool, optional
+        Apply photoelectric absorption. Default True.
+    abs_gg : bool, optional
+        Apply γγ absorption along LoS (system-dependent). Default False.
+    abs_gg_filename: str or None, optional
+        Name of the file with tabulated gamma-gamma absorbtion. If None,
+        (default), IBSEn tries to find a tabulated
+        gg-abs file if `sys_name` is a known system.
+    nh_tbabs : float, optional
+        Column density for photoelectric absorption (10²² cm⁻² units used by helper).
+        Default 0.8.
+    ic_ani : bool, optional
+        Use anisotropic IC (requires IBS angles). Default False.
+    apex_only : bool, optional
+        Compute only the apex contribution (no curve integration). Default False.
+    mechanisms : list of {'syn','ic'}, optional
+        Emission mechanisms to include. Default ``['syn','ic']``.
 
 Attributes
 ----------
@@ -249,6 +257,7 @@ class LightCurve:
                  times, bands = ( [3e2, 1e4], ), bands_ind = ( [3e3, 1e4], ),
                  epows=None,
                     to_parall=False, # lc itself
+                    n_cores=None,
                  full_spec = False,
                  
                  sys_name=None, sys_params=None,
@@ -283,7 +292,7 @@ class LightCurve:
                              
                              
                 delta_power=4, lorentz_boost=True, simple=False,          # spec
-                abs_photoel=True, abs_gg=False, nh_tbabs=0.8,
+                abs_photoel=True, abs_gg=False, abs_gg_filename=None, nh_tbabs=0.8,
                 ic_ani=False, apex_only=False, mechanisms=['syn', 'ic'],
                  
                 ):
@@ -293,6 +302,7 @@ class LightCurve:
         self.epows = epows # moment order for flux calc 
         self.bands_ind = bands_ind # tuple of bands to estimate phot index in
         self.to_parall = to_parall # whether to parall with Parallel
+        self.n_cores = n_cores
         self.full_spec = full_spec # if to calculate spec just in bands=bands 
                                    # or across all energies
         ################ ---- arguments from orbit ---- #######################
@@ -371,6 +381,8 @@ class LightCurve:
         self.simple = simple
         self.abs_photoel = abs_photoel
         self.abs_gg = abs_gg
+        self.abs_gg_filename = abs_gg_filename
+        
         self.nh_tbabs = nh_tbabs
         self.ic_ani = ic_ani
         self.apex_only = apex_only
@@ -458,6 +470,7 @@ class LightCurve:
                 ns_r_ref = self.ns_r_ref,
                 ns_L_spindown = self.ns_L_spindown,
                 ns_sigma_magn = self.ns_sigma_magn,
+                
                 opt_b_model = self.opt_b_model,
                 opt_b_ref = self.opt_b_ref,
                 opt_r_ref = self.opt_r_ref,
@@ -470,6 +483,7 @@ class LightCurve:
                     s_max_g=self.s_max_g, 
                     n=self.n_ibs, 
                     t_to_calculate_beta_eff=t,
+                    abs_gg_filename=self.abs_gg_filename,
                 )
         r_sp_now = self.orbit.r(t=t)
         r_se_now = winds_now.dist_se_1d(t=t)
@@ -511,11 +525,12 @@ class LightCurve:
                                 distance = self.distance,
                                 )
         if self.full_spec:
-            E_ = np.logspace(2, 14, 1000)
+            E_ = loggrid(1e2, 1e14, 30)
         else:
             E_ = []
             for band in self.bands:
-                E_in_band = loggrid(band[0]/1.2, band[1]*1.2, 67)
+                # ndec=20-25 is enough for accuracy >1%
+                E_in_band = loggrid(band[0]/1.2, band[1]*1.2, 25) 
                 E_.append(E_in_band)
             E_ = np.concatenate(E_)
 
@@ -623,7 +638,13 @@ class LightCurve:
                     E_ph_now, sed_tot_now, sed_s_now, fluxes_now, indexes_now, 
                     emissiv_now,
                     )
-            n_jobs = max(1, min(20, multiprocessing.cpu_count() - 5) )
+            if self.n_cores is None or self.n_cores == 'all':
+                n_jobs = multiprocessing.cpu_count()
+            elif isinstance(self.n_cores, int): 
+                n_jobs = self.n_cores
+            else:
+                raise ValueError('n_cores should be an int, or None, or \'all\'.')
+            n_jobs = max(1, min(20, n_jobs - 5) )
             res= Parallel(n_jobs=n_jobs)(delayed(func_to_parall)(i_t)
                                  for i_t in range(0, len(self.times)))
 

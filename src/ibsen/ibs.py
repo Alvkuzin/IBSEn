@@ -10,6 +10,8 @@ from ibsen.ibs_norm import IBS_norm
 from ibsen.utils import beta_from_g, absv, \
  vector_angle, rotate_z, rotate_z_xy, n_from_v, plot_with_gradient
 from ibsen.absorbtion.absorbtion import gg_analyt, gg_tab
+from ibsen.get_obs_data import known_names
+
 from astropy import constants as const
 
 C_LIGHT = 2.998e10
@@ -17,21 +19,31 @@ DAY = 86400
 SIGMA_BOLTZ = float(const.sigma_sb.cgs.value)
 M_E = float(const.m_e.cgs.value)
 
-class IBS: #!!!
-    """
+PEEK_KEYS = ('doppler', 'scattering', 'scattering_comoving',
+                  'gg_tau', 'gg_abs')
+
+ibs_docstring = f"""
     Intrabinary shock (IBS) in physical (cgs) units at a given orbital epoch.
 
     This adapter builds a **dimensionless** shock via :class:`IBS_norm` using the
     effective momentum-flux ratio `\\beta` from a supplied :class:`Winds`
     model at time ``t_to_calculate_beta_eff``, rotates it to align the symmetry
     axis with the instantaneous star–pulsar line, rescales all length-like
-    quantities by the current separation :math:`r_{\\rm sp}(t)`, and then shifts
+    quantities by the current separation :math:`r_{{\\rm sp}}(t)`, and then shifts
     the curve to the pulsar’s instantaneous position in the orbital plane.
     Unitless/angle-like properties are delegated to the underlying normalized
     object. 
 
     Parameters
     ----------
+    winds : Winds
+        Wind environment tied to an :class:`Orbit`; used to compute
+        :math:`\\beta_\\mathrm{{eff}}(t)`, separation ``r_sp(t)``, line of sight,
+        and rotation. **Required** for construction.
+    t_to_calculate_beta_eff : float
+        Time (s) relative to periastron at which to evaluate
+        :math:`\\beta_\\mathrm{{eff}}(t)` and position/orientation. Stored as
+        ``t_forbeta``.
     s_max : float, optional
         Arclength cutoff (dimensionless) passed to :class:`IBS_norm`. Default is 1.0.
     gamma_max : float, optional
@@ -42,14 +54,12 @@ class IBS: #!!!
     n : int, optional
         Sampling points used to build the normalized IBS (per horn, before
         mirroring). Default is 31.
-    winds : Winds
-        Wind environment tied to an :class:`Orbit`; used to compute
-        :math:`\\beta_\\mathrm{eff}(t)`, separation ``r_sp(t)``, line of sight,
-        and rotation. **Required** for construction.
-    t_to_calculate_beta_eff : float
-        Time (s) relative to periastron at which to evaluate
-        :math:`\\beta_\\mathrm{eff}(t)` and position/orientation. Stored as
-        ``t_forbeta``.
+    abs_gg_filename : str or None, optional
+        Name of the file with tabukated gg-opacity. If None (default),
+        IBSEn searches for a file tabulated for winds.sys_name if it is in
+        the known names: {known_names}. Can also be one of known names, then 
+        searches for a file tabulated for a system with this name.
+    
 
     Attributes
     ----------
@@ -57,8 +67,12 @@ class IBS: #!!!
         The supplied winds model.
     t_forbeta : float
         Time (s) relative to the periastron passage at which the IBS is evaluated.
+    abs_gg_filename : str or None :
+        Name of the file with tablated gg-opacities.
     beta : float or ndarray
         Effective momentum-flux ratio at ``t_forbeta`` from ``winds.beta_eff``.
+    peek_keys : tuple
+        List of keys recognized by peek(ibs_color=<key>).
     r_sp : float
         Star–pulsar separation at ``t_forbeta`` [cm]; used for rescaling and
         shifting.
@@ -77,7 +91,7 @@ class IBS: #!!!
     x_apex : float
         Pulsar→apex distance [cm].
     ds_dtheta : ndarray
-        :math:`\\mathrm{d}s/\\mathrm{d}\\theta` along the curve [cm].
+        :math:`\\mathrm{{d}}s/\\mathrm{{d}}\\theta` along the curve [cm].
     s_m, s_p, s_mid, ds : ndarray
         Midpoint/arclength helper arrays [cm].
     x_m, x_p, x_mid, dx : ndarray
@@ -100,7 +114,8 @@ class IBS: #!!!
     gma(s)
         Bulk Lorentz factor at arclength ``s`` [cm].
     peek(fig=None, ax=None, show_winds=False, ibs_color='k', to_label=True, showtime=None)
-        Quick-look plot of the IBS (optionally color-coded by Doppler/scattering)
+        Quick-look plot of the IBS (optionally color-coded by other stuff,
+                                    see `peek_keys`)
         and, if requested, the winds/orbit context. 
 
     Notes
@@ -119,15 +134,21 @@ class IBS: #!!!
     Orbit : Keplerian orbit used by :class:`Winds`.
 
     """
+
+class IBS: #!!!
+    __doc__ = ibs_docstring
     def __init__(self, s_max=1.0, gamma_max=3.0, s_max_g=4.0, n=31, 
-                 winds = None, t_to_calculate_beta_eff = None):
+                 winds = None, t_to_calculate_beta_eff = None,
+                 abs_gg_filename = None):
         self.gamma_max = gamma_max
         self.s_max = s_max
         self.s_max_g = s_max_g
         self.n = n
         self.winds = winds
         self.t_forbeta = t_to_calculate_beta_eff
-        
+        self.abs_gg_filename = abs_gg_filename
+        self.peek_keys = PEEK_KEYS
+       
         self.calculate()
         
     def calculate(self):
@@ -232,7 +253,7 @@ class IBS: #!!!
         """Bulk Lorentz factor along the IBS."""
         return IBS.gma(self, s = self.s)
     
-    def gg_abs(self, e_phot, analyt=False, filename='psrb'):
+    def gg_abs(self, e_phot, analyt=False, what_return='abs'):
         """ gamma-gamma absorbtion coefficient (as e^-tau) in every point of
         the IBS. The absortion is supposed to be on a photon field of a central
         star which is represented by a BB.
@@ -244,12 +265,16 @@ class IBS: #!!!
             Whether to use the analytical approximation of 
             Sushch and van Soelen, 2023. Default False
             
-        filename : str or path, optional
-            Path to the file with tabulated opacities. File should be inside
-            the absorbtion/absorb_tab folder. Default 'psrb', which reads 
-            the file corresponding to PSR B1259-63.
+        what_return: str {'abs' or 'tau'}
+            What to return: e^-tau or tau. Default 'abs'.
             
         """
+        if self.abs_gg_filename is not None and str(self.abs_gg_filename).strip():
+            filename = self.abs_gg_filename
+        elif self.winds.sys_name in known_names:
+            filename = self.winds.sys_name
+        else:
+            raise ValueError('Provide abs_gg_filename or winds.sys_name for gg-abs.')
         if analyt:
             gg_res = np.array([gg_analyt(eg = e_phot / 5.11e5,
                          x = self.x[i], y = self.y[i],
@@ -260,11 +285,11 @@ class IBS: #!!!
         else:
             gg_res = gg_tab(E=e_phot, x=self.x, y=self.y, 
                             orb=self.winds.orbit,
-                            filename=filename)
+                            filename=filename, what_return=what_return)
         return gg_res
     
-    def gg_abs_mid(self, e_phot, analyt=False, filename='psrb'):
-        """ gamma-gamma absorbtion coefficient (as e^-tau) in every point of
+    def gg_abs_mid(self, e_phot, analyt=False, what_return='abs'):
+        """ gamma-gamma absorbtion coefficient (as e^-tau) in every mid point of
         the IBS. The absortion is supposed to be on a photon field of a central
         star which is represented by a BB.
         
@@ -275,12 +300,22 @@ class IBS: #!!!
             Whether to use the analytical approximation of 
             Sushch and van Soelen, 2023. Default False
             
-        filename : str or path, optional
+        filename : str or path or None, optional
             Path to the file with tabulated opacities. File should be inside
-            the absorbtion/absorb_tab folder. Default 'psrb', which reads 
-            the file corresponding to PSR B1259-63.
+            the absorbtion/absorb_tab folder. Can be one of the known names,
+            then resolves to the file tabulated for it. If None, tries to 
+            read the absorbtion for a `sys_name` provided for `winds` arg.
+            
+        what_return: str {'abs' or 'tau'}
+            What to return: e^-tau or tau. Default 'abs'.
             
         """
+        if self.abs_gg_filename is not None and str(self.abs_gg_filename).strip():
+            filename = self.abs_gg_filename
+        elif self.winds.sys_name in known_names:
+            filename = self.winds.sys_name
+        else:
+            raise ValueError('Provide abs_gg_filename or winds.sys_name for gg-abs.')
         if analyt:
             gg_res = np.array([gg_analyt(eg = e_phot / 5.11e5,
                          x = self.x_mid[i], y = self.y_mid[i],
@@ -291,47 +326,50 @@ class IBS: #!!!
         else:
             gg_res = gg_tab(E=e_phot, x=self.x_mid, y=self.y_mid,
                             orb=self.winds.orbit,
-                            filename=filename)
+                            filename=filename, what_return=what_return)
         return gg_res
     
-        
+    peek_docs = f"""
+    Quick look at the IBS in the orbital plane.
+
+    Parameters
+    ----------
+    fig : fig object of pyplot, optional
+         The default is None.
+    ax : ax object of pyplot, optional
+        DESCRIPTION. The default is None.
+    show_winds : bool, optional
+        Whether to show the winds (requires Winds to be provided).
+          The default is False.
+    ibs_color : str, optional
+        Can be one of {PEEK_KEYS} 
+        to colorcode the IBS by the doppler factor, or the scattering angle
+        in the lab or comoving frame, respectively; or any matplotlib color. 
+        The default is 'k'.
+    to_label : bool, optional
+        Whether to put a label `beta=...` on a plot.
+          The default is True.
+    showtime : tuple of (tmin, tmax), optional
+        For orbit displaying (see orbit.peek()). 
+        The default is None.
+    E_for_gg : float, optional
+        At which energy [eV] to calculate the gamma-gamma absorbtion, if ibs_color
+        is 'gg_tau' or 'gg_abs'. Default 1e12
+
+    Raises
+    ------
+    ValueError
+        If the ibs_color is not one of the recognizable options.
+
+    Returns
+    -------
+    None.
+
+    """
     def peek(self, fig=None, ax=None, show_winds=False,
              ibs_color='k', to_label=True,
-             showtime=None):
-        """
-        Quick look at the IBS in the orbital plane.
-
-        Parameters
-        ----------
-        fig : fig object of pyplot, optional
-             The default is None.
-        ax : ax object of pyplot, optional
-            DESCRIPTION. The default is None.
-        show_winds : bool, optional
-            Whether to show the winds (requires Winds to be provided).
-              The default is False.
-        ibs_color : str, optional
-            Can be one of {'doppler', 'scattering', 'scattering_comoving'} 
-            to colorcode the IBS by the doppler factor, or the scattering angle
-            in the lab or comoving frame, respectively; or any matplotlib color. 
-            The default is 'k'.
-        to_label : bool, optional
-            Whether to put a label `beta=...` on a plot.
-              The default is True.
-        showtime : tuple of (tmin, tmax), optional
-            For orbit displaying (see orbit.peek()). 
-            The default is None.
-
-        Raises
-        ------
-        ValueError
-            If the ibs_color is not one of the recognizable options.
-
-        Returns
-        -------
-        None.
-
-        """
+             showtime=None, E_for_gg=1e12):
+        
         
         if ax is None:
             import matplotlib.pyplot as plt
@@ -344,16 +382,19 @@ class IBS: #!!!
 
 
 
-        if ibs_color in ( 'doppler', 'scattering', 'scattering_comoving'):
+        if ibs_color in PEEK_KEYS:
 
-            # print(2)
             if ibs_color == 'doppler':
                 color_param = self.dopl
             elif ibs_color == 'scattering':
-                # print(3)
                 color_param = self.scattering_angle
             elif ibs_color == 'scattering_comoving':
                 color_param = self.scattering_angle_comoving
+            elif ibs_color == 'gg_abs':
+                color_param = IBS.gg_abs(self, e_phot=E_for_gg)
+            elif ibs_color == 'gg_tau':
+                color_param = IBS.gg_abs(self, e_phot=E_for_gg,
+                                         what_return='tau')
             else:
                 raise ValueError(f"Unknown ibs_color: {ibs_color}. "
                                  "Use 'doppler', 'scattering' or 'scattering_comoving'.")
@@ -399,6 +440,7 @@ class IBS: #!!!
         
             
         ax.legend()
+    peek.__doc__ = peek_docs
 
     # def __getattr__(self, name):
     #     # called if attribute not found on IBS; forward to normalized object

@@ -537,7 +537,8 @@ class SpectrumIBS: #!!!
     def __init__(self, els, mechanisms=['syn', 'ic'], ic_ani=False, 
                  sys_name=None, sys_params=None,
                  delta_power=4, lorentz_boost=True, simple=False,
-                 abs_photoel=True, abs_gg=False, nh_tbabs=0.8, 
+                 abs_photoel=True, abs_gg=False, 
+                 nh_tbabs=0.8, 
                  distance = None, apex_only=False):
         self.els = els
         self._orb = self.els.ibs.winds.orbit
@@ -549,6 +550,7 @@ class SpectrumIBS: #!!!
         self.simple = simple
         self.abs_photoel = abs_photoel
         self.abs_gg = abs_gg
+        
         self.nh_tbabs = nh_tbabs
         self.mechanisms = mechanisms
         self.apex_only = apex_only
@@ -594,13 +596,13 @@ class SpectrumIBS: #!!!
 
         _b_2horns, _u_2horns = self.els._b_mid, self.els._u_mid
         try:
-            dNe_deds_mid, dNe_ds_mid, dNe_de_mid, e_vals = self.els.dNe_deds_mid, \
-                self.els.dNe_ds_mid, self.els.dNe_de_mid, self.els.e_vals
+            dNe_ds_mid, dNe_de_mid, e_vals = self.els.dNe_ds_mid, \
+                self.els.dNe_de_mid, self.els.e_vals
         except:
             print('no dNe_deds_IBS in els, calculating...')
             self.els.calculate()
-            dNe_deds_mid, dNe_ds_mid, dNe_de_mid, e_vals = self.els.dNe_deds_mid, \
-                self.els.dNe_ds_mid, self.els.dNe_de_mid, self.els.e_vals
+            dNe_ds_mid, dNe_de_mid, e_vals =  self.els.dNe_ds_mid, \
+                 self.els.dNe_de_mid, self.els.e_vals
                 
         _abs_ph = np.ones(E.size)
         _abs_gg = np.ones(E.size)
@@ -608,13 +610,19 @@ class SpectrumIBS: #!!!
         if self.abs_photoel:
             _abs_ph = absb.abs_photoel(E=E, Nh = self.nh_tbabs)
         if self.abs_gg:
-            # if self._orb.name != 'psrb': 
-            #     print('abs_gg is only implemented for psrb orbit. Using abs_gg for psrb orbit.')
-            # _abs_gg = absb.abs_gg_tab(E=E,
-            #     nu_los = self._orb.nu_los, t = self._ibs.t_forbeta, 
-            #     Teff=self._ibs.winds.Topt)
-            _abs_gg = self._ibs.gg_abs_mid(E, analyt=False) # an array of size (s_mid.size, E.size)
+            # # decide filename to use
+            # if self.abs_gg_filename is not None and str(self.abs_gg_filename).strip():
+            #     gg_filename = self.abs_gg_filename
+            # elif self.sys_name in known_names:
+            #     gg_filename = self.sys_name
+            # else:
+            #     raise ValueError(
+            #         """Either provide abs_gg_filename or set sys_name 
+            #         to one of known_names for gamma-gamma absorption.
+            #         """
+            #     )
             
+            _abs_gg = self._ibs.gg_abs_mid(E)  # array of shape (s_mid.size, E.size)            
             
         # -------------------------------------------------------------------------
         # (1) for each segment of IBS, we calulate a spectrum and put it into
@@ -731,12 +739,6 @@ class SpectrumIBS: #!!!
             photons in [e1, e2] [s^-1]. epow=1 gives flux [erg/s].
             The default is 1.
 
-        Raises
-        ------
-        ValueError
-            If a spline cannot be calculated. For this, your spectrum should
-            be previously calculated at least for [e1/1.15, e2*1.15]
-
         Returns
         -------
         float
@@ -745,26 +747,28 @@ class SpectrumIBS: #!!!
 
         """
         
-        try:
-            _mask = np.logical_and(self.e_ph >= e1/1.1, self.e_ph < e2*1.1)
-            _good = _mask & np.isfinite(self.sed)
-            # Below, there's the interpolation. Without `fill_value`, the interpolation sed_here 
-            # later in this funcion sometimes raises an error saying that e1, e2 are out of
-            # interpolation bands. That should not happen, but apparently IS happening 
-            # because of `_good` mask and random NaNs that are often for IC. Idk. 
-            # Now we are filling everything to the left with the leftmost SED value
-            # and the same with the right from the good interval: e_ph[_good].
-            # It's gonna be bad only if there are a LOT of NaNs in a SED, which
-            # should not be the case...
-            _spl_sed_in_this_band = interp1d(self.e_ph[_good], self.sed[_good],
-                        fill_value=(self.sed[_good][0], self.sed[_good][-1]),
-                        bounds_error=False, ### we are shootinf ourselves in a knee, potentially
-                        )
-        except:
-            raise ValueError('Cannot create a spline for flux calculation.')
-        _E = loggrid(e1, e2, n_dec = 59) # eV
-        sed_here = _spl_sed_in_this_band(_E) # erg/s/cm^2 
-        return trapz_loglog(sed_here / _E**2 * _E**epow, _E) * EV_TO_ERG**(epow-1) # erg^epow /s/cm^2
+        _mask = np.logical_and(self.e_ph >= e1/1.2, self.e_ph <= e2*1.2)
+        _good = _mask & np.isfinite(self.sed)
+        # Below, there's the interpolation. Without `fill_value`, the interpolation sed_here 
+        # later in this funcion sometimes raises an error saying that e1, e2 are out of
+        # interpolation bands. That should not happen, but apparently IS happening 
+        # because of `_good` mask and random NaNs that are often in IC SED. Idk. 
+        # Now we are filling everything to the left with the leftmost SED value
+        # and the same with the right from the good interval: e_ph[_good].
+        # It's gonna be bad only if there are a LOT of NaNs in a SED, which
+        # should not be the case...
+
+        ### we are shooting ourselves in a knee, potentially
+        _E = loggrid(e1, e2, n_dec = 23) # eV
+        sed_here = interplg(_E, 
+                            self.e_ph[_good], 
+                            self.sed[_good],
+                            fill_value=(np.log10(self.sed[_good][0]),
+                                        np.log10(self.sed[_good][-1])),
+                            bounds_error=False,) 
+                                
+        return trapz_loglog(sed_here / _E**2 * _E**epow,
+                            _E) * EV_TO_ERG**(epow-1) # erg^epow /s/cm^2
  
     
     def fluxes(self, bands, epows=None):
@@ -819,12 +823,6 @@ class SpectrumIBS: #!!!
         e2 : float
             Upper energy [eV].
 
-        Raises
-        ------
-        ValueError
-            If a spline cannot be calculated. For this, your spectrum should
-            be previously calculated at least for [e1/1.15, e2*1.15].
-
         Returns
         -------
         float | np.nan
@@ -833,18 +831,16 @@ class SpectrumIBS: #!!!
 
         """
             
-        try:
-            _mask = np.logical_and(self.e_ph >= e1/1.1, self.e_ph <= e2*1.1)
-            _good = _mask & np.isfinite(self.sed)
-            ### see comment before `_spl_sed_in_this_band` in `flux`
-            _spl_sed_in_this_band = interp1d(self.e_ph[_good], self.sed[_good],
-                        fill_value=(self.sed[_good][0], self.sed[_good][-1]),
-                        bounds_error=False, 
-                        )
-        except:
-            raise ValueError('Cannot create a spline for index calculation.')
-        _E = loggrid(e1, e2, n_dec = 51)
-        sed_here = _spl_sed_in_this_band(_E)
+        _mask = np.logical_and(self.e_ph >= e1/1.2, self.e_ph <= e2*1.2)
+        _good = _mask & np.isfinite(self.sed)
+
+        _E = loggrid(e1, e2, n_dec = 61) # eV
+        sed_here = interplg(_E, 
+                            self.e_ph[_good], 
+                            self.sed[_good],
+                            fill_value=(np.log10(self.sed[_good][0]),
+                                        np.log10(self.sed[_good][-1])),
+                            bounds_error=False,) 
         try:
             popt, pcov = curve_fit(f = pl, xdata = _E,
                                    ydata = sed_here,

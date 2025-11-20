@@ -27,36 +27,42 @@ def get_parameters(sys_name):
         Mopt = 31 * M_SOLAR; M_ns = 1.4  * M_SOLAR
         M_here = Mopt + M_ns; D_here = 2.4e3 * PARSEC; Ropt_here = 9.2 * R_SOLAR
         nu_los = 2.3; incl_los= 22 / 180 * np.pi
+        
     elif sys_name == 'rb':
         Torb_here = 0.5*DAY; e_here = 0; Topt_here = 3e3 
         Mopt = 0.5  * M_SOLAR; M_ns = 1.4  * M_SOLAR
         M_here = Mopt + M_ns; D_here = 1e3 * PARSEC; Ropt_here = 0.3 * R_SOLAR
         nu_los = 0; incl_los=np.pi/4
+        
     elif sys_name == 'bw':
         Torb_here = 0.1*DAY; e_here = 0; Topt_here = 1e3 
         Mopt = 0.1  * M_SOLAR; M_ns = 1.4  * M_SOLAR
         M_here = Mopt + M_ns; D_here = 1e3 * PARSEC; Ropt_here = 0.01 * R_SOLAR
         nu_los = 0.;  incl_los=np.pi/4
+        
     elif sys_name == 'test':
         Torb_here = 100.0*DAY; e_here = 0.5; Topt_here = 3.0e4
         Mopt = 30 * M_SOLAR; M_ns = 1.4  * M_SOLAR
         M_here = Mopt + M_ns; D_here = 2.4e3 * PARSEC; Ropt_here = 10.0 * R_SOLAR
         nu_los = 135/180*np.pi; incl_los= 45 / 180 * np.pi
-    elif sys_name == 'ls5039': # Casares et al  2005 # !!! dist?
+        
+    elif sys_name == 'ls5039': # Casares et al  2005 
         Torb_here = 3.906*DAY; e_here = 0.35; Topt_here = 3.9e4
         Mopt = 22.9 * M_SOLAR; M_ns = 1.4  * M_SOLAR
-        M_here = Mopt + M_ns; D_here = 2.4e3 * PARSEC; Ropt_here = 9.3 * R_SOLAR
+        M_here = Mopt + M_ns; D_here = 1.89e3 * PARSEC; Ropt_here = 9.3 * R_SOLAR
         nu_los = (270-45.8)/180*np.pi; incl_los= 60 / 180 * np.pi
-    elif sys_name == 'psrj2032': # Ho et al 2017, Lyne et al 2015 # !!! dist?
-        Torb_here = 16500*DAY; e_here = 0.95; Topt_here = 2e4
+        
+    elif sys_name == 'psrj2032': # Ho et al 2017, Lyne et al 2015
+        Torb_here = 16500*DAY; e_here = 0.96; Topt_here = 2e4
         Mopt = 15 * M_SOLAR; M_ns = 1.4  * M_SOLAR
-        M_here = Mopt + M_ns; D_here = 2.4e3 * PARSEC; Ropt_here = 10 * R_SOLAR
+        M_here = Mopt + M_ns; D_here = 1.68e3 * PARSEC; Ropt_here = 10 * R_SOLAR
         nu_los = (270-40)/180*np.pi; incl_los= 30 / 180 * np.pi
-    elif sys_name == 'ls61': # Chernyakova et al 2020 # !!! dist? nu_los? Ropt? incl_los?
-        Torb_here = 26.5*DAY; e_here = 0.537; Topt_here = 2e4
+        
+    elif sys_name == 'ls61': # Chernyakova et al 2020, Dubus 2013 
+        Torb_here = 26.5*DAY; e_here = 0.537; Topt_here = 2.25e4
         Mopt = 12 * M_SOLAR; M_ns = 1.4  * M_SOLAR
-        M_here = Mopt + M_ns; D_here = 2.4e3 * PARSEC; Ropt_here = 10 * R_SOLAR
-        nu_los = (270-40)/180*np.pi; incl_los= 30 / 180 * np.pi
+        M_here = Mopt + M_ns; D_here = 2.49e3 * PARSEC; Ropt_here = 10 * R_SOLAR
+        nu_los = (270+141)/180*np.pi; incl_los= 30 / 180 * np.pi
         
         
     else:

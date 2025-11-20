@@ -3,6 +3,8 @@ from numpy import pi, sin, cos
 import matplotlib.pyplot as plt
 from scipy.interpolate import  interp1d
 from scipy.integrate import  tplquad, dblquad
+from ibsen.get_obs_data import known_names
+
 import xarray as xr
 from pathlib import Path
 from ibsen.utils import n_from_v, rotated_vector, absv, vector_angle, mydot
@@ -72,7 +74,7 @@ def sigma_gg(e_star, e_g, mu):
 
 def abs_photoel(E, Nh): 
     """    
-    Photoelectric absorbtion TBabs
+    Photoelectric absorbtion TBabs: https://arxiv.org/pdf/astro-ph/0008425
     Parameters
     ----------
     E : np.ndarray or float
@@ -273,7 +275,7 @@ def tau_gg_iso_2d(eg, x, y, R_star, T_star, incl_los, nu_los, fast=False):
     return res
 
 def tabulate_absgg(orb, nrho, nphi, ne, Topt, Ropt, rhomin=0.1, rhomax=5.5, emin=1e9,
-                   emax=1e14, to_save=True, namefile='gg_abs', to_return=False,
+                   emax=1e14, to_save=True, filename='gg_abs', to_return=False,
                    n_cores=None, fast=False):
     """
     Precompute and tabulate gamma–gamma absorption optical depths on a (log10 rho, phi, log10 E) grid,
@@ -309,9 +311,9 @@ def tabulate_absgg(orb, nrho, nphi, ne, Topt, Ropt, rhomin=0.1, rhomax=5.5, emin
     emax : float, optional
         Maximum photon energy [eV] for the grid. Default is 1e14.
     to_save : bool, optional
-        If True, write the result to `<namefile>.nc` (NetCDF) under the `_tabdata` directory.
+        If True, write the result to `<filename>.nc` (NetCDF) under the `_tabdata` directory.
         Default is True.
-    namefile : str, optional
+    filename : str, optional
         Basename of the output file (without extension). Default is 'gg_abs'.
     to_return : bool, optional
         If True, also return the raw arrays `(res, xx, yy, es)`. Default is False.
@@ -380,20 +382,28 @@ def tabulate_absgg(orb, nrho, nphi, ne, Topt, Ropt, rhomin=0.1, rhomax=5.5, emin
                     n_cores_use = n_cores
                 if n_cores == 'all':
                     n_cores_use = multiprocessing.cpu_count()
-                n_cores_use = np.min(n_cores, 20)    
+                n_cores_use = min(n_cores_use, 20)    
                 tau = Parallel(n_jobs = n_cores_use)(delayed(to_parall)(i_e) for i_e in range(es.size))
                 tau = np.array(tau)
                 res[ir, iphi, :] = tau
             else:
                 raise ValueError("n_cores should be None, or int, or `all`.")
     if to_save:
-        da = xr.DataArray(res, coords=[('logrho', np.log10(rhos)),
-                                       ('phi', phis),
-                                       ('loge', np.log10(es))
-                                       ],)
+        da = xr.DataArray(
+            res.astype("float32"),
+            coords=[('logrho', np.log10(rhos).astype("float32")),
+                    ('phi', phis.astype("float32")),
+                    ('loge', np.log10(es).astype("float32"))],
+            name="data",
+                        )
+        encoding = {
+            da.name: {
+                "dtype": "float32",
+            }
+        }
         # Save to NetCDF (or HDF5 if preferred)
-        path_here = _tabdata / str(namefile + '.nc')
-        da.to_netcdf(path_here)
+        path_here = _tabdata / str(filename + '.nc')
+        da.to_netcdf(path_here, encoding=encoding)
     if to_return:
         # rr, ff = np.meshgrid()
         return res, xx, yy, es
@@ -419,9 +429,9 @@ def gg_tab(E, x, y, orb, filename='psrb', what_return='abs'):
         Cartesian y-coordinate(s) in cm (cgs). Scalar or 1-D array.
     orb : Orbit
     filename : str, optional
-        Name of the table to load. If `'psrb'` (default), use the preset dataset `ds_gg_psrb`.
-        Otherwise `filename` is resolved under `_tabdata` and opened as NetCDF,
-        with the data variable renamed to `'data'`.
+        Name of the table to load. If recognized as the system name,
+        use the preset dataset `ds_gg_<filename>`.
+        Otherwise `filename` is resolved under `_tabdata` and opened as NetCDF.
     what_return : {'abs', 'tau'}, optional
         If `'tau'`, return optical depth tau (dimensionless).
         If `'abs'` (default), return absorption factor `exp(-tau)`.
@@ -446,12 +456,17 @@ def gg_tab(E, x, y, orb, filename='psrb', what_return='abs'):
       a 1-D interpolation back to the requested energies.
     - Any small negative values due to cubic interpolation are clipped to zero.
 """
-    if filename == 'psrb':
-        ds_gg = ds_gg_psrb
-    if filename != 'psrb':
-        name_gg = _tabdata / filename
+    if filename in known_names:
+        name_gg = _tabdata / (f'gg_abs_{filename}.nc')
         ds_gg = xr.open_dataset(name_gg)
+    else:
+        name_gg = _tabdata / (filename + '.nc')
+        ds_gg = xr.open_dataset(name_gg)
+    try:
         ds_gg = ds_gg.rename({'__xarray_dataarray_variable__': 'data'})
+    except:
+        _a=1
+        # ds_gg = ds_gg.rename({'__xarray_dataarray_variable__': 'data'})
 
     # Make E guaranteed 1-D; remember if caller passed a scalar
     _E_in = E
