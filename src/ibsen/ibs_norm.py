@@ -638,7 +638,7 @@ class IBS_norm: #!!!
         return np.array(vector_angle(self.unit_r1_mid, self.unit_los))
 
     @property
-    def scattering_angle_comoving(self):
+    def scattering_angle_comov(self):
         """
         The scattering angle for a photon from the star scattered at the IBS
         towards the observer in the frame co-moving with the bulk motion 
@@ -648,7 +648,7 @@ class IBS_norm: #!!!
                                      self.vec_beta, True))
     
     @property
-    def scattering_angle_comoving_mid(self):
+    def scattering_angle_mid_comov(self):
         """
         The scattering angle for a photon from the star scattered at the IBS
         towards the observer in the frame co-moving with the bulk motion 
@@ -699,7 +699,7 @@ class IBS_norm: #!!!
         xstar_, ystar_, zstar_ = -self.unit_rsp
         xlos_, ylos_, zlos_ = self.unit_los
 
-        if ibs_color in ( 'doppler', 'scattering', 'scattering_comoving'):
+        if ibs_color in ( 'doppler', 'scattering', 'scattering_comov', 'scattering_comoving'):
             # print(2)
             if ibs_color == 'doppler':
                 color_param = self.dopl
@@ -708,8 +708,8 @@ class IBS_norm: #!!!
                 # print(3)
                 color_param = self.scattering_angle / pi
                 bar_label = r'scattering angle / $\pi$'
-            elif ibs_color == 'scattering_comoving':
-                color_param = self.scattering_angle_comoving / pi
+            elif ibs_color in ('scattering_comoving', 'scattering_comov'):
+                color_param = self.scattering_angle_comov / pi
                 bar_label = r'comoving scattering angle / $\pi$'
             else:
                 raise ValueError(f"Unknown ibs_color: {ibs_color}. "

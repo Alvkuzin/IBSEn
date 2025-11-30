@@ -3,6 +3,8 @@ import numpy as np
 # from scipy.optimize import brentq
 from scipy.interpolate import interp1d
 from scipy.integrate import trapezoid
+from scipy.optimize import curve_fit
+
 from numpy import pi, sin, cos
 import warnings
 # import astropy.units as u
@@ -14,6 +16,11 @@ from matplotlib.colors import Normalize
 
 G = float(const.G.cgs.value)
 DAY = 86400.
+
+
+def pl(x, p, norm):
+    return norm * x**(-p)
+
 
 def unpack_params(
     param_names,
@@ -455,7 +462,7 @@ def enhanche_jump(t, t1_disk, t2_disk, times_enh, param_to_enh):
         if isinstance(item, (list, tuple, np.ndarray)):
             if len(item) == 0:
                 raise ValueError("Empty interval in times_enh after substitution.")
-            print(item)
+            # print(item)
             lo = float(np.min(item))
             # hi = float(np.max(item))
             # zero-length is allowed for ordering, but thresh_crit would divide by zero on interpolation
@@ -592,10 +599,11 @@ def lor_trans_b_iso(B_iso, gamma):
         co-moving frame.
 
     """
-    bx, by, bz = B_iso / 3**0.5, B_iso / 3**0.5, B_iso / 3**0.5
-    bx_comov = bx
-    by_comov, bz_comov = by * gamma, bz * gamma
-    return (bx_comov**2 + by_comov**2 + bz_comov**2)**0.5
+    # bx, by, bz = B_iso / 3**0.5, B_iso / 3**0.5, B_iso / 3**0.5
+    # bx_comov = bx
+    # by_comov, bz_comov = by * gamma, bz * gamma
+    # return (bx_comov**2 + by_comov**2 + bz_comov**2)**0.5
+    return B_iso * np.sqrt( (1.0 + 2.0 * gamma**2) / 3. )
 
 def lor_trans_ug_iso(ug_iso, gamma): # Relativistic jets... eq. (2.57)
     """
@@ -724,8 +732,8 @@ vector_angle = vectorize_func(vector_angle_nonvec)
 #         result.append(vector_angle_nonvec(nn1, nn2, vecvecb, lor_trans))
 #     return result
 
-
-def lor_trans_e_spec_iso(E_lab, dN_dE_lab, gamma, E_comov=None, n_mu=101):
+def lor_trans_e_spec_iso(E_lab, dN_dE_lab, gamma, E_comov=None, n_mu=51, 
+                         mode=None):
     """
     Returns (E_comov, dN_dE_comov), the angle-averaged spectrum in the cloud frame.
 
@@ -750,8 +758,9 @@ def lor_trans_e_spec_iso(E_lab, dN_dE_lab, gamma, E_comov=None, n_mu=101):
         grid spanning from min(E_lab) * Gamma * (1-beta) to 
         max(E_lab) * Gamma * (1+beta). The default is None.
     n_mu : int, optional
-        number of μ' samples for angle-average (must be odd for symmetry).
-        The default is 101.
+        number of μ' samples for angle-average (must be odd for symmetry). The
+        real number is calculated as int(n_mu * gamma**2).
+        The default is 51.
 
     Returns
     -------
@@ -761,10 +770,9 @@ def lor_trans_e_spec_iso(E_lab, dN_dE_lab, gamma, E_comov=None, n_mu=101):
         1D array of angle-averaged dN'/dE' in comoving frame.
 
     """
-    # derived boost quantities
     beta_v = beta_from_g(gamma)
+    n_mu = int(n_mu * gamma)
 
-    # if user did not supply E_comov, take same dynamic range scaled down by Γ
     if E_comov is None:
         Emi = E_lab.min()
         Ema = E_lab.max()
@@ -772,7 +780,7 @@ def lor_trans_e_spec_iso(E_lab, dN_dE_lab, gamma, E_comov=None, n_mu=101):
         Ema_co = Ema * gamma * (1.0 + beta_v)
         needed_len = int(len(E_lab) * np.log10(Ema_co / Emi_co) / 
                          np.log10(Ema / Emi))
-        E_comov = np.logspace(np.log10(Emi_co), np.log10(Ema_co), needed_len)
+        E_comov = np.geomspace(Emi_co, Ema_co, needed_len)
 
     # set up lab-spectrum interpolator, zero outside
     lab_interp = interp1d(
@@ -781,36 +789,27 @@ def lor_trans_e_spec_iso(E_lab, dN_dE_lab, gamma, E_comov=None, n_mu=101):
         bounds_error=False,
         fill_value=0.0
     )
+    
+    mode = 'g' if gamma > 1.2 else 'mu'
 
-    # cosθ' grid for angle-averaging
-    u_even = np.linspace(0, 1, int(n_mu * gamma))
-    mu_prime = np.tanh(gamma * (2*u_even**2 - 1)) # denser grid near mu'=1
-
-    # prepare output array
-    dN_dE_comov = np.zeros_like(E_comov)
-
-    # now loop (vectorized over mu')
-    # Here we assume E_lab and E_comov are kinetic energies >> rest mass, so p'c≈E'.
-    # If you need exact, include rest-mass term.
-
-    # for each E', compute E_lab grid for all mu'
-    # shape will be (n_E', n_mu)
-    Ep = E_comov[:,None]
-    E_shift = gamma * Ep * (1 + beta_v * mu_prime[None,:])
-
-    # Jacobian factor J = 1 / [Γ (1 + β μ')]
-    # J = d^3 p' / d^3 p = (E/E')^2 * dE/dE' * dOmega / dOmega'
-    J = 1.0 / (gamma * (1.0 + beta_v * mu_prime))[None,:]
-
-    # sample lab spectrum at each shifted energy
-    F_lab_at_E = lab_interp(E_shift)
-
-    # integrand = J * F_lab
-    integrand = J * F_lab_at_E
-
-    # integrate over μ' and multiply by 2π. Then divide by 4π for averaging
-    dN_dE_comov = 2.0 * np.pi * trapezoid(integrand, mu_prime, axis=1) / 4.0 / np.pi 
-
+    if mode == 'mu':
+        mu_prime = np.linspace(-1, 1, int(n_mu * gamma))
+        dN_dE_comov = np.zeros_like(E_comov)
+        Ep = E_comov[:,None]
+        E_shift = gamma * Ep * (1 + beta_v * mu_prime[None,:])
+        J = 1.0 / (gamma * (1.0 + beta_v * mu_prime))[None,:]
+        F_lab_at_E = lab_interp(E_shift)
+        integrand = J * F_lab_at_E
+        dN_dE_comov = 2.0 * np.pi * trapezoid(integrand, mu_prime, axis=1) / 4.0 / np.pi 
+    else:
+        eta = np.geomspace(gamma*(1-beta_v), gamma*(1+beta_v), int(n_mu))
+        dN_dE_comov = np.zeros_like(E_comov)
+        Ep = E_comov[:,None]
+        E_shift = Ep * eta[None,:]
+        J = 1.0 / eta[None,:]
+        F_lab_at_E = lab_interp(E_shift)
+        integrand = J * F_lab_at_E
+        dN_dE_comov = 0.5 * trapz_loglog(integrand, eta, axis=1) / beta_v / gamma
     return E_comov, dN_dE_comov
 
 
@@ -1168,79 +1167,78 @@ def wrap_grid(x, frac=0.10, num_points=1000, single_num_points=15):
 
     return np.linspace(lo, hi, num_points)
 
-########## some helper function for drawing, whatev ############################ 
-####################################################################################
-####################################################################################
-# def plot_with_gradient(fig, ax, xdata, ydata, some_param, colorbar=False, lw=2,
-#                        ls='-', colorbar_label='grad', minimum=None, maximum=None,
-#                        scatter=False):
-#     """
-    
-#     Draw the plot (xdata, ydata) on the axis ax with color along the curve
-#     marking some_param. The color changes from blue to red as some_param increases.
-#     You may provide your own min and max values for some_param:
-#     minimum and maximum, then the color will be scaled according to them.
-    
+def index(dnde, e, e1, e2):
+    """
+    Electron index of a spectrum dnde. Fits a dnde in a given range 
+    [e1, e2] with a powerlaw.
 
-#     Parameters
-#     ----------
-#     fig : pyplot figure
-#         The figure on which to draw the plot.
-#     ax : pyplot axis
-#         The axis on which to draw the plot. 
-#     xdata : np.ndarray
-#         1D array of x-coordinates.
-#     ydata : np.ndarray
-#         1D array of y-coordinates. Should be the same length as xdata.
-#     some_param : np.ndarray
-#         1D array of values to color the line by. Should be the same length as xdata.
-#     colorbar : bool, optional
-#         Whether to draw a colorbar. The default is False.
-#     lw : float, optional
-#         A linewidth keyword for pyplot.plot. The default is 2.
-#     ls : string, optional
-#         A linestyle keyword for pyplot.plot.. The default is '-'.
-#     colorbar_label : string | float, optional
-#         Label for a colorbar. The default is 'grad'.
-#     minimum : float, optional
-#         If provided, it is used as a minimum value for the 
-#         colorcoding of some_param. The default is None.
-#     maximum : float, optional
-#         If provided, it is used as a maximum value for the 
-#         colorcoding of some_param. The default is None.
-#     scatter : bool, optional
-#         Whether to plot as ax.scatter (True) or ax.plot (False, default).
+    Parameters
+    ----------
+    dnde : np.ndarray (Ne, )
+        Array to fit
+    e : np.ndarray (Ne, )
+        Energies at which dnde is calculated
+    e1 : float
+        Lower energy [eV].
+    e2 : float
+        Upper energy [eV].
 
-#     Returns
-#     -------
-#     None.
+    Returns
+    -------
+    float | np.nan
+        If the fit is successful, the index is returned. If the 
+        curve_fit raised an error, np.nan is returned.
 
-#     """
-#     # Prepare line segments
-#     points = np.array([xdata, ydata]).T.reshape(-1, 1, 2)
-#     segments = np.concatenate([points[:-1], points[1:]], axis=1)
-    
-#     # Normalize some_p values to the range [0, 1] for colormap
-#     vmin_here = minimum if minimum is not None else np.min(some_param)
-#     vmax_here = maximum if maximum is not None else np.max(some_param)
-    
-#     norm = Normalize(vmin=vmin_here, vmax=vmax_here)
-    
-#     # Create the LineCollection with colormap
-#     lc = LineCollection(segments, cmap='coolwarm', norm=norm)
-#     lc.set_array(some_param[:-1])  # color per segment; same length as segments
-#     lc.set_linewidth(lw)
-    
-#     # Plot
-
-#     line = ax.add_collection(lc)
-    
-#     if colorbar:
-#         fig.colorbar(line, ax=ax, label=colorbar_label)  # optional colorbar
+    """
         
-#     ax.set_xlim(xdata.min(), xdata.max())
-#     ax.set_ylim(ydata.min(), ydata.max())
+    _mask = np.logical_and(e >= e1/1.2, e <= e2*1.2)
+    _good = _mask & np.isfinite(dnde)
 
+    _E = loggrid(e1, e2, n_dec = 61) # eV
+    sed_here = interplg(_E, 
+                        e[_good], 
+                        dnde[_good],
+                        fill_value=(np.log10(dnde[_good][0]),
+                                    np.log10(dnde[_good][-1])),
+                        bounds_error=False,) 
+    try:
+        popt, pcov = curve_fit(f = pl, xdata = _E,
+                               ydata = sed_here,
+                               p0=(2, 
+                                   sed_here[15] * _E[15]**2
+                                   ))
+        return popt[0]  
+    except:
+        return np.nan
+
+
+def avg(arr, weights=None, power=None, axis=None):
+    """
+    Calculates weighted average defined as:
+        
+        avg^power = \Sum_i arr_i^power * weights_i
+    
+    Parameters
+    ----------
+    arr : np.ndarray
+        Array to calculate the average of.
+    weights : np.ndarray or None, optional
+        Weights. If None, all weights=1. The default is None.
+    power : np.ndarray, or float, or None, optional
+        Power for averaging. If None, power=1. The default is None.
+    axis : None or int or tuple of ints, optional
+        See np.average. The default is None.
+
+    Returns
+    -------
+    np.ndarray or float
+        Averaged array.
+
+    """
+    if power is None:
+        power = 1
+        
+    return (np.average(arr**power, weights=weights, axis=axis))**(1. / power)
 
 def plot_with_gradient(fig, ax, xdata, ydata, some_param, colorbar=False, lw=2,
                        ls='-', colorbar_label='grad', minimum=None, maximum=None,
@@ -1250,7 +1248,6 @@ def plot_with_gradient(fig, ax, xdata, ydata, some_param, colorbar=False, lw=2,
     If scatter=True -> per-point scatter; else -> continuous line with gradient.
     """
 
-    # sanitize to 1D arrays and drop NaNs consistently
     xdata = np.asarray(xdata).ravel()
     ydata = np.asarray(ydata).ravel()
     some_param = np.asarray(some_param).ravel()
@@ -1265,14 +1262,11 @@ def plot_with_gradient(fig, ax, xdata, ydata, some_param, colorbar=False, lw=2,
     norm = Normalize(vmin=vmin_here, vmax=vmax_here)
 
     if scatter:
-        # point-by-point scatter colored by some_param
         sc = ax.scatter(xdata, ydata, c=some_param, cmap=cmap, norm=norm,
                         s=s, marker=marker, linewidths=0, alpha=alpha)
         mappable = sc
     else:
-        # colored segments along the curve
         if xdata.size < 2:
-            # nothing to segment; fall back to a single point
             sc = ax.scatter(xdata, ydata, c=some_param, cmap=cmap, norm=norm,
                             s=s, marker=marker, linewidths=0, alpha=alpha)
             mappable = sc
@@ -1286,7 +1280,6 @@ def plot_with_gradient(fig, ax, xdata, ydata, some_param, colorbar=False, lw=2,
             lc.set_alpha(alpha)
             line = ax.add_collection(lc)
             mappable = line
-    # let autoscale handle limits; or set explicit:
     range_x = np.max(xdata) - np.min(xdata)
     range_y = np.max(ydata) - np.min(ydata)
     
@@ -1295,3 +1288,4 @@ def plot_with_gradient(fig, ax, xdata, ydata, some_param, colorbar=False, lw=2,
 
     if colorbar:
         fig.colorbar(mappable, ax=ax, label=colorbar_label)
+    return mappable

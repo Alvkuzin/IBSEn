@@ -67,9 +67,8 @@ PSR B1259-63 periastron dist [au] =  0.9057236987554738
 effective beta =  0.04263905625747101
 IBS opening angle =  2.444830788798784
 tot number of e on IBS =  7.282276841876412e+36
-from spec, flux 0.3-10 keV =  4.344295436885205e-15
-from LC, flux 0.3-10 keV =  [4.3471866e-15]
-
+from spec, flux 0.3-10 keV =  6.828034287211626e-14
+from LC, flux 0.3-10 keV =  [6.84071658e-14]
 ```
 
 
@@ -92,7 +91,7 @@ plt.plot(orb.x(t), orb.y(t))
 Initiate Winds with a decretion disk pressure 100 times stronger than the polar wind (in which sense - see tutorials) and plot the star-emission zone separation VS time.
 ```python
 from ibsen.winds import Winds
-winds = Winds(orbit=orb, f_d=100, Ropt=7e11, Mopt=28*2e33, Topt=4e4)
+winds = Winds(orbit=orb, f_d=100, Ropt=7e11, Mopt=28*2e33, Topt=4e4, ns_b_apex=10)
 t1 = np.linspace(-3*DAY, 3*DAY, 1000)
 plt.plot(t1/DAY, winds.dist_se_1d(t1))
 td1, td2 = winds.times_of_disk_passage
@@ -110,7 +109,7 @@ ibs.peek(showtime=(-3*DAY, 3*DAY), show_winds=True, ibs_color='doppler')
 Take a look at the electron spectrum over IBS if the apex magnetic field is 1G:
 ```python
 from ibsen.el_ev import ElectronsOnIBS
-elev = ElectronsOnIBS(Bp_apex=10, ibs=ibs, cooling='stat_mimic')
+elev = ElectronsOnIBS(ibs=ibs, cooling='stat_mimic')
 elev.calculate()
 elev.peek()
 ```
@@ -118,8 +117,8 @@ elev.peek()
 Calculate the synchrotron + inverse Compton spectrum from the population of electrons we obtained above:
 ```python
 from ibsen.spec import SpectrumIBS
-spec = SpectrumIBS(els=elev, simple=True, mechanisms=['syn', 'ic',], distance=3e3*3e18)
-spec.calculate_sed_on_ibs(E = np.geomspace(3e2, 1e13, 1001))
+spec = SpectrumIBS(els=elev, method='simple', mechanisms=['syn', 'ic',], distance=3e3*3e18)
+spec.calculate(e_ph = np.geomspace(3e2, 1e13, 1001))
 spec.peek()
 ```
  6. ``LightCurve`` performs the spectrum calculation for a number of moments of time calculating the light curve.
@@ -127,7 +126,7 @@ spec.peek()
 from ibsen.lc import LightCurve
 t_lc = np.linspace(-3*DAY, 3*DAY, 100)
 lc = LightCurve(times = t_lc, 
-                to_parall=True,
+                to_parall=True, n_cores=4,
                 T=25*DAY, e=0.7, M=30*2e33,
                  nu_los=90*np.pi/180, incl_los=20*np.pi/180, 
                  Ropt=7e11, Mopt=28*2e33, Topt=4e4,
@@ -135,7 +134,7 @@ lc = LightCurve(times = t_lc,
                 bands = ([300, 1e4], ), cooling='stat_mimic',
                 f_d=100, 
                 ns_b_ref=10, ns_r_ref=ibs.x_apex, # so that the field in the apex (at t = 2 days) = 1
-                simple=True, mechanisms=['syn', 'ic'])
+                method='simple', mechanisms=['syn', 'ic'])
 lc.calculate()
 lc.peek()
 ```
@@ -147,18 +146,10 @@ The codebase is tailored to observational analysis of PSR B1259-63 but can be ad
 
 ### TODO
 
- 1. Calculate magn and photon fields on ibs in `IBS` class, not in `Electrons`, as well as their values in a co-moving frame. But there's a problem:
-the Electrons require only B at apex + model (so we can recalculate B at the whole IBS), while magn fields are specified
-already at `Winds` stage. Maybe in `Winds` we can make it an option  "calculate from apex", so at `IBS` stage we'll recalculate
-the fields  on an IBS as if from the apex value... Anyway, it should be done somehow in `IBS`, because it is ridiculous to perform a Lorentz boost
-at `Spectrum` level. 
- 2. Occasional NaNs in IC spectrum. Should we ignore them (e.g. by interpolating)? Are they there because of something internally Naimian or is it my fault?
- 3.  Sometimes LC has problems with calculating fluxes if more than 1 band is passed. 
-The value of E out of interpolating segment, apparently. 
-The error depends on the time grid, so probably it happens only at some times. **FIXED, let's watch.'**
- 4. In LC, write interpolators for everything, not just sed/sed_s/emiss, so that all quantities can be inferred at times t as lc.quant\_i(t).
- 5. Make LC.peek_animate() which would make cute gifs with animated scheme of the system and SEDs (e/gamma) also animated. 
- 6. It seems rather simple to make a 3d interactable visualisation of the IBS. The only thing that stops me is the visualisation of winds in 3d. 
+ 1. Occasional NaNs in IC spectrum. Should we ignore them (e.g. by interpolating)? Are they there because of something internally Naimian or is it my fault?
+ 2. Make sure all interpolations are log-log-like, where applicable, and all integrations are also in a log-log manner.
+ 3. In LC, write interpolators for everything, not just sed/sed_s/emiss, so that all quantities can be inferred at times t as lc.quant\_i(t). 
+ 4. It seems rather simple to make a 3d interactable visualisation of the IBS. The only thing that stops me is the visualisation of winds in 3d. 
 For now, the only more or less visually pleasant 3d representation of winds in Python is plot a loooot of points with densities \propto density/pressure of winds,
 but it is very time-consuming. Maybe we shoud just ignore winds in 3d visualisation.
 

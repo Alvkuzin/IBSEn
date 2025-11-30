@@ -485,7 +485,7 @@ class Orbit:
         """
         if ax is None:
             fig, ax = plt.subplots(nrows=1, ncols=3,
-                                   figsize=(12, 4))
+                                   figsize=(8, 8))
             
         if showtime is None:
             showtime = [-self.T/2, self.T/2]
@@ -530,14 +530,14 @@ class Orbit:
                           y=Orbit.true_an(self, t_pos) * 180. / pi, color=color)
             
 
-        for ax_ in ax[1:]:
-            pos = ax_.get_position()        # get [left, bottom, width, height]
-            size = min(pos.width, pos.height)
-            # Make the axes square, preserving center
-            new_pos = [
-                pos.x0 + (pos.width - size) / 2,
-                pos.y0 + (pos.height - size) / 2,
-                size,
-                size,
-            ]
-            ax_.set_position(new_pos)
+        # for ax_ in ax[1:]:
+        #     pos = ax_.get_position()        # get [left, bottom, width, height]
+        #     size = min(pos.width, pos.height)
+        #     # Make the axes square, preserving center
+        #     new_pos = [
+        #         pos.x0 + (pos.width - size) / 2,
+        #         pos.y0 + (pos.height - size) / 2,
+        #         size,
+        #         size,
+        #     ]
+        #     ax_.set_position(new_pos)

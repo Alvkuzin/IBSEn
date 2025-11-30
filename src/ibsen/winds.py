@@ -90,6 +90,9 @@ winds_docstring =     f"""
         Model for the pulsar magnetic field with radius (see ``ns_field``). Default 'linear'.
     ns_b_ref : float or None, optional
         Pulsar surface field parameter ``B_surf`` [G] for 'linear'/'dipole' models.
+    ns_b_apex : float or None, optional
+        The pulsar-originating field [G] in the apex at time t_forwinds. If 
+        None (default), not used.
     ns_r_ref : float or None, optional
         Scale radius ``r_ref`` [cm] for 'linear'/'dipole' models.
     ns_L_spindown : float or None, optional
@@ -99,6 +102,9 @@ winds_docstring =     f"""
     opt_b_model : 'linear', 'dipole', optional
         Model for the optical star magnetic field with radius (see ``opt_field``).
         Default 'linear'.
+    opt_b_apex : float or None, optional
+        The optical star-originating field [G] in the apex at time t_forwinds. If 
+        None (default), not used.
     opt_b_ref : float or None, optional
         Stellar surface field parameter ``B_surf`` [G] for 'linear'/'dipole'.
     opt_r_ref : float or None, optional
@@ -122,6 +128,8 @@ winds_docstring =     f"""
         Choice of disk radial profile.
     r_trunk : float
         Disk truncation radius [cm] if using a broken power law.
+    t1_pass, t2_pass : float
+        Times of the pulsar passage through the disk plane
     ns_b_model, ns_b_ref, ns_r_ref, ns_L_spindown, ns_sigma_magn
         Parameters controlling the pulsar magnetic-field model.
     opt_b_model, opt_b_ref, opt_r_ref
@@ -151,6 +159,10 @@ winds_docstring =     f"""
         Stellar photon energy density at the apex [erg/cm³].
     ns_field(...), opt_field(...), u_g_density(...)
         Static-style utility functions for fields and radiation energy density. 
+    ns_field_initialized(r, t), opt_field_initialized(r, t) 
+        NS/opt star magnetic fields at distance r from NS/star. Argument t 
+        specifies at what moment the apex field(s) were specified during 
+        initialization.
     peek(ax=None, showtime=None, plot_rs=True)
         Quick-look plot of orbit, disk plane, and pressure contours.
 
@@ -205,12 +217,15 @@ class Winds:
                 
                  ### for magn fields of NS and opt star
                  ns_b_model = 'linear', # model of ns magn field
-                 ns_b_ref = None, # B- parameter for ns field scaling 
+                 ns_b_apex = None, 
+                 ns_b_ref = 0, # B- parameter for ns field scaling 
                  ns_r_ref = None, # r-scale for NS field
-                 ns_L_spindown = None, # NS spin-down lum 
-                 ns_sigma_magn = None, # NS PWE magnetization
+                 ns_L_spindown = 0, # NS spin-down lum 
+                 ns_sigma_magn = 0, # NS PWE magnetization
+                 
                  opt_b_model = 'linear', # model of the Be magn field
-                 opt_b_ref = None, # B- parameter for Be field scaling 
+                 opt_b_apex = None,
+                 opt_b_ref = 0, # B- parameter for Be field scaling 
                  opt_r_ref = None, # r-scale for Be magn field
                  ):
         Topt_, Ropt_, Mopt_ = unpack_params(('Topt', 'Ropt', 'Mopt'),
@@ -239,14 +254,16 @@ class Winds:
             self.r_trunk = r_trunk
             
         self.ns_b_model = ns_b_model
-        self.ns_b_ref = ns_b_ref
-        self.ns_r_ref = ns_r_ref
+        self.ns_b_apex = ns_b_apex
+        self.ns_b_ref = ns_b_ref 
+        self.ns_r_ref = ns_r_ref  if ns_r_ref is not None else Ropt_
         self.ns_L_spindown = ns_L_spindown
         self.ns_sigma_magn = ns_sigma_magn
         
         self.opt_b_model = opt_b_model
-        self.opt_b_ref = opt_b_ref
-        self.opt_r_ref = opt_r_ref
+        self.opt_b_apex = opt_b_apex
+        self.opt_b_ref = opt_b_ref 
+        self.opt_r_ref = opt_r_ref  if opt_r_ref is not None else Ropt_
         self.unit_star = n_from_v(rotated_vector(alpha=alpha, incl=incl)  )
         
     
@@ -258,11 +275,15 @@ class Winds:
         self.h_enh = h_enh
         self.p_enh_times = p_enh_times
         self.h_enh_times = h_enh_times
+        t1_, t2_ = self.times_of_disk_passage
+        self.t1_pass = t1_
+        self.t2_pass = t2_
+        
         if t_forwinds is None:
             self.f_d = f_d
             self.delta = delta
         else:
-            t1_, t2_ = self.times_of_disk_passage
+            
             # print('winds ', h_enh_times)
             
             f_d_mult = enhanche_jump(t = t_forwinds, t1_disk=t1_, t2_disk=t2_,
@@ -273,10 +294,18 @@ class Winds:
             self.delta = delta * h_mult
         
     
-    def ns_field(r_to_p, model='linear', B_ref = None, r_ref = None,
+    def ns_field(self, r_to_p, model='linear', B_apex=None, t_b_ns = None,
+                 B_ref = None, r_ref = None,
                  L_spindown = None, sigma_magn = None):   
         """
-        The magnetic field of the NS [G] at the distance r_to_p.
+        The magnetic field of the NS [G] at the distance r_to_p. If B_apex 
+        is provided, the field is calculated relative to the IBS apex 
+        (point where P_disk + P_polar = P_pulsar) according to `model`. In 
+        this case, t_b_ns should be provided.
+        
+        If B_apex is not
+        provided, the B_ref, r_ref, ... are used.
+        
         
         Parameters
         ----------
@@ -294,8 +323,13 @@ class Winds:
             
             The default is 'linear'.
             
+        B_apex : float, optional
+            The field [G] at the distance r_apex from NS. If None, calculates
+            the field from B_ref, r_ref, ...
+        t_b_ns : floar, optional
+            The time [s] at which to calculate r_apex.
         B_ref : float, optional
-            The field [G] at the distance r_ref from NS. Fefault is None.
+            The field [G] at the distance r_ref from NS. Default is None.
         r_ref : float, optional
             The scale radius for model = 'linear' or model = 'dipole'.
             Default is None.
@@ -314,24 +348,78 @@ class Winds:
         if model not in (model_opts):
             raise ValueError('the NS field model should be one of:',
                              model_opts)
-        if model == 'linear':
-            B_puls = B_ref * (r_ref / r_to_p)
-        if model == 'dipole':
-            B_puls = B_ref * (r_ref / r_to_p)**3
+        if B_apex is not None:    
+            if t_b_ns is None:
+                # t_b_ns = 
+                raise ValueError("""To calculate NS field from apex 
+                                 value, provide t_b_ns.""")
+            r_se = Winds.dist_se_1d(self, t_b_ns)
+            r_pe = self.orbit.r(t_b_ns) - r_se
+            if model in ('linear', 'from_L_sigma'):
+                b_puls = B_apex * r_pe / r_to_p
+            else:
+                b_puls = B_apex * r_pe**3 / r_to_p**3
+        else:
+            
+            if model == 'linear':
+                b_puls = B_ref * (r_ref / r_to_p)
+            if model == 'dipole':
+                b_puls = B_ref * (r_ref / r_to_p)**3
+            
+            if model == 'from_L_sigma':        
+                b_puls = (L_spindown * sigma_magn / C_LIGHT / r_to_p**2)**0.5
         
-        if model == 'from_L_sigma':        
-            B_puls = (L_spindown * sigma_magn / C_LIGHT / r_to_p**2)**0.5
-        
-        return B_puls
+        return b_puls
     
-    def opt_field(r_to_s, model = 'linear', r_ref=None, B_ref=None):
+    def ns_field_initialized(self, r_to_p, t):
+        """
+        Helper that collects all parameters passed to Winds class and returns
+        the NS field at distance r_to_sp, supposing that if any B_apex was
+        provided, it was an apex at time t.
+
+        Parameters
+        ----------
+        r_to_p : float | np.ndarray
+            The distance [cm] from the neutron star (pulsar) to the point of
+            interest.
+        t : float 
+            The time at which, it will be assumed, B_apex is passed 
+            (generally, different from t_forwinds).
+
+        Returns
+        -------
+        float | np.ndarray
+            The ns-originating magnetic field.
+
+        """
+        return Winds.ns_field(self, r_to_p, model=self.ns_b_model,
+                              B_apex=self.ns_b_apex, t_b_ns = t,
+                     B_ref = self.ns_b_ref, r_ref = self.ns_r_ref,
+                     L_spindown = self.ns_L_spindown,
+                     sigma_magn = self.ns_sigma_magn)
+    
+    def opt_field(self, r_to_s, model = 'linear', B_apex=None, 
+                  t_b_opt = None,
+                  r_ref=None, B_ref=None):
         """
         The magnetic field of the opt. star [G] at the distance r_to_s.
+        If B_apex 
+        is provided, the field is calculated relative to the IBS apex 
+        (point where P_disk + P_polar = P_pulsar) according to `model`. In 
+        this case, t_b_opt should be provided.
+        
+        If B_apex is not
+        provided, the B_ref, r_ref, ... are used.
         
         Parameters
         ----------
-        r_to_a : float
+        r_to_s : float
             The distance from the star [cm] to the point.
+        B_apex : float, optional
+            The field [G] at the distance r_apex from NS. If None, calculates
+            the field from B_ref, r_ref, ...
+        t_b_opt : float, optional
+            The time [s] at which to calculate r_apex.
         model : str, optional
             How to calculate the magnetic field from the star. Options:
             -  'linear': B = B_ref * (r_ref / r_to_p). You should provide 
@@ -356,14 +444,50 @@ class Winds:
         if model not in (model_opts):
             raise ValueError('the opt star field model should be one of:',
                              model_opts)
-        if model == 'linear':
-            B_opt = B_ref * (r_ref / r_to_s)
-        if model == 'dipole':
-            B_opt = B_ref * (r_ref / r_to_s)**3
+        if B_apex is not None:    
+            if t_b_opt is None:
+                raise ValueError("""To calculate Opt field from apex 
+                                 value, `Winds` class should be initialized
+                                 with t_forwinds value.""")
+            r_se = Winds.dist_se_1d(self, t_b_opt)
+            if model == 'linear':
+                b_opt = B_apex * r_se / r_to_s
+            else:
+                b_opt = B_apex * r_se**3 / r_to_s**3
+        else:
+            if model == 'linear':
+                b_opt = B_ref * (r_ref / r_to_s)
+            if model == 'dipole':
+                b_opt = B_ref * (r_ref / r_to_s)**3
         
-        return B_opt
+        return b_opt
     
-    def u_g_density(r_from_s, r_star, T_star):      
+    def opt_field_initialized(self, r_to_s, t):
+        """
+        Helper that collects all parameters passed to Winds class and returns
+        the optical star field at distance r_to_s, supposing that if any B_apex was
+        provided, it was an apex at time t.
+
+        Parameters
+        ----------
+        r_to_p : float | np.ndarray
+            The distance [cm] from the optical star to the point of
+            interest.
+        t : float 
+            The time at which, it will be assumed, B_apex is passed 
+            (generally, different from t_forwinds).
+
+        Returns
+        -------
+        float | np.ndarray
+            The otical star-originating magnetic field.
+
+        """
+        return Winds.opt_field(self, r_to_s, model=self.opt_b_model,
+                              B_apex=self.opt_b_apex, t_b_opt = t,
+                     B_ref = self.opt_b_ref, r_ref = self.opt_r_ref)
+    
+    def u_g_density(self, r_from_s, r_star, T_star):      
         """
         Optical start photon field energy density at the distance r_from_s from the star.
 
@@ -711,17 +835,23 @@ class Winds:
         """
         r_se = Winds.dist_se_1d(self, t)
         r_pe = self.orbit.r(t) - r_se
-        B_ns_apex = Winds.ns_field(r_to_p =r_pe, model=self.ns_b_model,
-                              B_ref = self.ns_b_ref,
+        _b_ns_apex = Winds.ns_field(self, r_to_p =r_pe, model=self.ns_b_model,
+                              B_ref = self.ns_b_ref, B_apex=self.ns_b_apex,
+                              t_b_ns=self.t_forwinds,
                               r_ref = self.ns_r_ref,
                               L_spindown = self.ns_L_spindown,
                               sigma_magn =self.ns_sigma_magn)
-        B_opt_apex = Winds.opt_field(r_to_s = r_se,
+
+        _b_opt_apex = Winds.opt_field(self, r_to_s = r_se,
                                      model = self.opt_b_model,
+                                     B_apex=self.opt_b_apex,
+                                     t_b_opt=self.t_forwinds,
                                      r_ref=self.opt_r_ref,
                                      B_ref=self.opt_b_ref)
+
         
-        return B_ns_apex, B_opt_apex
+        return _b_ns_apex, _b_opt_apex
+    
     
     def u_g_density_apex(self, t): 
         """
@@ -739,7 +869,8 @@ class Winds:
 
         """
         r_se = Winds.dist_se_1d(self, t)
-        return Winds.u_g_density(r_from_s = r_se,
+        return Winds.u_g_density(self, 
+                                 r_from_s = r_se,
                                  r_star = self.Ropt,
                                  T_star = self.Topt)
     
@@ -867,182 +998,3 @@ class Winds:
             ax[0].set_title('overview')
             ax[1].set_title(r'$r_\mathrm{SP}, r_\mathrm{SE}, r_\mathrm{PE}$')
             ax[1].legend()
-        # plt.show()
-            
-    # def peek_3d(self, #ax=None,
-    #          showtime = None,
-    #          # plot_rs = True,
-    #          ):
-    #     # if ax is None:
-    #     #     if plot_rs:
-    #     #         fig, ax = plt.subplots(nrows=1, ncols=2)
-    #     #     else:
-    #     #         fig, ax = plt.subplots(nrows=1, ncols=1)
-
-    #     # if plot_rs:  ax0 = ax[0]
-    #     # else: ax0 = ax
-    #     fig = plt.figure(figsize=(8,8))
-    #     ax0 = fig.add_subplot(111, projection="3d")
-
-    #     if showtime is None:
-    #         showtime = [-self.orbit.T/2, self.orbit.T/2]
-            
-    #     # _t = np.linspace(showtime[0], showtime[1], 307)
- 
-            
-    #     show_cond  = np.logical_and(self.orbit.ttab > showtime[0], 
-    #                                 self.orbit.ttab < showtime[1])
-        
-    #     ############# ------ disk passage related stuff ------- ###############
-
-    #     t1, t2 = self.times_of_disk_passage
-    #     # print('disk equator passage times [days]:')
-    #     # print(t1/DAY, t2/DAY)
-    #     vec_disk1, vec_disk2 = self.vectors_of_disk_passage
-
-        
-    #     orb_x, orb_y = self.orbit.xtab[show_cond], self.orbit.ytab[show_cond]
-    #     x_scale = np.max(np.array([
-    #         np.abs(np.min(orb_x)), np.abs(np.max(orb_x))
-    #         ]))
-    #     y_scale = np.max(np.array([
-    #             np.abs(np.min(orb_y)), np.abs(np.max(orb_y))            
-    #             ]))
-        
-    #     coord_scale = np.max(np.array([
-    #         np.min(orb_x), np.max(orb_x), np.min(orb_y), np.max(orb_y),
-    #         np.max( (orb_x**2 + orb_y**2)**0.5 )
-    #         ]))
-        
-    #     ################### --- 1. Star as a sphere --- #######################
-    #     R_star = 1.0
-    #     u = np.linspace(0, 2*np.pi, 40)
-    #     v = np.linspace(0, np.pi, 20)
-    #     xs = R_star * np.outer(np.cos(u), np.sin(v))
-    #     ys = R_star * np.outer(np.sin(u), np.sin(v))
-    #     zs = R_star * np.outer(np.ones_like(u), np.cos(v))
-    #     ax0.plot_surface(xs, ys, zs, color="yellow", alpha=0.6, linewidth=0)
-        
-    #     ################### ------ drawing the orbit again ------- ################
-        
-        
-    #     ax0.plot(orb_x, orb_y, 0*orb_x, "b-")                                                    
-    #     # ax0.scatter(0, 0, c='r')                                                  
-    #     ax0.plot([np.min(orb_x),
-    #                 np.max(orb_x)], [0, 0], [0, 0],
-    #                 color='k', ls='--')      # line of symmetry os the orbit
-    #     ax0.plot([0, coord_scale*cos(self.orbit.nu_los)],                            
-    #             [0, coord_scale*sin(self.orbit.nu_los)],  [0, 0],
-                
-    #             color='g', 
-    #             ls='--') # line from S to P        
-    #     xx1, yy1, zz1 = vec_disk1                                                 
-    #     xx2, yy2, zz2 = vec_disk2                                                 
-    #     ax0.plot([xx1, xx2], [yy1, yy2], [zz1,zz2], color='orange', ls='--', lw=2)    # line of the disk plane
-    #     ### tabulating pressure in the line plane perp to Be symmetry axis ####
-        
-    #     # axis of symmetry
-    #     u_be = rotated_vector(alpha=self.alpha, incl=self.incl)   
-    #     u_be = n_from_v(u_be)   # normalize
-        
-    #     # Build perpendicular basis (v,w)
-    #     # Pick any vector not parallel to u
-    #     tmp = np.zeros(3)
-    #     tmp[np.argmin(np.abs(u_be))] = 1.0
-    #     tmp = n_from_v(tmp)
-    #     v = mycross(u_be, tmp); v = n_from_v(v)
-    #     w = mycross(u_be, v); w = n_from_v(w)
-
-
-    #     h_forp = np.linspace(np.min(orb_x)*3, np.max(orb_x)*3, 251) # height over the disk
-    #     r_forp = np.linspace(np.min(orb_x)*3, np.max(orb_x)*3, 81)  # "radius from axis"
-        
-    #     # print("dot(u,v)=", mydot(u_be, v), " dot(u,w)=", mydot(u_be, w), " dot(v,w)=", mydot(v,w))
-    #     # print("||u||,||v||,||w|| =", np.linalg.norm(u_be), np.linalg.norm(v), np.linalg.norm(w))
-    #     # # Visual debug: plot the axis line
-    #     # ax0.plot([0, u_be[0]*np.max(h_forp)], [0, u_be[1]*np.max(h_forp)], [0, u_be[2]*np.max(h_forp)], 'r-')
-
-    #     # XX, YY = np.meshgrid(x_forp, y_forp, indexing="ij")
-    #     disk_ps = np.zeros((h_forp.size, r_forp.size))
-    #     for ir in range(r_forp.size):
-    #         for ih in range(h_forp.size):
-    #             vec_from_s_ = u_be * h_forp[ih] + v * r_forp[ir]
-    #             r_ = absv(vec_from_s_)
-    #             disk_ps[ih, ir] = (Winds.decr_disk_pressure(self, vec_from_s_) 
-    #                             +
-    #                             Winds.polar_wind_pressure(self, r_)
-    #                             )
-    #     disk_ps = np.log10(disk_ps)
-        
-    #     # Symmetrize by rotating YY around axis u
-    #     n_phi = 60
-    #     phi = np.linspace(0, 2*np.pi, n_phi, endpoint=False)
-        
-    #     # Build 3D coordinates
-    #     Hp, Rp, Phip = np.meshgrid(h_forp, r_forp, phi, indexing="ij")
-    #     # Coordinates in 3D: r = h*u + r*cos(phi)*v + r*sin(phi)*w
-    #     coords = (
-    #         Hp[..., None] * u_be[None, None, None, :] +
-    #         Rp[..., None] * np.cos(Phip)[..., None] * v[None, None, None, :] +
-    #         Rp[..., None] * np.sin(Phip)[..., None] * w[None, None, None, :]
-    #     )
-
-    #     X3, Y3, Z3 = coords[..., 0], coords[..., 1], coords[..., 2]
-        
-    #     # X3, Y3, Z3 = coords[...,0], coords[...,1], coords[...,2]
-        
-    #     # Repeat pressure along phi
-    #     disk_ps3 = np.repeat(disk_ps[:,:,None], n_phi, axis=2)
-        
-    #     # Normalize pressure to [0,1]
-    #     mask = ~np.isnan(disk_ps3)
-    #     flatP = disk_ps3[mask].ravel()
-    #     flatP = (flatP - flatP.min()) / (flatP.max()-flatP.min())
-
-
-    #     # Choose a few iso levels near the top of logP
-    #     top = np.nanmax(disk_ps3)
-    #     levels = [#top - 0.5,
-    #               top - 1.0, 
-    #               top - 1.5
-    #               ]   # tweak to taste
-        
-    #     plot_isosurface_parametric(ax0,
-    #                                h_forp, r_forp, phi,
-    #                                u_be, v, w,
-    #                                disk_ps3,
-    #                                levels=levels,
-    #                                color=(1.0, 0.5, 0.0),
-    #                                alpha=0.30,
-    #                                step_size=2)   # step_size>1 speeds up extraction
-        
-    #     ax0.set_box_aspect((1,1,1))
-    #     ax0.set_xlabel("x"); ax0.set_ylabel("y"); ax0.set_zlabel("z")
-    #     # N = 20000
-    #     # prob = flatP / flatP.sum()
-    #     # idx = np.random.choice(flatP.size, size=N, p=prob)
-        
-    #     # xs = X3[mask].ravel()[idx]
-    #     # ys = Y3[mask].ravel()[idx]
-    #     # zs = Z3[mask].ravel()[idx]
-    #     # alphas = flatP[idx]
-        
-    #     # # Per-point transparency: build RGBA manually (alpha ∝ normalized logP)
-    #     # rgba = np.ones((N, 4))
-    #     # rgba[:, 0:3] = np.array([1.0, 0.5, 0.0])   # orange RGB
-    #     # rgba[:, 3] = alphas                        # per-point alpha
-        
-    #     # ax0.scatter(xs, ys, zs, s=3, c=rgba, linewidths=0)
-    #     # from skimage.measure import marching_cubes
-    #     # verts, faces, _, _ = marching_cubes(disk_ps3, level=-3)
-
-    #     # # verts[:, (z,y,x)] → fractional indices, so map with interpolation
-    #     # verts_x = np.interp(verts[:,2], np.arange(X3.shape[0]), X3[:,0,0])
-    #     # verts_y = np.interp(verts[:,1], np.arange(X3.shape[1]), Y3[0,:,0])
-    #     # verts_z = np.interp(verts[:,0], np.arange(X3.shape[2]), Z3[0,0,:])
-        
-    #     # ax0.plot_trisurf(verts_x, verts_y, faces, verts_z,
-    #     #         color="orange", alpha=0.3, linewidth=0)
-    #     ax0.set_xlim(-1.2*x_scale, 1.2*min(x_scale, self.orbit.r_periastr) )
-    #     ax0.set_ylim(-1.2*y_scale, 1.2*y_scale) 
-

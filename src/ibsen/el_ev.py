@@ -5,8 +5,10 @@ from astropy import constants as const
 from scipy.integrate import trapezoid, cumulative_trapezoid, solve_ivp
 from scipy.interpolate import interp1d
 
-from ibsen.utils import  beta_from_g, loggrid, t_avg_func, wrap_grid, trapz_loglog
-from ibsen.transport_solvers.transport_on_ibs_solvers import solve_for_n, nonstat_characteristic_solver
+from ibsen.utils import  beta_from_g, loggrid, t_avg_func, \
+    trapz_loglog, lor_trans_e_spec_iso
+from ibsen.transport_solvers.transport_on_ibs_solvers import solve_for_n, \
+    nonstat_characteristic_solver
 from ibsen.ibs import IBS
 
 
@@ -377,7 +379,7 @@ def evolved_e_advection(s_, edot_func, f_inject_func,
     # and hope that zero boundary conditions will be not important
     
     # extend_u = 10; extend_d = 10; 
-    extend_u = 2; extend_d = 10; 
+    extend_u = 1; extend_d = 1; 
     Ns, Ne_dec = 601, 123 
     # Ns, Ne = 201, 203 
  
@@ -403,11 +405,14 @@ def evolved_e_advection(s_, edot_func, f_inject_func,
     # #### Only leave the part of the solution between emin_grid < e < emax_grid 
     ind_int = np.logical_and(e_vals <= emax_grid, e_vals >= emin_grid)
     e_vals = e_vals[ind_int]
-    dNe_deds = dNe_deds[:, ind_int]
-    #### and evaluate the values on the IBS grid previously obtained:dNe_de_IBS, e_vals
-    interp_x = interp1d(s_vals, dNe_deds, axis=0, kind='linear', fill_value='extrapolate')
+    dNe_deds = np.abs(dNe_deds[:, ind_int])
+    # dNe_deds_nonzero = (dNe_deds > 1e-7 * np.max(dNe_deds))
+    interp_x = interp1d(s_vals, dNe_deds,
+                        axis=0, kind='linear', fill_value='extrapolate')
+    # dNe_deds_IBS = np.zeros((s_.size, e_vals.size))
     dNe_deds_IBS = interp_x(s_)
-    dNe_deds_IBS[dNe_deds_IBS <= 0] = np.min(dNe_deds_IBS[dNe_deds_IBS>0]) / 3.14
+    # dNe_deds_IBS[~dNe_deds_nonzero] = 0
+    # dNe_deds_IBS[dNe_deds_IBS <= 0] = np.min(dNe_deds_IBS[dNe_deds_IBS>0]) / 3.14
     
     return dNe_deds_IBS, e_vals
 
@@ -720,7 +725,7 @@ def evolved_e(cooling, r_SP, ss, rs, thetas, edot_func, f_inject_func,
                 
         for i_s in range(ss.size):
             if cooling == 'stat_apex':
-                f_inj_av = trapezoid(f_inj_se, ss, axis=0) / np.max(ss)
+                f_inj_av = np.average(f_inj_se, axis=0)# / np.max(ss)
                 dNe_de_IBS[i_s, :] = stat_distr(e_vals, f_inj_av, edots_se[0, :])
             if cooling in ('stat_ibs', 'stat_mimic'):
                 dNe_de_IBS[i_s, :] = stat_distr(e_vals, f_inj_se[i_s, :], edots_se[i_s, :])
@@ -772,8 +777,6 @@ class ElectronsOnIBS: #!!!
 
     Parameters
     ----------
-    Bp_apex : float
-        Pulsar magnetic field at the apex [G].
     ibs : IBS
         IBS geometry at a chosen epoch (must have ``ibs.winds`` with an
         attached ``orbit``). Used for arc-length grid, angles, gamma,
@@ -798,8 +801,6 @@ class ElectronsOnIBS: #!!!
         Default 1e37.
     beta_e : float, optional
         Super-exponential index for 'secpl'. Default 1.
-    Bs_apex : float, optional
-        Stellar magnetic field at the apex [G]. Default 0.
     eta_a : float or None, optional
         Adiabatic-time scale factor. If None, set internally to 1e20 which
         effectively **disables** the adiabatic term in losses. Default None.
@@ -825,17 +826,9 @@ class ElectronsOnIBS: #!!!
         Attached via ``ibs.winds.orbit`` (validated at init).
     r_sp : float
         Star–pulsar separation at the IBS epoch [cm].
-    Bp_apex, Bs_apex, B_apex : float
-        Magnetic fields at the apex [G]; ``B_apex = Bp_apex + Bs_apex``.
     eta_a, eta_syn, eta_ic : float
         Coefficients controlling adiabatic, synchrotron, and IC losses.
         Note that is cooling==`stat_mimic`, ``eta_a`` is scaled along the IBS.
-    u_g_apex : float
-        Stellar photon energy density at the apex [erg/cm^3].
-    _b, _u : ndarray, shape (Ns,)
-        Dimensionless B(s)/B_apex and u(s)/u_apex along the IBS points.
-    _b_mid, _u_mid : ndarray, shape (Ns-1,)
-        Same as above at segment midpoints.
     dNe_deds_IBS : ndarray or None, shape (Ns, Ne)
         Electron distribution per (s, E) after :meth:`calculate` [1/s/cm/eV].
     e_vals : ndarray or None, shape (Ne,)
@@ -848,8 +841,12 @@ class ElectronsOnIBS: #!!!
         Number per unit s at midpoints, integrated over energy [1/s/cm].
     dNe_de_mid : ndarray or None, shape (Ns-1, Ne)
         Per-segment spectra, i.e. ``(dN/dEds) * ds`` [1/s/eV].
+    n_i_mid : ndarray or None, shape (Ns-1)
+        Total number of electrons in IBS midpoints.
     ntot : float
         Total number of electrons on IBS
+    calculated : bool
+        Whether the e-spec was calculated.
 
     Methods
     -------
@@ -864,10 +861,6 @@ class ElectronsOnIBS: #!!!
         IC, and optional adiabatic term.
     vel(s)
         Bulk flow speed along the IBS from the γ(s) profile.
-    b_and_u_s(s_)
-        Dimensionless B(s)/B_apex and u(s)/u_apex at given arc-length(s).
-    u_g_density(r_from_s)
-        Stellar photon energy density at a distance from the star.
     t_leakage(s, e)
         Leakage time T(s, E) used to mimic advection solutions.
     eta_flow_mimic(s)
@@ -900,10 +893,10 @@ class ElectronsOnIBS: #!!!
         this behavior. 
 
     """
-    def __init__(self, Bp_apex, ibs: IBS, cooling=None, to_inject_e = 'ecpl',
+    def __init__(self, ibs: IBS, cooling=None, to_inject_e = 'ecpl',
                  to_inject_theta = '3d', 
                  ecut = 1.e12, p_e = 2., norm_e = 1.e37, beta_e=1,
-                 Bs_apex=0., eta_a = None,
+                 eta_a = None,
                  eta_syn = 1., eta_ic = 1.,
                  emin = 1e9, emax = 5.1e14,
                  emin_grid=1e8, emax_grid=5.1e14,
@@ -920,7 +913,7 @@ class ElectronsOnIBS: #!!!
         But since currently ibs initialized WITH winds, we actually know the 
         time since periastron we are at: it's self.ibs.t_forbeta
         """
-        
+        self.calculated = False
         self.ibs = ibs # must contain ibs.winds 
         self.cooling = cooling
         self.allowed_coolings = ('no', 
@@ -928,9 +921,9 @@ class ElectronsOnIBS: #!!!
                                   'leak_apex', 'leak_ibs', 'leak_mimic',
                                  'adv')
         
-        self.Bp_apex = Bp_apex # pulsar magn field in apex
-        self.Bs_apex = Bs_apex # opt star magn field in apex
-        self.B_apex = Bp_apex + Bs_apex # total magn field in apex
+        # self.Bp_apex = Bp_apex # pulsar magn field in apex
+        # self.Bs_apex = Bs_apex # opt star magn field in apex
+        # self.B_apex = Bp_apex + Bs_apex # total magn field in apex
         # self.u_g_apex = u_g_apex # photon energy density in apex
         
         if eta_a  is None:
@@ -952,18 +945,13 @@ class ElectronsOnIBS: #!!!
         self.emin_grid = emin_grid  # minimum energy for e-energy grid
         self.emax_grid = emax_grid  # maximum energy for e-energy grid
         
-        
         self.to_cut_e = to_cut_e # whether to leave only the part emin < e < emax
         self.to_cut_theta = to_cut_theta # whether to inject only at theta < where_cut_theta
         self.where_cut_theta = where_cut_theta # see above
         
-        
         self._check_and_set_ibs() #checks if there's right ibs and sets r_sp
-        self._set_b_and_u_ibs() # calculates dimensionless b_ and u_ from values in apex on entire ibs
-        
-        
-        
-        
+        # self._set_b_and_u_ibs() # calculates dimensionless b_ and u_ from values in apex on entire ibs
+
     def _check_and_set_ibs(self):
         """
         Checks if ibs contains ibs.winds and ibs.winds.orbit
@@ -974,81 +962,6 @@ class ElectronsOnIBS: #!!!
         except:
             raise ValueError(""""Your ibs:IBS should contain ibs.winds""")
 
-    def b_and_u_s(self, s_):
-        """
-        Calculates dimensionless magnetic field and photon energy density
-        on the IBS at the position s_ (in cm) from the apex, in units
-        of the values in the apex. Explicitly uses that both magnetic
-        fields from the star and from the pulsar scale as 1/r, while the
-        photon energy density scales as 1/r^2.
-
-        Parameters
-        ----------
-        s_ : np.ndarray
-            The position(s) along the IBS from the apex
-            in cm.
-
-        Returns
-        -------
-        b_on_shock : np.ndarray
-            The magnetic field on the IBS at the position s_,
-            in units of the magnetic field in the apex.
-        u_g_on_shock : np.ndarray
-            The photon energy density on the IBS at the position s_,
-            in units of the photon energy density in the apex.
-
-        """
-        # f_ =  self.ibs.f_
-        r_to_p = self.ibs.s_interp(s_ = s_, what = 'r')/self.r_sp # dimless
-        r_to_s = self.ibs.s_interp(s_ = s_, what = 'r1')/self.r_sp # dimless
-        r_sa = (1. - self.ibs.ibs_n.x_apex)
-        B_on_shock = (self.Bp_apex * self.ibs.ibs_n.x_apex / r_to_p + 
-                      self.Bs_apex * r_sa / r_to_s)
-        u_g_on_shock = r_sa**2 / r_to_s**2
-        return B_on_shock / (self.B_apex), u_g_on_shock    
-    
-    def u_g_density(self, r_from_s):      
-        """
-        The energy density of the optical star at the distance r_from_s.
-
-        Parameters
-        ----------
-        r_from_s : np.ndarray
-            Distance from the point on the IBS to the star [cm].
-
-        Returns
-        -------
-        u_dens : np.ndarray
-            The energy density of the optical star at the distance r_from_s.
-
-        """
-        A_CONST = 4 * SIGMA_BOLTZ / C_LIGHT
-        factor = 2. * (1. - (1. - (self.ibs.winds.Ropt / r_from_s)**2)**0.5 ) # --> (r/d)^2 if r<<d
-        u_dens = SIGMA_BOLTZ * self.ibs.winds.Topt**4 / C_LIGHT * factor
-        return u_dens
-    
-    def _set_b_and_u_ibs(self):
-        """
-        Sets the dimensionless magnetic field and photon energy density
-        on the IBS at all points (on the grid self.ibs.s) in the attributes
-        self._b and self._u, respectively. Also sets the photon energy density
-        in the apex in the attribute self.u_g_apex. Also sets the dimensionless
-        magnetic field and photon energy density on the IBS at the midpoints
-        of the grid self.ibs.s in the attributes self._b_mid and self._u_mid,
-        respectively.
-        """
-        b_onibs, u_onibs = ElectronsOnIBS.b_and_u_s(self, s_ = self.ibs.s)
-        b_mid, u_mid = ElectronsOnIBS.b_and_u_s(self, s_ = self.ibs.s_mid)
-        
-        self.u_g_apex = ElectronsOnIBS.u_g_density(self,
-                        r_from_s = self.r_sp - self.ibs.x_apex)
-        self._b = b_onibs
-        self._u = u_onibs
-        self._b_mid = b_mid
-        self._u_mid = u_mid
-        
-
-    
     def vel(self, s): # s --- in real units
         """
         Velocity of a bulk motion along the shock.    
@@ -1088,15 +1001,16 @@ class ElectronsOnIBS: #!!!
 
         """
         r_sa_cm = (self.r_sp - self.ibs.x_apex)
-        _b_s, _u_s = ElectronsOnIBS.b_and_u_s(self, s_ = s_)
+        _u_dim = self.ibs.s_interp(s_, 'ug')
+        _u_dimless = _u_dim / self.ibs.s_interp(0, 'ug')
         return total_loss(ee = e_, 
-                          B = _b_s * self.B_apex, 
-                          Topt = self.ibs.winds.Topt * _u_s**0.25,
+                          B = self.ibs.s_interp(s_, 'b'), 
+                          Topt = self.ibs.winds.Topt,
                           Ropt=self.ibs.winds.Ropt,
                           dist = r_sa_cm,
                           eta_flow = self.eta_a, 
                           eta_syn = self.eta_syn,
-                          eta_IC = self.eta_ic * _u_s)
+                          eta_IC = self.eta_ic * _u_dimless)
 
     def f_inject(self, s_, e_, spat_coord='s'): 
         """
@@ -1279,7 +1193,8 @@ class ElectronsOnIBS: #!!!
         gammas = self.ibs.gma(s = _s_1d)
         betas = beta_from_g(gammas)
         res = 1. /C_LIGHT * Ntot / np.gradient(Ntot, _s_1d, edge_order=2)/betas
-        return res[:,None] * s / (1e-17 + s)
+        tleak = res[:,None] * s / (1e-17 + s)
+        return np.maximum(1e-1, tleak)
     
     def eta_flow_mimic(self, s):
         """eta_flow(s) for testing. Defined so that eta_flow(s)*dorb/c_light =
@@ -1368,9 +1283,9 @@ class ElectronsOnIBS: #!!!
         elif self.cooling in ('leak_apex', 'leak_ibs', 'leak_mimic'):
             e_vals = loggrid(self.emin_grid, self.emax_grid, 107)
             smesh, emesh = np.meshgrid(s_1d_dim, e_vals, indexing = 'ij')
-            if self.cooling == 'stat_mimic':
-                eta_fl_new = ElectronsOnIBS.eta_flow_mimic(self, smesh)
-                self.eta_a = eta_fl_new
+            # if self.cooling == 'stat_mimic':
+            #     eta_fl_new = ElectronsOnIBS.eta_flow_mimic(self, smesh)
+            #     self.eta_a = eta_fl_new
     
             f_inj_se = ElectronsOnIBS.f_inject(self, smesh, emesh)
             edots_se = ElectronsOnIBS.edot(self, smesh, emesh)
@@ -1424,15 +1339,42 @@ class ElectronsOnIBS: #!!!
         dNe_deds_p = dNe_deds_IBS_2horns[1:, :]
         dNe_deds_mid = 0.5 * (dNe_deds_m + dNe_deds_p)
         self.dNe_deds_mid = dNe_deds_mid
-        dNe_ds_mid = trapz_loglog(dNe_deds_mid, e_vals, axis=1) # shape=(s_mid.size)
-        dNe_de_mid = dNe_deds_mid * self.ibs.ds[:, None] # basically, trapezoid rule; shape=(s_mid.size, e_vals.size)
-        self.dNe_ds_mid = dNe_ds_mid
-        self.dNe_de_mid = np.abs(dNe_de_mid)
-        self.ntot = np.sum(trapz_loglog(np.abs(dNe_de_mid),
-                                        e_vals, axis=1)) # tot number of e???
         
+        dNe_ds_mid = trapz_loglog(dNe_deds_mid, e_vals, axis=1) # shape=(s_mid.size)
+        dNe_de_mid = np.abs(dNe_deds_mid * self.ibs.ds[:, None]) # basically, trapezoid rule; shape=(s_mid.size, e_vals.size)
+        self.dNe_ds_mid = dNe_ds_mid # wtf is that
+        self.dNe_de_mid = np.abs(dNe_de_mid) # e-spec dn/de in each part of IBS
+        self.e2dNe_de_mid =  np.abs(dNe_de_mid) * e_vals**2
+        self.n_i_mid = trapz_loglog(np.abs(dNe_de_mid),
+                                        e_vals, axis=1) # tot number of e in i-th IBS midpoint
+        self.ntot = np.sum(self.n_i_mid) # tot number of e???
+        
+        ### calculate e-spectrum in the co-moving reference frame on the 
+        ### extended grid of e-energies
+
+        ### it is probably less time-consuming to run it as a python cycle:
+                
+        beta_v_ = beta_from_g(self.ibs.g_mid)
+        emi_co = np.min(e_vals) * np.min(self.ibs.g_mid * (1.0 - beta_v_))
+        ema_co = np.max(e_vals) * np.max(self.ibs.g_mid * (1.0 + beta_v_))
+        needed_len = int(len(e_vals) * np.log10(ema_co / emi_co) / 
+                         np.log10(np.max(e_vals) / np.min(e_vals)))
+        e_comov = np.geomspace(emi_co, ema_co, needed_len)
+        dNe_de_mid_comov = np.zeros((self.ibs.s_mid.size, e_comov.size))
+        for i_s, gamma in zip( range(self.ibs.s_mid.size), self.ibs.g_mid ):
+            e_, dn_comov_ = lor_trans_e_spec_iso(E_lab=e_vals,
+                                                 dN_dE_lab=dNe_de_mid[i_s, :],
+                                                 gamma=gamma,
+                                                 E_comov=e_comov)
+            dNe_de_mid_comov[i_s, :] = dn_comov_
+        self.dNe_de_mid_comov = dNe_de_mid_comov
+        self.e_vals_comov = e_comov
+        self.n_i_mid_comov = trapz_loglog(np.abs(dNe_de_mid_comov),
+                                        e_comov, axis=1) # tot number of e in i-th IBS midpoint
+        self.ntot_comov = np.sum(self.n_i_mid_comov) # tot number of e???
+        self.calculated = True
         if to_return:
-            return dNe_deds_IBS_2horns, e_vals
+            return e_vals, dNe_de_mid
         
     @property
     def _up(self):
@@ -1469,9 +1411,6 @@ class ElectronsOnIBS: #!!!
             the lower horn midpoints (without zero).
         """
         return np.where(self.ibs.theta_mid < 0)[0]
-
-        
-        
 
     def peek(self, ax=None, 
              to_label=True,
@@ -1516,25 +1455,26 @@ class ElectronsOnIBS: #!!!
             raise ValueError("You should call `calculate()` first to set dNe_deds_IBS and e_vals")
         
         
-        Ne_tot_s = trapz_loglog(self.dNe_deds_IBS, self.e_vals, axis=1)
-        e_sed_averageS = trapezoid(self.e2dNe_deds_IBS[self.ibs.n+1 : 2*self.ibs.n-1, :],
-                self.ibs.s[self.ibs.n+1 : 2*self.ibs.n-1], axis=0) / np.max(self.ibs.s)
-
+        Ne_tot_s = trapz_loglog(self.dNe_de_mid, self.e_vals, axis=1)
+        # e_sed_averageS = trapezoid(self.e2dNe_deds_IBS[self.ibs.n+1 : 2*self.ibs.n-1, :],
+                # self.ibs.s[self.ibs.n+1 : 2*self.ibs.n-1], axis=0) / np.max(self.ibs.s)
+        e_sed_averageS = np.average(self.e2dNe_de_mid, axis=0)
 
         ax[0].plot(self.e_vals, e_sed_averageS, label=f'{self.cooling}', **kwargs)
-        ax[1].plot(self.ibs.s, self.ibs.s*Ne_tot_s,  label=f'{self.cooling}', **kwargs)
+        ax[1].plot(self.ibs.s_mid,
+                   Ne_tot_s,  label=f'{self.cooling}', **kwargs)
 
 
         if show_many:
-            _n = self.ibs.n
+            _n = self.ibs.n-1
             for i_s in (
                         int(_n * (1+1/7)),
                         int(_n*(1+1/2)),
                         int(_n*(1+6/7))
                     ):
-                label_s = fr"{self.cooling}, $s = {(self.ibs.s[i_s] / self.ibs.s_max) :.2f} s_\mathrm{{max}}$"
+                label_s = fr"{self.cooling}, $s = {(self.ibs.s_mid[i_s] / self.ibs.s_max) :.2f} s_\mathrm{{max}}$"
    
-                ax[0].plot(self.e_vals, self.e2dNe_deds_IBS[i_s, :], alpha=0.3,
+                ax[0].plot(self.e_vals, self.e2dNe_de_mid[i_s, :], alpha=0.3,
                            label=label_s, **kwargs)
 
             
@@ -1545,23 +1485,23 @@ class ElectronsOnIBS: #!!!
         ax[0].set_xscale('log')
         ax[0].set_yscale('log')
         ax[0].set_xlabel(r'$E$ [eV]')
-        ax[0].set_ylabel(r'$E^2 dN/dEds$ [eV]')
-        ax[0].set_title(r'$dN/dEds$')
+        ax[0].set_ylabel(r'$E^2 dN/dE$ [eV]')
+        ax[0].set_title(r'$E^2dN/dE$')
 
-        ax[0].set_ylim(np.nanmax(self.e2dNe_deds_IBS) * 1e-3, 
-                       np.nanmax(self.e2dNe_deds_IBS) * 2)
+        ax[0].set_ylim(np.nanmax(self.e2dNe_de_mid) * 1e-3, 
+                       np.nanmax(self.e2dNe_de_mid) * 2)
 
         ax[1].set_xlabel(r'$s$')
         # ax[1].set_ylabel(r'$N(s)$')
-        ax[1].set_title(r'$s ~dN/ds$')    
+        ax[1].set_title(r'$N_e(s)$')    
         
         smesh, emesh = np.meshgrid(self.ibs.s[self.ibs.n:2*self.ibs.n],
                                    self.e_vals, indexing='ij')
         edot_ = ElectronsOnIBS.edot(self, smesh, emesh)
-        edot_avg = trapezoid(edot_, smesh[:, 0], axis=0) / trapezoid(np.ones(smesh[:, 0].size), smesh[:, 0], axis=0)
+        edot_avg = np.average(edot_, axis=0) #/ trapezoid(np.ones(smesh[:, 0].size), smesh[:, 0], axis=0)
         ax[2].plot(self.e_vals, -self.e_vals / edot_avg)
         ax[2].set_xlabel('e, eV')
-        ax[2].set_title('t cool [s] VS e apex')
+        ax[2].set_title('avg t cool(e) [s]')
         ax[2].set_xscale('log')
         ax[2].set_yscale('log')
         

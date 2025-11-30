@@ -4,4 +4,6 @@ astropy
 matplotlib
 joblib
 xarray
+imageio
+imageio-ffmpeg
 naima

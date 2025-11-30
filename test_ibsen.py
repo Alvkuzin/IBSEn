@@ -17,7 +17,7 @@ print('PSR B1259-63 periastron dist [au] = ', orbit.r_periastr/1.496e13)
 from ibsen.winds import Winds
 print('----- at t=20 days after periastron -----')
 
-winds = Winds(orbit=orbit, sys_name='psrb', f_d=100)
+winds = Winds(orbit=orbit, sys_name='psrb', f_d=100, ns_b_apex=1)
 print('effective beta = ', winds.beta_eff(t=t))
 
 from ibsen.ibs import IBS
@@ -27,24 +27,24 @@ print('IBS opening angle = ', ibs.thetainf)
 
 from ibsen.el_ev import ElectronsOnIBS
 
-elev = ElectronsOnIBS(Bp_apex=1, ibs=ibs, cooling='no')
+elev = ElectronsOnIBS(ibs=ibs, cooling='no')
 elev.calculate()
 print('tot number of e on IBS = ', elev.ntot)
 
 from ibsen.spec import SpectrumIBS
 
 spec = SpectrumIBS(sys_name='psrb', 
-                   els=elev, apex_only=True, mechanisms=['syn',])
-spec.calculate_sed_on_ibs(E = np.logspace(2., 4.3, 101))
+                   els=elev, method='simple', mechanisms=['syn',])
+spec.calculate(e_ph = np.logspace(2., 4.3, 101))
 print('from spec, flux 0.3-10 keV = ', spec.flux(300, 1e4))
 
 from ibsen.lc import LightCurve
 
 lc = LightCurve(times = np.array([t,]), sys_name='psrb',
                 bands = ([300, 1e4],), cooling='no',
-                f_d=100,  h_enh=[1,], h_enh_times=['t1',],
+                f_d=100, 
                 ns_b_ref=1, ns_r_ref=ibs.x_apex, # so that the field in the apex = 1
-                apex_only=True, mechanisms=['syn',])
+                method='simple', mechanisms=['syn',])
 lc.calculate()
 print('from LC, flux 0.3-10 keV = ', lc.fluxes[0])
 

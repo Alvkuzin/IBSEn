@@ -8,7 +8,8 @@ import xarray as xr
 from ibsen.winds import Winds
 from ibsen.ibs_norm import IBS_norm
 from ibsen.utils import beta_from_g, absv, \
- vector_angle, rotate_z, rotate_z_xy, n_from_v, plot_with_gradient
+ vector_angle, rotate_z, rotate_z_xy, n_from_v, plot_with_gradient, \
+ lor_trans_ug_iso, lor_trans_b_iso, lor_trans_Teff_iso
 from ibsen.absorbtion.absorbtion import gg_analyt, gg_tab
 from ibsen.get_obs_data import known_names
 
@@ -20,7 +21,9 @@ SIGMA_BOLTZ = float(const.sigma_sb.cgs.value)
 M_E = float(const.m_e.cgs.value)
 
 PEEK_KEYS = ('doppler', 'scattering', 'scattering_comoving',
-                  'gg_tau', 'gg_abs')
+                  'gg_tau', 'gg_abs', 'b_ns', 'b_ns_comov', 
+                  'b_opt', 'b_opt_comov', 'b', 'b_comov', 
+                  'ug', 'ug_comov', )
 
 ibs_docstring = f"""
     Intrabinary shock (IBS) in physical (cgs) units at a given orbital epoch.
@@ -88,6 +91,8 @@ ibs_docstring = f"""
         the normalized values).
     r, r1 : ndarray
         Distances from pulsar→IBS and star→IBS, respectively [cm].
+    r_mid, r1_mid : ndarray
+        Distances from pulsar→IBS_mid and star→IBS_mid, respectively [cm].
     x_apex : float
         Pulsar→apex distance [cm].
     ds_dtheta : ndarray
@@ -98,8 +103,23 @@ ibs_docstring = f"""
         X-coordinate midpoint helpers [cm].
     y_m, y_p, y_mid, dy : ndarray
         Y-coordinate midpoint helpers [cm].
-    g : ndarray
-        Bulk Lorentz factor along the rescaled IBS (via :meth:`gma`).
+    g, g_mid : ndarray
+        Bulk Lorentz factor along the rescaled IBS/IBS_mid (via `gma`) 
+        
+    b_ns, b_ns_mid, b_ns_comov, b_ns_mid_comov : ndarray
+        NS-originating magnetic field on the IBS, IBS_mid, IBS (in co-moving
+            reference frame), IBS_mid (in co-moving reference frame)
+    b_opt, b_opt_mid, b_opt_comov, b_opt_mid_comov : ndarray
+        Optical star-originating magnetic field on the IBS, IBS_mid, IBS (in co-moving
+            reference frame), IBS_mid (in co-moving reference frame)
+    b, b_mid, b_comov, b_mid_comov : ndarray
+        Total magnetic field on the IBS, IBS_mid, IBS (in co-moving
+            reference frame), IBS_mid (in co-moving reference frame)
+    ug, ug_mid, ug_comov, ug_mid_comov : ndarray
+        Photon field energy density on the IBS, IBS_mid, IBS (in co-moving
+            reference frame), IBS_mid (in co-moving reference frame)
+        
+        
 
     Methods
     -------
@@ -137,15 +157,15 @@ ibs_docstring = f"""
 
 class IBS: #!!!
     __doc__ = ibs_docstring
-    def __init__(self, s_max=1.0, gamma_max=3.0, s_max_g=4.0, n=31, 
-                 winds = None, t_to_calculate_beta_eff = None,
+    def __init__(self, t_to_calculate_beta_eff, s_max=1.0, gamma_max=3.0, s_max_g=4.0, n=31, 
+                 winds = None, 
                  abs_gg_filename = None):
+        self.t_forbeta = t_to_calculate_beta_eff
         self.gamma_max = gamma_max
         self.s_max = s_max
         self.s_max_g = s_max_g
         self.n = n
         self.winds = winds
-        self.t_forbeta = t_to_calculate_beta_eff
         self.abs_gg_filename = abs_gg_filename
         self.peek_keys = PEEK_KEYS
        
@@ -185,6 +205,7 @@ class IBS: #!!!
         Returns new rescaled ibs_resc:IBS
         """
         _r_sp = self.winds.orbit.r(self.t_forbeta)
+        _x_sp, _y_sp = self.winds.orbit.x(self.t_forbeta), self.winds.orbit.y(self.t_forbeta)
         _nu_tr = self.winds.orbit.true_an(self.t_forbeta)
         x_sh, y_sh = self.ibs_n.x, self.ibs_n.y
         x_sh_mid, y_sh_mid = self.ibs_n.x_mid, self.ibs_n.y_mid
@@ -212,7 +233,12 @@ class IBS: #!!!
         self.y_m, self.y_p, self.dy = [_stuff * _r_sp for _stuff in (
             self.ibs_n.s_m, self.ibs_n.s_p, self.ibs_n.s_mid, self.ibs_n.ds, 
             self.ibs_n.x_m, self.ibs_n.x_p, self.ibs_n.dx,
-            self.ibs_n.y_m, self.ibs_n.y_p,  self.ibs_n.dy)]          
+            self.ibs_n.y_m, self.ibs_n.y_p,  self.ibs_n.dy)]       
+        
+        self.r1_mid = np.sqrt(x_sh_mid**2 + y_sh_mid**2)
+        self.r_mid = np.sqrt( (x_sh_mid-_x_sp)**2
+                              + (y_sh_mid - _y_sp)**2)
+        
     
     def s_interp(self, s_, what):
         """
@@ -253,6 +279,12 @@ class IBS: #!!!
         """Bulk Lorentz factor along the IBS."""
         return IBS.gma(self, s = self.s)
     
+    @property
+    def g_mid(self):
+        """Bulk Lorentz factor along the IBS-mid"""
+        return IBS.gma(self, s = self.s_mid)
+    
+    
     def gg_abs(self, e_phot, analyt=False, what_return='abs'):
         """ gamma-gamma absorbtion coefficient (as e^-tau) in every point of
         the IBS. The absortion is supposed to be on a photon field of a central
@@ -287,6 +319,7 @@ class IBS: #!!!
                             orb=self.winds.orbit,
                             filename=filename, what_return=what_return)
         return gg_res
+    
     
     def gg_abs_mid(self, e_phot, analyt=False, what_return='abs'):
         """ gamma-gamma absorbtion coefficient (as e^-tau) in every mid point of
@@ -329,6 +362,122 @@ class IBS: #!!!
                             filename=filename, what_return=what_return)
         return gg_res
     
+    ###########################################################################
+    @property
+    def ug(self):
+        """Photon field energy density on the IBS [erg/cm^3]."""
+        return self.winds.u_g_density(r_from_s = self.r1,
+                                      r_star = self.winds.Ropt,
+                                      T_star = self.winds.Topt,
+                                      )
+    
+    @property
+    def ug_mid(self):
+        """Photon field energy density on the IBS_mid [erg/cm^3]."""
+        return self.winds.u_g_density(r_from_s = self.r1_mid,
+                                      r_star = self.winds.Ropt,
+                                      T_star = self.winds.Topt,
+                                      )
+    
+    @property
+    def ug_comov(self):
+        """Photon field energy density on the IBS in the comoving frame [erg/cm^3]."""
+        return lor_trans_ug_iso(ug_iso = self.ug, gamma=self.g)
+      
+    @property
+    def ug_mid_comov(self):
+        """Photon field energy density on the IBS_mid in the comoving frame [erg/cm^3]."""          
+        return lor_trans_ug_iso(ug_iso = self.ug_mid, gamma=self.g_mid)
+      
+        
+    ###########################################################################
+    @property
+    def b_ns(self):
+        """Neutron star-originating magnetic field on the IBS [G]."""
+        return self.winds.ns_field_initialized(r_to_p = self.r, t=self.t_forbeta)
+    
+    @property
+    def b_ns_mid(self):
+        """Neutron star-originating magnetic field on the IBS_mid [G]."""
+        return self.winds.ns_field_initialized(r_to_p = self.r_mid, t=self.t_forbeta)
+    
+    @property
+    def b_ns_comov(self):
+        """Neutron star-originating magnetic field on the IBS in the comoving frame [G]."""
+        return lor_trans_b_iso(B_iso=self.b_ns, gamma=self.g)
+    
+    @property
+    def b_ns_mid_comov(self):
+        """Neutron star-originating magnetic field on the IBS_mid in the comoving frame [G]."""
+        return lor_trans_b_iso(B_iso=self.b_ns_mid, gamma=self.g_mid)
+    
+    
+    ###########################################################################
+    @property
+    def b_opt(self):
+        """Optical star-originating magnetic field on the IBS [G]."""
+        return self.winds.opt_field_initialized(r_to_s = self.r1, t=self.t_forbeta)
+    
+    @property
+    def b_opt_mid(self):
+        """Optical star-originating magnetic field on the IBS_mid [G]."""
+        return self.winds.opt_field_initialized(r_to_s = self.r1_mid, t=self.t_forbeta)
+    
+    @property
+    def b_opt_comov(self):
+        """Optical star-originating magnetic field on the IBS in the comoving frame [G]."""
+        return lor_trans_b_iso(B_iso=self.b_opt, gamma=self.g)
+    
+    @property
+    def b_opt_mid_comov(self):
+        """Optical star-originating magnetic field on the IBS_mid in the comoving frame [G]."""
+        return lor_trans_b_iso(B_iso=self.b_opt_mid, gamma=self.g_mid)
+    
+    ###########################################################################
+    @property
+    def b(self):
+        """Total magnetic field on the IBS [G]."""
+        return self.b_ns + self.b_opt
+    
+    @property
+    def b_mid(self):
+        """Total magnetic field on the IBS_mid [G]."""
+        return self.b_ns_mid + self.b_opt_mid
+    
+    @property
+    def b_comov(self):
+        """Total magnetic field on the IBS in the comoving frame [G]."""
+        return self.b_ns_comov + self.b_opt_comov
+    
+    @property
+    def b_mid_comov(self):
+        """Total magnetic field on the IBS_mid in the comoving frame [G]."""
+        return self.b_ns_mid_comov + self.b_opt_mid_comov
+    
+    ###########################################################################
+    @property
+    def T_opt_eff(self):
+        """Optical star effective temperature on the IBS [K]. 
+        Simply the star temperature everywhere."""
+        return self.winds.Topt * np.ones(self.r.size)
+    
+    @property
+    def T_opt_eff_mid(self):
+        """Optical star effective temperature on the IBS_mid [K]. 
+        Simply the star temperature everywhere."""
+        return self.winds.Topt * np.ones(self.r_mid.size)
+    
+    @property
+    def T_opt_eff_comov(self):
+        """Optical star effective temperature on the IBS in the comoving frame [K]."""
+        return lor_trans_Teff_iso(Teff_iso = self.T_opt_eff, gamma=self.g)
+    
+    @property
+    def T_opt_eff_mid_comov(self):
+        """Optical star effective temperature on the IBS_mid in the comoving frame [K]."""
+        return lor_trans_Teff_iso(Teff_iso = self.T_opt_eff_mid, gamma=self.g_mid)
+        
+    
     peek_docs = f"""
     Quick look at the IBS in the orbital plane.
 
@@ -343,8 +492,7 @@ class IBS: #!!!
           The default is False.
     ibs_color : str, optional
         Can be one of {PEEK_KEYS} 
-        to colorcode the IBS by the doppler factor, or the scattering angle
-        in the lab or comoving frame, respectively; or any matplotlib color. 
+        ; or any matplotlib color. 
         The default is 'k'.
     to_label : bool, optional
         Whether to put a label `beta=...` on a plot.
@@ -369,10 +517,11 @@ class IBS: #!!!
     def peek(self, fig=None, ax=None, show_winds=False,
              ibs_color='k', to_label=True,
              showtime=None, E_for_gg=1e12):
-        
+        import matplotlib.colors as mcolors
+        import matplotlib.pyplot as plt
+
         
         if ax is None:
-            import matplotlib.pyplot as plt
             fig, ax = plt.subplots(figsize=(8, 6))    
 
         if to_label:
@@ -396,18 +545,20 @@ class IBS: #!!!
                 color_param = IBS.gg_abs(self, e_phot=E_for_gg,
                                          what_return='tau')
             else:
-                raise ValueError(f"Unknown ibs_color: {ibs_color}. "
-                                 "Use 'doppler', 'scattering' or 'scattering_comoving'.")
+                ### finds the attribute via getarray
+                if not hasattr(self, ibs_color):
+                    raise AttributeError(f"No attribute '{ibs_color}' in {type(self).__name__}")
+                color_param = getattr(self, ibs_color)
 
-            plot_with_gradient(fig=fig, ax=ax, xdata=self.x, ydata=self.y,
-                            some_param=color_param, colorbar=True, lw=2, ls='-',
+            line_ = plot_with_gradient(fig=fig, ax=ax, xdata=self.x, ydata=self.y,
+                            some_param=color_param, colorbar=to_label, lw=2, ls='-',
                             colorbar_label=ibs_color)
 
+        elif mcolors.is_color_like(ibs_color):
+            line_ = ax.plot(self.x, self.y, color=ibs_color, label = label)     
         else:
-            try:
-                ax.plot(self.x, self.y, color=ibs_color, label = label)            
-            except:
-                raise ValueError('Probably wrong color keyword')
+            raise ValueError(f"""ibs_colos should be either oe of
+                             {PEEK_KEYS} or a matpotlib color.""")
 
         if show_winds:
             if not isinstance(self.winds, Winds):
@@ -440,11 +591,9 @@ class IBS: #!!!
         
             
         ax.legend()
+        return line_ 
     peek.__doc__ = peek_docs
 
-    # def __getattr__(self, name):
-    #     # called if attribute not found on IBS; forward to normalized object
-    #     return getattr(self.ibs_n, name)
     
     def __getattr__(self, name):
         ibs_n_ = self.__dict__.get("ibs_n", None)
