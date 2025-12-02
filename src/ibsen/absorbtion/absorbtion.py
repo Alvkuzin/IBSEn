@@ -1,32 +1,26 @@
 import numpy as np
 from numpy import pi, sin, cos
-import matplotlib.pyplot as plt
 from scipy.interpolate import  interp1d
-from scipy.integrate import  tplquad, dblquad
+from scipy.integrate import  dblquad
 from ibsen.get_obs_data import known_names
-
 import xarray as xr
 from pathlib import Path
-from ibsen.utils import n_from_v, rotated_vector, absv, vector_angle, mydot
+from ibsen.utils import n_from_v, rotated_vector, absv, mydot
 from joblib import Parallel, delayed
 import multiprocessing
+from astropy import constants as const
 
-c_light = 2.998e10
-sigma_b = 5.67e-5
-h_planck_red = 1.055e-27
-k_b = 1.381e-16
-Rsun = 7e10
-Msun = 2e33
-Ropt = 10 * Rsun
+C_LIGHT = float(const.c.cgs.value)
+SIGMA_BOLTZ = float(const.sigma_sb.cgs.value)
+HBAR = float(const.hbar.cgs.value)
+H_PLANCK = 2 * np.pi * HBAR
+K_BOLTZ = float(const.k_B.cgs.value)
+M_E = float(const.m_e.cgs.value)
+E_ELECTRON = 4.803204e-10
+MC2E = M_E * C_LIGHT**2
+sigma_t = 8/3 * pi * (E_ELECTRON**2 / MC2E)**2
+
 DAY = 86400.
-
-m_e = 9.109e-28
-h_planck = h_planck_red * 2 * pi
-e_char = 4.803e-10
-MC2E = m_e * c_light**2
-sigma_t = 8/3 * pi * (e_char**2 / MC2E)**2
-
-
 
 _here = Path(__file__).parent          
 _tabdata = _here / "absorb_tab" 
@@ -125,8 +119,8 @@ def phi_helper(eg, R_star, T_star):
     """
     Phase-independent helper for a Suchch & van Soelen analytical gg-absorbtion
     """
-    overall_coef = 64*pi / 3 / (h_planck * c_light)**3 * sigma_t * R_star**2
-    exp_ = np.exp(-2 * MC2E / eg / k_b / T_star)
+    overall_coef = 64*pi / 3 / (H_PLANCK * C_LIGHT)**3 * sigma_t * R_star**2
+    exp_ = np.exp(-2 * MC2E / eg / K_BOLTZ / T_star)
     return (  overall_coef * 
               (MC2E / eg)**3 * 
               exp_ / (1 - exp_)
@@ -235,7 +229,7 @@ def tau_gg_iso_2d(eg, x, y, R_star, T_star, incl_los, nu_los, fast=False):
     n_los = n_from_v(rotated_vector(alpha=nu_los, incl=incl_los))
     mu_init = mydot(n_init, n_los)
     dist_to_s = lambda l_: np.sqrt(r_init**2 + l_**2 + 2 * r_init * l_ * mu_init) 
-    exp_ = lambda e_: np.exp(-MC2E * e_ / k_b / T_star)
+    exp_ = lambda e_: np.exp(-MC2E * e_ / K_BOLTZ / T_star)
     n_ph_here_reduced = lambda e_: (
          e_**2 *
         exp_(e_) / (1 - exp_(e_)) 
@@ -248,7 +242,7 @@ def tau_gg_iso_2d(eg, x, y, R_star, T_star, incl_los, nu_los, fast=False):
         sigma_gg(e_star = e_ , e_g = eg, mu = mu_imp(l_))
                                       )
     
-    overall_coef = 2*pi * (MC2E / h_planck / c_light)**3
+    overall_coef = 2*pi * (MC2E / H_PLANCK / C_LIGHT)**3
     under_int = lambda e_, l_: ( n_ph_here_reduced(e_) *
                                      sigma_here(e_, l_) *
                                      (1 - mu_imp(l_)) * 

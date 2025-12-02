@@ -1,5 +1,6 @@
+# ibsen/el_ev.py
 import numpy as np
-from numpy import pi, sin, cos, exp
+from numpy import pi, sin, exp
 import astropy.units as u
 from astropy import constants as const
 from scipy.integrate import trapezoid, cumulative_trapezoid, solve_ivp
@@ -283,7 +284,7 @@ def stat_distr_with_leak(Es, Qs, Edots, Ts, mode = 'ivp'):
     Ts : np.ndarray
         The leakage times T calculated on a grid Es.
     mode: Optional, str
-        How to solve the equation. If mode == /'ivp/' (default), it is solved
+        How to solve the equation. If mode == /'ivp/' (default), it is solvedcos
         with scipy.integrate.solve_ivp. Honest, but sometimes doesnt work 
         and usually slow. If mode == /'analyt/', the general solution for the
         equation is used. Faster, but sometimes wrong hehehhhehehe
@@ -316,18 +317,45 @@ def stat_distr_with_leak(Es, Qs, Edots, Ts, mode = 'ivp'):
         n_numeric = u_numeric / Edots
         return n_numeric
     if mode == 'analyt':
+        # Ts = np.maximum(1e1, Ts)
+        # inv_Tf = 1 / (Ts * Edots)
+        # # First, compute ∫_∞^{e} (1 / (T * f)) de
+        # inner_int = cumulative_trapezoid(inv_Tf[::-1], Es[::-1], initial=0)[::-1]  
+        # inner_int_spl = interp1d(Es, inner_int, kind='linear')    
+        # epr = Es
+        # ee, eepr = np.meshgrid(Es, epr, indexing='ij')
+        # inner_int2d = inner_int_spl(eepr) - inner_int_spl(ee)
+        # integrand = Qs * np.exp(inner_int2d)
+        # outer_int2d = cumulative_trapezoid(integrand[::-1, ::-1], epr[::-1], initial=0, axis=1)
+        # outer_int = np.diag(outer_int2d)[::-1]
+        # n_analytic = outer_int / Edots
         
-        inv_Tf = 1 / (Ts * Edots)
-        # First, compute ∫_∞^{e} (1 / (T * f)) de
-        inner_int = cumulative_trapezoid(inv_Tf[::-1], Es[::-1], initial=0)[::-1]  
-        inner_int_spl = interp1d(Es, inner_int, kind='linear')    
-        epr = Es
-        ee, eepr = np.meshgrid(Es, epr, indexing='ij')
-        inner_int2d = inner_int_spl(eepr) - inner_int_spl(ee)
-        integrand = Qs * np.exp(inner_int2d)
-        outer_int2d = cumulative_trapezoid(integrand[::-1, ::-1], epr[::-1], initial=0, axis=1)
-        outer_int = np.diag(outer_int2d)[::-1]
-        n_analytic = outer_int / Edots
+        # P(E) = 1 / (T(E) * Edot(E))
+        _good = (Edots<0)
+        Es, Ts, Qs, Edots = [ar[_good] for ar in (Es, Ts, Qs, Edots)]
+        Ts = np.maximum(1e1, Ts)
+        P = 1 / (Ts * Edots)
+        
+        # cumP[k] ≈ ∫_{E_min}^{E_k} P(E') dE'
+        cumP = np.concatenate(([0.0], cumulative_trapezoid(P, Es)))
+        
+        cumP_Emax = cumP[-1]
+        
+        # weight_Q(E) = Q(E) * exp(cumP(E) - cumP(E_max))
+        weight_Q = Qs * np.exp(cumP - cumP_Emax)
+        
+        # F[k] ≈ ∫_{E_min}^{E_k} weight_Q(u) du
+        F = np.concatenate(([0.0], cumulative_trapezoid(weight_Q, Es)))
+        
+        # Tail integrals S_i = ∫_{E_i}^{E_max} weight_Q(u) du
+        S = F[-1] - F
+        
+        # Boundary condition at E_max: y(E_max) = n_Emax * Edot(E_max)
+        y_Emax = 0# n_Emax * Edot[-1]
+        
+        # n(E) = exp(cumP(E_max) - cumP(E)) / Edot(E) * [ y(E_max) - S(E) ]
+        n_analytic = -np.exp(cumP_Emax - cumP) / Edots * (y_Emax - S)
+
         return n_analytic
     
     
@@ -380,7 +408,7 @@ def evolved_e_advection(s_, edot_func, f_inject_func,
     
     # extend_u = 10; extend_d = 10; 
     extend_u = 1; extend_d = 1; 
-    Ns, Ne_dec = 601, 123 
+    Ns, Ne_dec = 201, 123 
     # Ns, Ne = 201, 203 
  
     e_vals_sample = loggrid(emin_grid / extend_d, emax_grid * extend_u,
@@ -406,14 +434,10 @@ def evolved_e_advection(s_, edot_func, f_inject_func,
     ind_int = np.logical_and(e_vals <= emax_grid, e_vals >= emin_grid)
     e_vals = e_vals[ind_int]
     dNe_deds = np.abs(dNe_deds[:, ind_int])
-    # dNe_deds_nonzero = (dNe_deds > 1e-7 * np.max(dNe_deds))
     interp_x = interp1d(s_vals, dNe_deds,
                         axis=0, kind='linear', fill_value='extrapolate')
-    # dNe_deds_IBS = np.zeros((s_.size, e_vals.size))
     dNe_deds_IBS = interp_x(s_)
-    # dNe_deds_IBS[~dNe_deds_nonzero] = 0
     # dNe_deds_IBS[dNe_deds_IBS <= 0] = np.min(dNe_deds_IBS[dNe_deds_IBS>0]) / 3.14
-    
     return dNe_deds_IBS, e_vals
 
 def evolved_e_nonstat_1zone(t_start, t_stop,  
@@ -1161,7 +1185,7 @@ class ElectronsOnIBS: #!!!
         ### s [cm] and f_inj_integrated --- 1-dimensional
         gammas = self.ibs.gma(s = s_1d)
         vs_ = beta_from_g(gammas) * C_LIGHT
-        res = cumulative_trapezoid(f_inj_integrated / vs_, s_1d, initial=0)
+        res = cumulative_trapezoid(f_inj_integrated / vs_, s_1d, initial=0)+1e10
         return res
     
     def t_leakage(self, s, e):
@@ -1324,6 +1348,7 @@ class ElectronsOnIBS: #!!!
 
         # we fill the 2nd horn with the values 
         # from the 1st horn
+        self._vel = ElectronsOnIBS.vel(self, s=smesh)
         self._f_inj = ElectronsOnIBS.f_inject(self, smesh, emesh)
         self._edot = ElectronsOnIBS.edot(self, smesh, emesh)
         dNe_deds_IBS_2horns = np.zeros((self.ibs.s.size, e_vals.size ))
@@ -1458,7 +1483,9 @@ class ElectronsOnIBS: #!!!
         Ne_tot_s = trapz_loglog(self.dNe_de_mid, self.e_vals, axis=1)
         # e_sed_averageS = trapezoid(self.e2dNe_deds_IBS[self.ibs.n+1 : 2*self.ibs.n-1, :],
                 # self.ibs.s[self.ibs.n+1 : 2*self.ibs.n-1], axis=0) / np.max(self.ibs.s)
-        e_sed_averageS = np.average(self.e2dNe_de_mid, axis=0)
+        sed_e_up = self.e2dNe_de_mid[self._up_mid, :]
+        sed_e_up[~np.isfinite(sed_e_up)] = np.nan
+        e_sed_averageS = np.nanmean(sed_e_up, axis=0)
 
         ax[0].plot(self.e_vals, e_sed_averageS, label=f'{self.cooling}', **kwargs)
         ax[1].plot(self.ibs.s_mid,
@@ -1696,16 +1723,6 @@ class NonstatElectronEvol: #!!!
         self.dt_max = dt_max
         self.dt_first = dt_first
 
-        
-        # self._set_grids()
-        
-            
-    # def _set_grids(self):
-    #     self.e_grid = loggrid(x1 = self.emin_grid, 
-    #                           x2 = self.emax_grid, 
-    #                           n_dec = int(self.n_dec_e)
-    #                           )
-        # self.t_grid = np.linspace(self.t_start, self.t_stop, self.n_t)
     
     def edot_apex(self, e_, t_): 
         """

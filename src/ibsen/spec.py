@@ -1,17 +1,12 @@
-# pulsar/spectrum.py
+# ibsen/spec.py
 import numpy as np
-from numpy import pi, sin, cos, exp
-
 from ibsen.utils import loggrid, trapz_loglog, \
-        interplg, fill_nans, fill_nans_1d, avg
+        interplg, fill_nans, fill_nans_1d, avg, index_simple
         
-from scipy.integrate import trapezoid
 import astropy.units as u
 from ibsen.get_obs_data import get_parameters, known_names
 from ibsen.utils import unpack_params, index
 import ibsen.absorbtion.absorbtion as absb
-from scipy.optimize import curve_fit
-
 from scipy.interpolate import interp1d, RegularGridInterpolator
 import matplotlib.pyplot as plt
 import naima
@@ -24,12 +19,9 @@ EV_TO_ERG = float(const.e.value) * 1e7
 M_E = float(const.m_e.cgs.value)
 C_LIGHT = float(const.c.cgs.value)
 MC2E = M_E * C_LIGHT**2
-def pl(x, p, norm):
-    return norm * x**(-p)
-
 
 def value_on_ibs_with_weights(arr_xy, x, y_extended, y_eval, weights, y_scale,
-                                    toboost=True):
+                                    toboost=True, mode='rgi'):
     """
     A technical function for constructing the 2d-array on the IBS:
         SED(y) = Arr(x, y / y_scale(x) ) * weights(x), given 
@@ -63,21 +55,37 @@ def value_on_ibs_with_weights(arr_xy, x, y_extended, y_eval, weights, y_scale,
         The quantity evaluated at x \times y_eval.
 
     """
-        
-    # It's maybe not the best idea to use RGI here, seems like it sometimes
-    # interpolates too rough. But I haven't figured out a way to use interp1d 
-    RGI = RegularGridInterpolator((x, y_extended), arr_xy, bounds_error=False,
-                                  method = 'linear') 
-    E_new_up = (y_eval[None, :] / y_scale[:, None])
-
-    pts_up = np.column_stack([
-        np.repeat(x, y_eval.size),
-        E_new_up.ravel()      
-    ])
-
-    vals_up = RGI(pts_up) 
-    I_interp_up = vals_up.reshape(x.size, y_eval.size)  
-    sed_s_e_up = I_interp_up * weights[:, None]
+    if mode == 'rgi':
+        # It's maybe not the best idea to use RGI here, seems like it sometimes
+        # interpolates too rough. But I haven't figured out a way to use interp1d 
+        RGI = RegularGridInterpolator((x, y_extended), arr_xy, bounds_error=False,
+                                      method = 'linear') 
+        E_new_up = (y_eval[None, :] / y_scale[:, None])
+    
+        pts_up = np.column_stack([
+            np.repeat(x, y_eval.size),
+            E_new_up.ravel()      
+        ])
+    
+        vals = RGI(pts_up) 
+        I_interp = vals.reshape(x.size, y_eval.size)  
+    if mode == 'int':
+        I_interp  = np.zeros((x.size, y_eval.size))
+        for ix, x_ in enumerate(x):
+            _good = (arr_xy[ix, :] > 0) & np.isfinite(arr_xy[ix, :])
+            ygood = y_extended[_good]
+            arrgood = arr_xy[ix, _good]
+            if ygood.size < 3:    
+                I_interp[ix, :] = np.zeros(y_eval.size)
+            else:    
+                spl = interp1d(np.log10(ygood),
+                              np.log10(arrgood), 
+                              bounds_error=False,
+                              fill_value=(np.log10(arrgood[0]),
+                                          np.log10(arrgood[-1])))
+                I_interp[ix, :] = 10**spl(np.log10(y_eval / y_scale[ix]))
+    
+    sed_s_e_up = I_interp * weights[:, None]
     return sed_s_e_up
 
 def calculate_sed_1zone_naima(e_photon, sed_function, dne_de, e_el, 
@@ -182,7 +190,22 @@ docstr_specibs =  f"""
     distance : float or None, optional
         Source distance [cm]. If None, taken from system defaults via
         ``unpack_dist(orbit.name, distance)``.
-
+    mode : str {'rgi', 'int'}, optional
+        Whether to use RegularGridInterpolator (vectorized but lin-lin
+            interplation) or non-vectorized interp1d in log-log scale for
+            each point at the IBS independently.
+    ne_mult : float, optional
+        The density of nods at the auxilary energy grid. ne_mult=1 means
+        the same density as the input e_ph of calculate(e_ph).
+        ne_mult < 1 (slightly rarer than the input) is +- OK, as far as 
+        ne_mult >= 0.3-0.5, while ne_mult > 1 is redundant.
+        Default 0.7
+    nEed_syn : int, optional
+        `nEed` Naima input for Synchrotron. If None, set to 51. Default None 
+    nEed_ic : int, optional
+        `nEed` Naima input for InverseCompton. If None, set to 171. 
+        Default None 
+    
     Attributes
     ----------
     els : ElectronsOnIBS
@@ -255,7 +278,11 @@ class SpectrumIBS: #!!!
                  delta_power=3, lorentz_boost=True,
                  abs_photoel=False, abs_gg=False, 
                  nh_tbabs=0.8, 
-                 distance = None):
+                 distance = None,
+                 mode='int',
+                 ne_mult=0.7,
+                 nEed_syn = None,
+                 nEed_ic = None):
         self.calculated = False
         self.els = els
         self._orb = self.els.ibs.winds.orbit
@@ -275,6 +302,11 @@ class SpectrumIBS: #!!!
             known_types=known_names, get_defaults_func=get_parameters,
                                D=distance)
         self.distance = _dist
+        self.mode = mode
+        self.ne_mult = ne_mult
+        self.nEed_syn = nEed_syn if nEed_syn is not None else 51
+        self.nEed_ic = nEed_ic if nEed_ic is not None else 171
+        
         self._set_sed_parameters()
         
     def _set_sed_parameters(self):
@@ -381,9 +413,10 @@ class SpectrumIBS: #!!!
         d_max = max(np.max(self.dopls), 1/np.min(self.dopls))
         if self.method != 'apex':
             ### Introduce an auxillary extended grid over photon energries.
-            ### Coef `2` is empirically found to be OK for later interpolation.
-            ndec_ = int(2 * e_ph.size / np.log10(np.max(e_ph) / np.min(e_ph)))
-            e_ext = loggrid(np.min(e_ph)/d_max/1.2, np.max(e_ph)*d_max*1.2,
+            ndec_ = int(self.ne_mult * e_ph.size /
+                        np.log10(np.max(e_ph) / np.min(e_ph))
+                        )
+            e_ext = loggrid(np.min(e_ph)/d_max/1.05, np.max(e_ph)*d_max*1.05,
                             ndec_)
         else:
             e_ext = e_ph
@@ -411,13 +444,13 @@ class SpectrumIBS: #!!!
         n_ = self.i_apex
         if emiss_mechanism == 'syn':
             emiss_function = Synchrotron
-            kwargs = dict(B = self.b[n_] * u.G, nEed=71)
+            kwargs = dict(B = self.b[n_] * u.G, nEed=self.nEed_syn)
         if emiss_mechanism == 'ic':
             emiss_function = InverseCompton
             kwargs = dict(seed_photon_fields=[['star',
                                 self.temp_eff[n_] * u.K,
                                 self.u[n_] * u.erg / u.cm**3]],
-                          nEed=177)
+                          nEed=self.nEed_ic)
         if emiss_mechanism == 'ic_ani':
             emiss_function = InverseCompton
             kwargs = dict(seed_photon_fields=[['star',
@@ -425,7 +458,7 @@ class SpectrumIBS: #!!!
                                 self.u[n_] * u.erg / u.cm**3,
                                 self.scat_ang[n_] * u.rad
                                 ]],
-                          nEed=177)
+                          nEed=self.nEed_ic)
         sed_apex = calculate_sed_1zone_naima(e_photon=e_ext,
                                     sed_function=emiss_function,
                                     dne_de=dne_de_tot,
@@ -491,7 +524,7 @@ class SpectrumIBS: #!!!
             emiss_function = Synchrotron
             b_eff = (np.sum(self.b**_pow * self.dopls**self.delta_power) 
                      / np.sum(self.dopls**self.delta_power ))**(1/_pow)
-            kwargs = dict(B = b_eff * u.G, nEed=71)
+            kwargs = dict(B = b_eff * u.G, nEed=self.nEed_syn)
             rescale_coef = (self.b / b_eff) ** _pow_b * n_norm
             
         if emiss_mechanism in ('ic', 'ic_ani'):
@@ -506,7 +539,7 @@ class SpectrumIBS: #!!!
             kwargs = dict(seed_photon_fields=[['star',
                                 temp_eff_eff * u.K,
                                 u_eff * u.erg / u.cm**3]],
-                          nEed=177)
+                          nEed=self.nEed_ic)
             
         if emiss_mechanism == 'ic_ani':
             scat_ang_eff = avg(self.scat_ang, power=_pow_u, 
@@ -516,7 +549,7 @@ class SpectrumIBS: #!!!
                                 u_eff * u.erg / u.cm**3,
                                 scat_ang_eff * u.rad
                                 ]],
-                          nEed=177)
+                          nEed=self.nEed_ic)
             
         sed_eff = calculate_sed_1zone_naima(e_photon=e_ext,
                                     sed_function=emiss_function,
@@ -569,13 +602,13 @@ class SpectrumIBS: #!!!
                 
             if emiss_mechanism == 'syn':
                 emiss_function = Synchrotron
-                kwargs = dict(B = self.b[i_ibs] * u.G, nEed=71)
+                kwargs = dict(B = self.b[i_ibs] * u.G, nEed=self.nEed_syn)
             if emiss_mechanism == 'ic':
                 emiss_function = InverseCompton
                 kwargs = dict(seed_photon_fields=[['star',
                                     self.temp_eff[i_ibs] * u.K,
                                     self.u[i_ibs] * u.erg / u.cm**3]],
-                              nEed=177)
+                              nEed=self.nEed_ic)
             if emiss_mechanism == 'ic_ani':
                 emiss_function = InverseCompton
                 kwargs = dict(seed_photon_fields=[['star',
@@ -583,7 +616,7 @@ class SpectrumIBS: #!!!
                                     self.u[i_ibs] * u.erg / u.cm**3,
                                     self.scat_ang[i_ibs] * u.rad
                                     ]],
-                              nEed=177)
+                              nEed=self.nEed_ic)
             sed_s[i_ibs, :] = calculate_sed_1zone_naima(e_photon=e_ext,
                                         sed_function=emiss_function,
                                         dne_de=self.dne_de[i_ibs, :],
@@ -659,7 +692,8 @@ class SpectrumIBS: #!!!
                                         y_extended=e_ext,
                                         y_eval=e_ph,
                                         weights=self.dopls ** self.delta_power,
-                                        y_scale = self.dopls)
+                                        y_scale = self.dopls,
+                                        mode=self.mode)
                 sed_s_here = sed_s_simple_boosted * self.abs_tot
                 sed_here = np.sum(sed_s_here, axis=0)
             else:
@@ -680,9 +714,6 @@ class SpectrumIBS: #!!!
                 
         ### now SEDs are in erg / s / cm2 
         ### but e_ph is in eV
-        # sed_tot_fin = fill_nans_1d(sed_tot)
-        # sed_s_fin = fill_nans(sed_s_)
-        # sed_tot_fin_good = np.isfinite(sed_tot_fin) & 
         self.sed = fill_nans_1d(sed_tot)
         self.sed_s = fill_nans(sed_s_)
         self.e_ph = e_ph
@@ -800,23 +831,9 @@ class SpectrumIBS: #!!!
             
         _mask = np.logical_and(self.e_ph >= e1/1.2, self.e_ph <= e2*1.2)
         _good = _mask & np.isfinite(self.sed)
-
-        _E = loggrid(e1, e2, n_dec = 61) # eV
-        sed_here = interplg(_E, 
-                            self.e_ph[_good], 
-                            self.sed[_good],
-                            fill_value=(np.log10(self.sed[_good][0]),
-                                        np.log10(self.sed[_good][-1])),
-                            bounds_error=False,) 
-        try:
-            popt, pcov = curve_fit(f = pl, xdata = _E,
-                                   ydata = sed_here,
-                                   p0=(0.5, 
-                                       sed_here[15] * _E[15]**0.5
-                                       ))
-            return popt[0] + 2. 
-        except:
-            return np.nan
+        ind_ = index_simple(self.sed[_good] / self.e_ph[_good]**2,
+                            self.e_ph[_good])
+        return ind_
         
     def indexes(self, bands):
         """
@@ -878,15 +895,8 @@ class SpectrumIBS: #!!!
         ax[0].plot(self.e_ph, self.sed, label=None, **kwargs)
         
         emiss_to_integr = np.where(np.isfinite(self.sed_s), self.sed_s, 0)
-        # emiss_to_integr[]
-        emiss_s = trapezoid(emiss_to_integr, self.e_ph, axis=1)
-        # emiss_s_ = emiss_s
-        # emiss_s_[np.isinf(emiss_s)]=np.nan
-        # emiss_s_[np.isinf(emiss_s)]=0
-        
-        # print(np.nanmax(emiss_s_))
+        emiss_s = trapz_loglog(emiss_to_integr, self.e_ph, axis=1)
         ax[1].plot(self._ibs.s_mid, emiss_s/np.nanmax(emiss_s), **kwargs)
-        # ax[1].plot(self._ibs.s_mid, emiss_s, **kwargs)
         
         if show_many:
             _n = self._ibs.n-1
@@ -898,9 +908,6 @@ class SpectrumIBS: #!!!
                 ilo, ihi = int(i_s-_n/10), int(i_s+_n/10)
                 label_interval = f"{(self._ibs.s_mid[ilo] / self._ibs.s_max) :.2f}-{(self._ibs.s_mid[ihi] / self._ibs.s_max) :.2f}"
                 label_s = fr"$s = ({label_interval})~ s_\mathrm{{max}}$"
-                # int_sed_here = (trapezoid(self.sed_s[ilo : ihi, :], self._ibs.s[ilo:ihi], axis=0) / 
-                #                 (self._ibs.s[ihi] - self._ibs.s[ilo]) 
-                #                 )
                 int_sed_here = np.sum(self.sed_s[ilo : ihi, :], axis=0)
                 
    
@@ -910,7 +917,6 @@ class SpectrumIBS: #!!!
             
         if to_label:
             ax[0].legend()
-            # ax[1].legend()
         
         ax[0].set_xscale('log')
         ax[0].set_yscale('log')

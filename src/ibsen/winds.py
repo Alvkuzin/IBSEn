@@ -1,9 +1,8 @@
+# ibsen/winds.py
 import numpy as np
 from numpy import pi, sin, cos
 from scipy.optimize import brentq
-
 from astropy import constants as const
-# from astropy import units as u
 from ibsen.get_obs_data import get_parameters, known_names
 from ibsen.utils import unpack_params
 from ibsen.utils import rotated_vector, mydot, mycross, n_from_v, absv, enhanche_jump
@@ -14,7 +13,6 @@ import matplotlib.pyplot as plt
 G = float(const.G.cgs.value)
 C_LIGHT = float(const.c.cgs.value)
 SIGMA_BOLTZ = float(const.sigma_sb.cgs.value)
-
 
 R_SOLAR = float(const.R_sun.cgs.value)
 M_SOLAR = float(const.M_sun.cgs.value)
@@ -283,9 +281,6 @@ class Winds:
             self.f_d = f_d
             self.delta = delta
         else:
-            
-            # print('winds ', h_enh_times)
-            
             f_d_mult = enhanche_jump(t = t_forwinds, t1_disk=t1_, t2_disk=t2_,
                                      times_enh=p_enh_times, param_to_enh=p_enh)
             h_mult = enhanche_jump(t = t_forwinds, t1_disk=t1_, t2_disk=t2_,

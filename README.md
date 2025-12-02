@@ -66,9 +66,9 @@ PSR B1259-63 periastron dist [au] =  0.9057236987554738
 ----- at t=20 days after periastron -----
 effective beta =  0.04263905625747101
 IBS opening angle =  2.444830788798784
-tot number of e on IBS =  7.282276841876412e+36
-from spec, flux 0.3-10 keV =  6.828034287211626e-14
-from LC, flux 0.3-10 keV =  [6.84071658e-14]
+tot number of e on IBS =  1.1671010229969223e+42
+from spec, flux 0.3-10 keV =  1.3935430802714186e-10
+from LC, flux 0.3-10 keV =  [1.39641903e-10]
 ```
 
 
@@ -147,9 +147,7 @@ The codebase is tailored to observational analysis of PSR B1259-63 but can be ad
 ### TODO
 
  1. Occasional NaNs in IC spectrum. Should we ignore them (e.g. by interpolating)? Are they there because of something internally Naimian or is it my fault?
- 2. Make sure all interpolations are log-log-like, where applicable, and all integrations are also in a log-log manner.
- 3. In LC, write interpolators for everything, not just sed/sed_s/emiss, so that all quantities can be inferred at times t as lc.quant\_i(t). 
- 4. It seems rather simple to make a 3d interactable visualisation of the IBS. The only thing that stops me is the visualisation of winds in 3d. 
+ 2. It seems rather simple to make a 3d interactable visualisation of the IBS. The only thing that stops me is the visualisation of winds in 3d. 
 For now, the only more or less visually pleasant 3d representation of winds in Python is plot a loooot of points with densities \propto density/pressure of winds,
 but it is very time-consuming. Maybe we shoud just ignore winds in 3d visualisation.
 

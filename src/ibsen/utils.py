@@ -21,6 +21,17 @@ DAY = 86400.
 def pl(x, p, norm):
     return norm * x**(-p)
 
+def lin(x, k, b):
+    return k * x + b
+
+def linear_slope(x, y):
+    """
+    Analytical linear fit of the data x, y by y=kx+b; returns slope k
+    """
+    _n = x.size
+    return ((_n * np.sum(x*y) - np.sum(x) * np.sum(y)) 
+            / (_n * np.sum(x**2) - np.sum(x)**2))
+
 
 def unpack_params(
     param_names,
@@ -1167,6 +1178,43 @@ def wrap_grid(x, frac=0.10, num_points=1000, single_num_points=15):
 
     return np.linspace(lo, hi, num_points)
 
+def index_simple(dnde, e):
+    """
+    Finds a powerlaw index: dnde \propto e^\ind. Fitted as a linear function
+    analytically, assuming equal weights for all datapoints. 
+
+    Parameters
+    ----------
+    dnde : np.array (Ne, )
+        The y-array.
+    e : np.array (Ne, )
+        The x-array.
+
+    Raises
+    ------
+    ValueError
+        If the arrays are of different size.
+
+    Returns
+    -------
+    float
+        The index.
+
+    """
+    dnde, e = np.asarray(dnde), np.asarray(e)
+    if dnde.size != e.size:
+        raise ValueError('dnde and e should be the same size')
+    _good = np.isfinite(dnde) & (dnde > 0)
+    dnde_, e_ = dnde[_good], e[_good]
+    if e_.size < 2:
+        return np.nan
+    elif e_.size == 2:
+        return -np.log10(dnde_[-1] / dnde_[0]) / np.log10(e_[-1] / e_[0])
+    else:
+        return - linear_slope(np.log10(e_), np.log10(dnde_))
+
+
+
 def index(dnde, e, e1, e2):
     """
     Electron index of a spectrum dnde. Fits a dnde in a given range 
@@ -1193,23 +1241,10 @@ def index(dnde, e, e1, e2):
         
     _mask = np.logical_and(e >= e1/1.2, e <= e2*1.2)
     _good = _mask & np.isfinite(dnde)
+    ind_ = index_simple(dnde[_good],
+                        e[_good])
+    return ind_
 
-    _E = loggrid(e1, e2, n_dec = 61) # eV
-    sed_here = interplg(_E, 
-                        e[_good], 
-                        dnde[_good],
-                        fill_value=(np.log10(dnde[_good][0]),
-                                    np.log10(dnde[_good][-1])),
-                        bounds_error=False,) 
-    try:
-        popt, pcov = curve_fit(f = pl, xdata = _E,
-                               ydata = sed_here,
-                               p0=(2, 
-                                   sed_here[15] * _E[15]**2
-                                   ))
-        return popt[0]  
-    except:
-        return np.nan
 
 
 def avg(arr, weights=None, power=None, axis=None):

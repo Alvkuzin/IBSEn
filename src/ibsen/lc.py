@@ -1,19 +1,16 @@
-# pulsar/lightcurve.py
+# ibsen/lc.py
 import numpy as np
 import astropy.units as u
 import matplotlib.pyplot as plt
 import imageio.v2 as imageio
-
 from scipy.integrate import trapezoid
-# from pathlib import Path
-from numpy import pi, sin, cos
+from numpy import pi
 from joblib import Parallel, delayed
 import multiprocessing
 from scipy.interpolate import interp1d
 from astropy import constants as const
 from ibsen.get_obs_data import get_parameters, known_names
-from ibsen.utils import unpack_params
-from ibsen.utils import loggrid, fill_nans
+from ibsen.utils import unpack_params, loggrid, fill_nans
 from ibsen.orbit import Orbit
 from ibsen.winds import Winds
 from ibsen.ibs import IBS
@@ -261,7 +258,6 @@ class LightCurve:
                     to_parall=False, # lc itself
                     n_cores=None,
                  full_spec = False,
-                 
                  sys_name=None, sys_params=None,
                  T=None, e=None, M=None, nu_los=None,
                  incl_los=None,
@@ -296,6 +292,10 @@ class LightCurve:
                 delta_power=4, lorentz_boost=True, method='full',          # spec
                 abs_photoel=True, abs_gg=False, abs_gg_filename=None, nh_tbabs=0.8,
                 ic_ani=False, mechanisms=['syn', 'ic'],
+                mode='int',
+                ne_mult=0.7,
+                nEed_syn = None,
+                nEed_ic = None,
                  
                 ):
         ############## ---------- LC own arguments ---------- #################
@@ -389,6 +389,11 @@ class LightCurve:
         self.nh_tbabs = nh_tbabs
         self.ic_ani = ic_ani
         self.mechanisms = mechanisms
+        self.mode = mode
+        self.ne_mult = ne_mult
+        self.nEed_syn = nEed_syn
+        self.nEed_ic = nEed_ic
+        
         ####################################################################
         self.orbit = None
         self.set_orbit()
@@ -523,6 +528,10 @@ class LightCurve:
                                 mechanisms=self.mechanisms,
                                 ic_ani=self.ic_ani,
                                 distance = self.distance,
+                                ne_mult=self.ne_mult,
+                                mode=self.mode,
+                                nEed_ic=self.nEed_ic,
+                                nEed_syn=self.nEed_syn,
                                 )
         if self.full_spec:
             E_ = loggrid(1e2, 1e14, 25)
@@ -670,6 +679,8 @@ class LightCurve:
         self.r_ses = r_ses
         self.r_pes = r_pes
         self.B_p_apexs = B_p_apexs
+        self.B_opt_apexs = B_opt_apexs
+        
         self.winds_classes = winds_classes
         self.ibs_classes = ibs_classes
         self.els_classes = els_classes
@@ -681,6 +692,7 @@ class LightCurve:
         
         self.seds = seds
         self.seds_s = seds_s
+        self.ss = np.array([ibs_classes[i_t].s_mid for i_t in range(self.t.size)])
         self.e_phots = e_phots
         self.emiss_s = emiss_s
         self.fluxes = fluxes
@@ -691,22 +703,249 @@ class LightCurve:
         self.calculated = True
     
     def sed(self, t):
+        """
+        SED at the time t
+
+        Parameters
+        ----------
+        t : np.array
+            Time [s].
+
+        Returns
+        -------
+        np.ndarray (t.size, Ne)
+            SED.
+
+        """
         seds_ok = fill_nans(self.seds)
         spl_ = interp1d(self.t, seds_ok, axis=0)
         return spl_(t)
 
     def sed_s(self, t):
-        ok = np.isfinite(self.seds_s)
-        spl_ = interp1d(self.t[ok], self.seds_s[ok])
+        """
+        SED as function of s at the time t
+
+        Parameters
+        ----------
+        t : np.array
+            Time [s].
+
+        Returns
+        -------
+        np.ndarray (t.size, Ns_mid, Ne)
+            SED_s.
+
+        """
+        seds_s_ok = fill_nans(self.seds_s)
+        spl_ = interp1d(self.t, seds_s_ok, axis=0)
+        return spl_(t)
+    
+    def s(self, t):
+        """
+        Arclength s on IBS at the time t
+
+        Parameters
+        ----------
+        t : np.array
+            Time [s].
+
+        Returns
+        -------
+        np.ndarray (t.size, Ns)
+            s.
+
+        """
+        ss_ok = fill_nans(self.ss)
+        spl_ = interp1d(self.t, ss_ok, axis=0)
+        return spl_(t)
+    
+    
+    def sed_e_tot(self, t):
+        """
+        Electron SED at the time t
+
+        Parameters
+        ----------
+        t : np.array
+            Time [s].
+
+        Returns
+        -------
+        np.ndarray (t.size, Ne_el)
+            Electron SED.
+
+        """
+        sed_e_ok = fill_nans(self.seds_e_tot)
+        spl_ = interp1d(self.t, sed_e_ok, axis=0)
+        return spl_(t)
+    
+    def flux(self, t, which=None):
+        """
+        Flux at the time t.
+
+        Parameters
+        ----------
+        t : np.array
+            Time [s].
+        which : int or None, optional
+            Which flux to use (used as a numpy index: which==0 means the first
+                    flux, etc.). If None, which=0 is set. Defult None
+
+        Returns
+        -------
+        np.ndarray (t.size, )
+            Flux.
+
+        """
+        if which is None:
+            which = 0
+        ok = np.isfinite(self.fluxes[:, which])
+        spl_ = interp1d(self.t[ok], self.fluxes[ok, which], kind='cubic')
+        return spl_(t)
+    
+    def index(self, t, which=None):
+        """
+        Index at the time t.
+
+        Parameters
+        ----------
+        t : np.array
+            Time [s].
+        which : int or None, optional
+            Which index to use (used as a numpy index: which==0 means the first
+                    index, etc.). If None, which=0 is set. Defult None
+
+        Returns
+        -------
+        np.ndarray (t.size, )
+            Index.
+
+        """
+        if which is None:
+            which = 0
+        ok = np.isfinite(self.indexes[:, which])
+        spl_ = interp1d(self.t[ok], self.indexes[ok, which], kind='cubic')
         return spl_(t)
     
     def emiss(self, t):
+        """
+        Emission on IBS at the time t
+
+        Parameters
+        ----------
+        t : np.array
+            Time [s].
+
+        Returns
+        -------
+        np.ndarray (t.size, Ns)
+            Emission.
+
+        """
         ok = np.isfinite(self.emiss_s)
-        spl_ = interp1d(self.t[ok], self.emiss_s[ok])
+        spl_ = interp1d(self.t[ok], self.emiss_s[ok], axis=0)
         return spl_(t)
     
-        
-        
+    def r_sp(self, t):
+        """
+        Distance from the optical star (s) to the neutron star (p)
+         at the time t
+
+        Parameters
+        ----------
+        t : np.array
+            Time [s].
+
+        Returns
+        -------
+        np.ndarray (t.size,)
+            r_sp.
+
+        """
+        ok = np.isfinite(self.r_sps)
+        spl_ = interp1d(self.t, self.r_sps[ok])
+        return spl_(t)
+    
+    def r_se(self, t):
+        """
+        Distance from the optical star (s) to the IBS apex (e, emission zone)
+         at the time t
+
+        Parameters
+        ----------
+        t : np.array
+            Time [s].
+
+        Returns
+        -------
+        np.ndarray (t.size,)
+            r_se.
+
+        """
+        ok = np.isfinite(self.r_ses)
+        spl_ = interp1d(self.t, self.r_ses[ok])
+        return spl_(t)
+    
+    def r_pe(self, t):
+        """
+        Distance from the neutron star (p) to the IBS apex (e, emission zone)
+         at the time t
+
+        Parameters
+        ----------
+        t : np.array
+            Time [s].
+
+        Returns
+        -------
+        np.ndarray (t.size,)
+            r_pe.
+
+        """
+        ok = np.isfinite(self.r_pes)
+        spl_ = interp1d(self.t, self.r_pes[ok])
+        return spl_(t)
+    
+    def b_p_apex(self, t):
+        """
+        Pulsar magnetic field in the IBS apex
+         at the time t
+
+        Parameters
+        ----------
+        t : np.array
+            Time [s].
+
+        Returns
+        -------
+        np.ndarray (t.size,)
+            b_p.
+
+        """
+        ok = np.isfinite(self.B_p_apexs)
+        spl_ = interp1d(self.t, self.B_p_apexs[ok])
+        return spl_(t)
+    
+    def b_opt_apex(self, t):
+        """
+        Optical magnetic field in the IBS apex
+         at the time t
+
+        Parameters
+        ----------
+        t : np.array
+            Time [s].
+
+        Returns
+        -------
+        np.ndarray (t.size,)
+            b_opt.
+
+        """
+        ok = np.isfinite(self.B_opt_apexs)
+        spl_ = interp1d(self.t, self.B_opt_apexs[ok])
+        return spl_(t)
+    
 
     def peek(self,
                 ax=None, to_label=True,

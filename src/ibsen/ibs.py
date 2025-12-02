@@ -1,14 +1,10 @@
-# pulsar/ibs.py
+# ibs/ibs.py
 import numpy as np
-from numpy import pi, sin, cos, tan
-from scipy.optimize import brentq
+from numpy import pi, sin, cos
 from scipy.interpolate import interp1d
-from pathlib import Path
-import xarray as xr
 from ibsen.winds import Winds
 from ibsen.ibs_norm import IBS_norm
-from ibsen.utils import beta_from_g, absv, \
- vector_angle, rotate_z, rotate_z_xy, n_from_v, plot_with_gradient, \
+from ibsen.utils import plot_with_gradient, \
  lor_trans_ug_iso, lor_trans_b_iso, lor_trans_Teff_iso
 from ibsen.absorbtion.absorbtion import gg_analyt, gg_tab
 from ibsen.get_obs_data import known_names

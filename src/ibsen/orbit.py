@@ -1,11 +1,9 @@
-# pulsar/orbit.py
+# ibsen/orbit.py
 import numpy as np
 from numpy import pi, sin, cos
 from scipy.optimize import brentq
 import matplotlib.pyplot as plt
-
 from astropy import constants as const
-# from astropy import units as u
 from ibsen.get_obs_data import get_parameters, known_names
 from ibsen.utils import unpack_params
 G = float(const.G.cgs.value)
@@ -529,15 +527,3 @@ class Orbit:
             ax[2].scatter(x=t_pos/x_norma,
                           y=Orbit.true_an(self, t_pos) * 180. / pi, color=color)
             
-
-        # for ax_ in ax[1:]:
-        #     pos = ax_.get_position()        # get [left, bottom, width, height]
-        #     size = min(pos.width, pos.height)
-        #     # Make the axes square, preserving center
-        #     new_pos = [
-        #         pos.x0 + (pos.width - size) / 2,
-        #         pos.y0 + (pos.height - size) / 2,
-        #         size,
-        #         size,
-        #     ]
-        #     ax_.set_position(new_pos)

@@ -27,7 +27,7 @@ print('IBS opening angle = ', ibs.thetainf)
 
 from ibsen.el_ev import ElectronsOnIBS
 
-elev = ElectronsOnIBS(ibs=ibs, cooling='no')
+elev = ElectronsOnIBS(ibs=ibs, cooling='stat_ibs', eta_a=None)
 elev.calculate()
 print('tot number of e on IBS = ', elev.ntot)
 
@@ -35,14 +35,14 @@ from ibsen.spec import SpectrumIBS
 
 spec = SpectrumIBS(sys_name='psrb', 
                    els=elev, method='simple', mechanisms=['syn',])
-spec.calculate(e_ph = np.logspace(2., 4.3, 101))
-print('from spec, flux 0.3-10 keV = ', spec.flux(300, 1e4))
+spec.calculate(e_ph = np.geomspace(3e2/1.2, 1e4*1.2, 51))
+print('from spec, flux 0.3-10 keV = ', spec.flux(300, 1e4, epow=1))
 
 from ibsen.lc import LightCurve
 
-lc = LightCurve(times = np.array([t,]), sys_name='psrb',
-                bands = ([300, 1e4],), cooling='no',
-                f_d=100, 
+lc = LightCurve(times = np.array([t]), sys_name='psrb',
+                bands = ([300, 1e4],), cooling='stat_ibs',
+                f_d=100,  eta_a=None, 
                 ns_b_ref=1, ns_r_ref=ibs.x_apex, # so that the field in the apex = 1
                 method='simple', mechanisms=['syn',])
 lc.calculate()

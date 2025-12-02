@@ -1,3 +1,4 @@
+# ibsen/ibs_norm.py
 import numpy as np
 from numpy import pi, sin, cos, tan
 from scipy.optimize import brentq
@@ -6,7 +7,6 @@ from pathlib import Path
 import xarray as xr
 from ibsen.utils import beta_from_g, absv, \
  vector_angle, rotate_z, rotate_z_xy, n_from_v, plot_with_gradient
- 
 from astropy import constants as const
 
 C_LIGHT = 2.998e10
@@ -17,7 +17,6 @@ SIGMA_BOLTZ = float(const.sigma_sb.cgs.value)
 _here = Path(__file__).parent          # points to pulsar/
 _ibs_data_file = _here / "tab_data" / "Shocks4.nc"
 ds_sh = xr.load_dataset(_ibs_data_file)
-
 
 class IBS_norm: #!!!
     """
@@ -726,8 +725,6 @@ class IBS_norm: #!!!
                         color=ibs_color, ls='--', alpha = 0.3)
             except:
                 raise ValueError('Probably wrong color keyword :(((')
-
-        # if not rescaled:
 
         ax.scatter(xstar_, ystar_, color='b') # star is originally in (1, 0)
         ax.scatter(0, 0, color='r') # pulsar is in (0, 0)
