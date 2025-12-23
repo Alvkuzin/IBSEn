@@ -7,7 +7,8 @@ from scipy.integrate import trapezoid, cumulative_trapezoid, solve_ivp
 from scipy.interpolate import interp1d
 
 from ibsen.utils import  beta_from_g, loggrid, t_avg_func, \
-    trapz_loglog, lor_trans_e_spec_iso
+    trapz_loglog, lor_trans_e_spec_iso, pl, ecpl, secpl, interplg_positive, \
+        interplg
 from ibsen.transport_solvers.transport_on_ibs_solvers import solve_for_n, \
     nonstat_characteristic_solver
 from ibsen.ibs import IBS
@@ -79,7 +80,7 @@ def Giso_full(x):
     """
     return Giso(x, 5.68) * gfunc(x)
 
-def ic_loss(Ee, Topt, Ropt, dist): # Ee in eV !!!!!!
+def ic_loss(Ee, Topt, Ropt, dist):
     """
     Inverse Compton (isotropic) losses dE/de 
 
@@ -126,75 +127,6 @@ def t_adiab(dist, eta_flow):
 
     """
     return eta_flow * dist / C_LIGHT
-
-def ecpl(E, ind, ecut, norm):
-    """
-    Exponential cut-off power-law.
-    norm * E^(-ind) * exp(-E/ecut).
-    Parameters
-    ----------
-    E : np.ndarray
-        Energy.
-    ind : np.ndarray
-        Power-law index.
-    ecut : np.ndarray
-        Exponential cut-off energy.
-    norm : np.ndarray
-        Overall normalization.
-
-    Returns
-    -------
-    np.ndarray
-        Exponential cut-off power-law.
-
-    """
-    return norm * E**(-ind) * exp(-E / ecut)
-
-def pl(E, ind, norm):
-    """
-    Power law norm * E^(-ind).
-
-    Parameters
-    ----------
-    E : np.ndarray
-        Energy.
-    ind : np.ndarray
-        Power-law index.
-    norm : np.ndarray
-        Overall normalization.
-
-    Returns
-    -------
-    np.ndarray
-        Power-law.
-
-    """
-    return norm * E**(-ind)
-
-def secpl(E, ind, ecut, beta_e, norm):
-    """
-    Super-exponential cut-off power-law.
-    norm * E^(-ind) * exp(-(E/ecut)^beta_e).
-    Parameters
-    ----------
-    E : np.ndarray
-        Energy.
-    ind : np.ndarray
-        Power-law index.
-    ecut : np.ndarray
-        Exponential cut-off energy.
-    beta_e : np.ndarray
-        Super-exponential index.
-    norm : np.ndarray
-        Overall normalization.
-
-    Returns
-    -------
-    np.ndarray
-        Super-exponential cut-off power-law.
-
-    """
-    return norm * E**(-ind) * exp(- (E / ecut)**beta_e )
 
 
 
@@ -296,12 +228,16 @@ def stat_distr_with_leak(Es, Qs, Edots, Ts, mode = 'ivp'):
 
     """
     if mode == 'ivp':
-        spl_q = interp1d(Es, Qs)
-        spl_edot = interp1d(Es, Edots)
-        spl_T = interp1d(Es, Ts)
-        q_ = lambda en: spl_q(en)
-        edot_ = lambda en: spl_edot(en)
-        T_ = lambda en: spl_T(en)
+        # spl_q = interp1d(Es, Qs)
+        # spl_edot = interp1d(Es, Edots)
+        # spl_T = interp1d(Es, Ts)
+        # q_ = lambda en: spl_q(en)
+        # edot_ = lambda en: spl_edot(en)
+        # T_ = lambda en: spl_T(en)
+        q_ = lambda en: interplg_positive(en, Es, Qs)
+        edot_ = lambda en: -interplg(en, Es, -Edots)
+        T_ = lambda en: interplg(en, Es, Ts)
+        
         
         def ode_rhs(e_, u):
             edot_val = edot_(e_)
@@ -310,10 +246,10 @@ def stat_distr_with_leak(Es, Qs, Edots, Ts, mode = 'ivp'):
             return q_val - u / (edot_val * T_val)
         
         # Solve backwards: from e_max to e_min
-        sol = solve_ivp(ode_rhs, [Es[-1], Es[0]], [0], t_eval=Es[::-1], method='RK45',
-                        rtol=1e-3, atol=1e-40)
+        sol = solve_ivp(ode_rhs, [Es[-1], Es[0]], [0],method='RK45',
+                        rtol=1e-3, atol=1e-40, dense_output=True)
         
-        u_numeric = sol.y[0][::-1]        
+        u_numeric = sol.sol(Es)[0]#[::-1]        
         n_numeric = u_numeric / Edots
         return n_numeric
     if mode == 'analyt':
@@ -354,7 +290,7 @@ def stat_distr_with_leak(Es, Qs, Edots, Ts, mode = 'ivp'):
         y_Emax = 0# n_Emax * Edot[-1]
         
         # n(E) = exp(cumP(E_max) - cumP(E)) / Edot(E) * [ y(E_max) - S(E) ]
-        n_analytic = -np.exp(cumP_Emax - cumP) / Edots * (y_Emax - S)
+        n_analytic = np.exp(cumP_Emax - cumP) / Edots * (y_Emax - S)
 
         return n_analytic
     
@@ -429,7 +365,12 @@ def evolved_e_advection(s_, edot_func, f_inject_func,
                         edot_args = tot_loss_args,
                         f_args = f_args,
                         s_grid = s_vals, e_grid = e_vals, 
-                        method = 'FDM_cons', bound = 'neun')
+                        method = 'FDM_cons', 
+                        # method = 'FDM', 
+                        # bound = 'dir',
+                        
+                        bound = 'neun'
+                        )
     # #### Only leave the part of the solution between emin_grid < e < emax_grid 
     ind_int = np.logical_and(e_vals <= emax_grid, e_vals >= emin_grid)
     e_vals = e_vals[ind_int]

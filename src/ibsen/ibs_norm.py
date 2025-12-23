@@ -397,7 +397,7 @@ class IBS_norm: #!!!
         if theta == 0:
             return 0
         else:
-            th1_inf = pi - self.theta_inf 
+            th1_inf = pi - self.theta_inf_analytical 
             to_solve2 = lambda t1: t1 / tan(t1) - 1. - self.beta * (theta / tan(theta) - 1)
             th1 = brentq(to_solve2, 1e-10, th1_inf)
             return th1
@@ -462,11 +462,13 @@ class IBS_norm: #!!!
             x, y, theta, r, s.
 
         """
-        th_inf = self.theta_inf
+        th_inf = self.theta_inf_analytical
         beta_ = self.beta
         if beta_ > 1e-3:
             ## use the numerical solution for theta1(theta)
-            thetas = np.linspace(1e-3, th_inf-1e-3, self.n)
+            if beta_ > 3e-2: Nthetas = 200
+            else: Nthetas = 500
+            thetas = np.linspace(1e-3, th_inf-1e-3, Nthetas)
             theta1s = np.zeros(thetas.size)
             theta1s = np.array([self.theta1_CRW(thetas[i]) for i in range(theta1s.size)])
         if beta_ <= 1e-3:
@@ -515,14 +517,16 @@ class IBS_norm: #!!!
         b = np.abs(np.log10(self.beta))
         # first, find the shape in given b by interpolation
         intpl = ds_sh.interp(abs_logbeta=b)
-        # and get its x, y, theta, r, s, theta1, r1 as np.arrays
         xs_, ys_, ts_, rs_, ss_, t1s_, r1s_ = (intpl.x, intpl.y, intpl.theta,
                         intpl.r, intpl.s, intpl.theta1, intpl.r1, )
+        # xs_, ys_, ts_, rs_, ss_, t1s_, r1s_ = IBS_norm.calculate_ibs_shape_crw(self, 
+        #                                         full_return=True)
         xs_, ys_, ts_, rs_, ss_, t1s_, r1s_ = [np.array(arr) for arr in (xs_, ys_,
                                         ts_, rs_, ss_, t1s_, r1s_)]
         
         tang = np.arctan(np.gradient(ys_, xs_, edge_order=2))
         ds_dt_ = np.gradient(ss_, ts_, edge_order=2)
+        r_apex_analyt = self.beta**0.5 / (self.beta**0.5 + 1)
         if isinstance(self.s_max, float) or isinstance(self.s_max, int):
             self.s_max = float(self.s_max)
             # leave only the points where arclength < s_max. This may not work good
@@ -561,9 +565,13 @@ class IBS_norm: #!!!
         r1p = np.concatenate((r1p[::-1], r1p))
         tanp = np.concatenate((-tanp[::-1], pi+tanp))
         ds_dtp = np.concatenate((ds_dtp[::-1], ds_dtp))
+        # if full_output:
+        #     return (xp, yp, tp, rp, sp, t1p, r1p, tanp, ds_dtp, intpl.theta_inf.item(),
+        # intpl.r_apex.item())
         if full_output:
-            return (xp, yp, tp, rp, sp, t1p, r1p, tanp, ds_dtp, intpl.theta_inf.item(),
-        intpl.r_apex.item())
+            return (xp, yp, tp, rp, sp, t1p, r1p, tanp, ds_dtp, self.theta_inf_analytical,
+                    r_apex_analyt)
+        
         if not full_output:
             return xp, yp
             

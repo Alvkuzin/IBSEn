@@ -534,7 +534,7 @@ class IBS: #!!!
             elif ibs_color == 'scattering':
                 color_param = self.scattering_angle
             elif ibs_color == 'scattering_comoving':
-                color_param = self.scattering_angle_comoving
+                color_param = self.scattering_angle_comov
             elif ibs_color == 'gg_abs':
                 color_param = IBS.gg_abs(self, e_phot=E_for_gg)
             elif ibs_color == 'gg_tau':

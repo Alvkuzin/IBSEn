@@ -5,7 +5,7 @@ from scipy.interpolate import interp1d
 from scipy.integrate import trapezoid
 from scipy.optimize import curve_fit
 
-from numpy import pi, sin, cos
+from numpy import pi, sin, cos, exp
 import warnings
 # import astropy.units as u
 from astropy import constants as const
@@ -16,10 +16,6 @@ from matplotlib.colors import Normalize
 
 G = float(const.G.cgs.value)
 DAY = 86400.
-
-
-def pl(x, p, norm):
-    return norm * x**(-p)
 
 def lin(x, k, b):
     return k * x + b
@@ -32,6 +28,112 @@ def linear_slope(x, y):
     return ((_n * np.sum(x*y) - np.sum(x) * np.sum(y)) 
             / (_n * np.sum(x**2) - np.sum(x)**2))
 
+def ecpl(E, ind, ecut, norm):
+    """
+    Exponential cut-off power-law.
+    norm * E^(-ind) * exp(-E/ecut).
+    Parameters
+    ----------
+    E : np.ndarray
+        Energy.
+    ind : np.ndarray
+        Power-law index.
+    ecut : np.ndarray
+        Exponential cut-off energy.
+    norm : np.ndarray
+        Overall normalization.
+
+    Returns
+    -------
+    np.ndarray
+        Exponential cut-off power-law.
+
+    """
+    return norm * E**(-ind) * exp(-E / ecut)
+
+def pl(E, ind, norm):
+    """
+    Power law norm * E^(-ind).
+
+    Parameters
+    ----------
+    E : np.ndarray
+        Energy.
+    ind : np.ndarray
+        Power-law index.
+    norm : np.ndarray
+        Overall normalization.
+
+    Returns
+    -------
+    np.ndarray
+        Power-law.
+
+    """
+    return norm * E**(-ind)
+
+def secpl(E, ind, ecut, beta_e, norm):
+    """
+    Super-exponential cut-off power-law.
+    norm * E^(-ind) * exp(-(E/ecut)^beta_e).
+    Parameters
+    ----------
+    E : np.ndarray
+        Energy.
+    ind : np.ndarray
+        Power-law index.
+    ecut : np.ndarray
+        Exponential cut-off energy.
+    beta_e : np.ndarray
+        Super-exponential index.
+    norm : np.ndarray
+        Overall normalization.
+
+    Returns
+    -------
+    np.ndarray
+        Super-exponential cut-off power-law.
+
+    """
+    return norm * E**(-ind) * exp(- (E / ecut)**beta_e )
+
+def bkpl(E, g1, g2, ebr, norm):
+    """
+    Broken power law: 
+            norm * (e/ebr)**(-g1),      for e < ebr,
+        = 
+            norm * (e/ebr)**(-g2),      for e >= ebr/
+            
+    Parameters
+    ----------
+    E : np.ndarray
+        Energy.
+    g1 : np.ndarray
+        Index for E < e_break.
+    g2 : np.ndarray
+        Index for E > e_break.
+    ebr : np.ndarray
+        Break energy.
+    norm : np.ndarray
+        Overall normalization.
+
+    Returns
+    -------
+    np.ndarray
+        Broken power-law.
+
+    """
+    ifsinglevalue = (isinstance(E, float) or isinstance(E, int))
+    e = np.asarray(E)
+    e1 = e[e<ebr]
+    e2 = e[e>=ebr]
+    res1 = norm * (e1/ebr)**(-g1)
+    res2 = norm * (e2/ebr)**(-g2)
+    res = np.concatenate((res1, res2))
+    if ifsinglevalue:
+        return res[0]
+    else:
+        return res
 
 def unpack_params(
     param_names,
@@ -926,6 +1028,42 @@ def interplg(x, xdata, ydata, **kwargs):
     spl_ = interp1d(np.log10(xdata), np.log10(ydata), **kwargs)
     return 10**( spl_( np.log10(x) ) )
 
+def interplg_positive(x, xdata, ydata, *, kind="linear",
+                        fill_value=0.0, bounds_error=False):
+    """
+    Log-log interpolation on the region where ydata>0, return fill_value elsewhere.
+
+    If x is outside the positive-support range, returns fill_value (default 0).
+    """
+    x = np.asarray(x, dtype=float)
+    xdata = np.asarray(xdata, dtype=float)
+    ydata = np.asarray(ydata, dtype=float)
+
+    # keep only strictly positive y points (log domain)
+    m = (xdata > 0) & (ydata > 0) & np.isfinite(xdata) & np.isfinite(ydata)
+    if np.count_nonzero(m) < 2:
+        # not enough points to interpolate
+        return np.full_like(x, fill_value, dtype=float)
+
+    xd = xdata[m]
+    yd = ydata[m]
+    asc = np.argsort(xd)
+    xd, yd = xd[asc], yd[asc]
+
+    lx = np.log10(xd)
+    ly = np.log10(yd)
+
+    spl = interp1d(lx, ly, kind=kind, bounds_error=bounds_error,
+                   fill_value="extrapolate")  # we’ll mask extrapolation ourselves
+
+    out = np.full_like(x, fill_value, dtype=float)
+
+    # define support in x where log-log is valid (positive ydata region)
+    x_min, x_max = xd.min(), xd.max()
+    inside = (x > 0) & (x >= x_min) & (x <= x_max) & np.isfinite(x)
+
+    out[inside] = 10.0 ** spl(np.log10(x[inside]))
+    return out
 
 def trapz_loglog(y, x, axis=-1, intervals=False):
     """
@@ -1177,6 +1315,93 @@ def wrap_grid(x, frac=0.10, num_points=1000, single_num_points=15):
         return lo + t*(hi - lo)
 
     return np.linspace(lo, hi, num_points)
+
+def make_grid(x_grid, grid_kind, n_grid, per_decade=True):
+    """
+    Create x_grid if not provided. 
+
+    Parameters
+    ----------
+    x_grid : np.array
+        Initial observational grid.
+    grid_kind : {'data', 'linear', 'log'}
+        If 'data', returns sorted x_grid. 
+        If 'linear', then equally spaced grid from min to max of x_grid
+        with n_grid points.
+        If 'log', then log-spaced grid from min to max of x_grid
+        with n_grid points: either in total (per_decade=False) or
+        per decade (per_decade=True)
+        
+    n_grid : int
+        Number of nods.
+    per_decade : bool, optional
+        Whether n_grid is per decate or in total. The default is True.
+
+    Returns
+    -------
+    np.array
+        New x-grid.
+
+    """
+    xg = np.asarray(x_grid, dtype=float)
+    # Make sure it's sorted ascending
+    if np.any(np.diff(xg) <= 0):
+        xg = np.sort(xg)
+
+    xmin = np.min(xg)
+    xmax = np.max(xg)
+
+    if grid_kind == "data":
+        return np.sort(xg.copy())
+    elif grid_kind == "linear":
+        return np.linspace(xmin, xmax, n_grid)
+    elif grid_kind == "log":
+        if xmin <= 0:
+            raise ValueError("x contains non-positive values; log grid not possible.")
+        if not per_decade:
+            return np.geomspace(xmin, xmax, n_grid)
+        else:
+            return loggrid(xmin, xmax, n_grid)
+    else:
+        raise ValueError(f"Unknown grid_kind: {grid_kind}")
+        
+def fit_norm(ydata, dy_data, y0_normalized, return_err=False):
+    """
+    Analytically finds N, assuming y \propto N, (so N is a normalization), 
+    given data: ydata, dydata,
+    and one model y0 calculated with N0 (y0_normalized = y0/N0)
+
+    Parameters
+    ----------
+    ydata : np.ndarray
+        Data y
+    dy_data : np.ndarray
+        Data errors dy
+    y0_normalized : np.ndarray
+        Model calculated with N0, in the same points where ydata was measured,
+        divided by this N0
+
+    Returns 
+    -------
+    float p, np.ndarray y_opt:
+        Optimal normalizaion and re-normalized y0
+
+    """
+    w = 1.0 / dy_data**2
+    denom = np.sum(w * y0_normalized * y0_normalized)
+    if denom <= 0:
+        raise ValueError('denominator < 0 in fit_norm, cannot find normalization')
+    N_best = np.sum(w * y0_normalized * ydata) / denom
+    resid = ydata - N_best * y0_normalized
+    chi2 = np.sum((resid / dy_data)**2)
+    nu = ydata.size - 1
+    s2 = chi2 / nu
+    sigma_N = np.sqrt(s2 / denom)
+    if not return_err:
+        return N_best, N_best * y0_normalized
+    if return_err:
+        return N_best, N_best * y0_normalized, sigma_N
+    
 
 def index_simple(dnde, e):
     """

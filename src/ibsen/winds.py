@@ -895,12 +895,14 @@ class Winds:
         """
         if ax is None:
             if plot_rs:
-                fig, ax = plt.subplots(nrows=1, ncols=2)
+                fig, (ax0, ax1) = plt.subplots(nrows=1, ncols=2)
             else:
-                fig, ax = plt.subplots(nrows=1, ncols=1)
-
-        if plot_rs:  ax0 = ax[0]
-        else: ax0 = ax
+                fig, ax0 = plt.subplots(nrows=1, ncols=1)
+        else:
+            if plot_rs:
+                ax0, ax1 = ax
+            else:
+                ax0 = ax
 
         if showtime is None:
             showtime = [-self.orbit.T/2, self.orbit.T/2]
@@ -917,14 +919,14 @@ class Winds:
         # print('disk equator passage times [days]:')
         # print(t1/DAY, t2/DAY)
         vec_disk1, vec_disk2 = self.vectors_of_disk_passage
-
+        _r_scale = absv(vec_disk1)
         
         orb_x, orb_y = self.orbit.xtab[show_cond], self.orbit.ytab[show_cond]
         x_scale = np.max(np.array([
-            np.abs(np.min(orb_x)), np.abs(np.max(orb_x))
+            np.abs(np.min(orb_x)), np.abs(np.max(orb_x)), 1.5*_r_scale,
             ]))
         y_scale = np.max(np.array([
-                np.abs(np.min(orb_y)), np.abs(np.max(orb_y))            
+                np.abs(np.min(orb_y)), np.abs(np.max(orb_y)), 1.5*_r_scale, 
                 ]))
         
         coord_scale = np.max(np.array([
@@ -950,15 +952,22 @@ class Winds:
 
         XX, YY = np.meshgrid(x_forp, y_forp, indexing='ij')
         disk_ps = np.zeros((x_forp.size, y_forp.size))
+        pulsar_ps = np.zeros((x_forp.size, y_forp.size))
+        xpuls, ypuls = self.orbit.x(self.t_forwinds), self.orbit.y(self.t_forwinds)
         for ix in range(x_forp.size):
             for iy in range(y_forp.size):
                 vec_from_s_ = np.array([x_forp[ix], y_forp[iy], 0])
                 r_ = (x_forp[ix]**2 + y_forp[iy]**2)**0.5
+                r_topulsar = ((x_forp[ix] - xpuls)**2 +
+                              (y_forp[iy] - ypuls)**2)**0.5
                 disk_ps[ix, iy] = (Winds.decr_disk_pressure(self, vec_from_s_) 
                                 +
                                 Winds.polar_wind_pressure(self, r_)
                                 )
-        disk_ps = np.log10(disk_ps)
+                pulsar_ps[ix, iy] = Winds.pulsar_wind_pressure(self, r_topulsar)
+                
+        pres_diff = disk_ps - pulsar_ps
+        disk_ps = np.log10(disk_ps) 
 
         # P_norm = (disk_ps - np.min(disk_ps)) / (np.max(disk_ps) - np.min(disk_ps))
 
@@ -975,6 +984,8 @@ class Winds:
         disk_ps[disk_ps < np.nanmax(disk_ps)-4.5] = np.nan
         # norm = Normalize(vmin=np.min(disk_ps), vmax=np.max(disk_ps))
         ax0.contourf(XX, YY, disk_ps, levels=n_levels, cmap=custom_cmap)          
+        
+        ax0.contour(XX, YY, pres_diff,  levels=[0], colors='k')
 
         ax0.set_xlim(-1.2*x_scale, 1.2*min(x_scale, self.orbit.r_periastr) )
         ax0.set_ylim(-1.2*y_scale, 1.2*y_scale) 
@@ -983,13 +994,13 @@ class Winds:
         if plot_rs:
             dists_se = Winds.dist_se_1d(self, _t)
             rs = self.orbit.r(_t)
-            ax[1].plot(_t/DAY, dists_se, label='se', ls='--')
-            ax[1].plot(_t/DAY, rs, label = 'sp', ls='-')
-            ax[1].plot(_t/DAY, rs-dists_se, label='pe', ls=':')
-            ax[1].axvline(x=t1/DAY, color='k', alpha=0.3)
-            ax[1].axvline(x=t2/DAY, color='k', alpha=0.3)
-            ax[1].axvline(x=self.orbit.t_los/DAY, color='g', ls='--', alpha=0.3)
+            ax1.plot(_t/DAY, dists_se, label='se', ls='--')
+            ax1.plot(_t/DAY, rs, label = 'sp', ls='-')
+            ax1.plot(_t/DAY, rs-dists_se, label='pe', ls=':')
+            ax1.axvline(x=t1/DAY, color='k', alpha=0.3)
+            ax1.axvline(x=t2/DAY, color='k', alpha=0.3)
+            ax1.axvline(x=self.orbit.t_los/DAY, color='g', ls='--', alpha=0.3)
             
-            ax[0].set_title('overview')
-            ax[1].set_title(r'$r_\mathrm{SP}, r_\mathrm{SE}, r_\mathrm{PE}$')
-            ax[1].legend()
+            ax0.set_title('overview')
+            ax1.set_title(r'$r_\mathrm{SP}, r_\mathrm{SE}, r_\mathrm{PE}$')
+            ax1.legend()

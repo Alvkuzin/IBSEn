@@ -3,7 +3,7 @@ name = "ibsen"
 version = "0.4.1"
 description = "IBS emission of a pulsar+OB-star binary"
 authors = [{name = "Lesha"}]
-dependencies = ["numpy"]
+dependencies = ["numpy", "scipy", "astropy"]
 requires-python = ">=3.9"
 
 [tool.setuptools]
@@ -16,6 +16,13 @@ where = ["src"]
 [build-system]
 requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[project.scripts]
+ibsen-gui = "ibsen.gui.app:main"
+ibsen-deconstruct = "ibsen.cli.deconstruct:main"
+
+[project.optional-dependencies]
+gui = ["pyside6"]
 
 [tool.setuptools.package-data]
 "ibsen" = ["tab_data/*.nc",
