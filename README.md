@@ -1,6 +1,6 @@
 # IBSEn: calculates the IBS Emissivity for PSR B1259-63.
 
-IBSEn: **I**ntra**B**inary **S**hock **E**mission **n**-**n**ot-mea**n**i**n**g-a**n**ythi**n**g is a collection of Python scripts for processing, modeling, and visualizing observational data of the gamma-ray binariy pulsars, especially PSR B1259-63. This project includes tools to compute intrabinary shock (IBS) emissivity: spectra and light curves, and (somewhere in future) fit theoretical models to light curves and spectra.
+IBSEn: **I**ntra**B**inary **S**hock **E**mission **n**-**n**ot-mea**n**i**n**g-a**n**ythi**n**g is a Python package for modeling and visualizing observational data of the gamma-ray binariy pulsars, especially PSR B1259-63. This project includes tools to compute intrabinary shock (IBS) emissivity: spectra and light curves, and (somewhere in future) fit theoretical models to light curves and spectra.
 
 
 ## Installation & Requirements 
@@ -36,7 +36,7 @@ This project requires:
 pip install -r requirements.txt
 ```
 
-**Note on Naima.** If you have both Naima and numpy installed and they are not in conflict, you are good to go. It is a good idea to create an environment for IBSEn where the numpy<2 and  Naima will be installed.
+**Note on Naima.** If you have both Naima and numpy installed and they are not in conflict, you are good to go. It is a good idea to create a separate environment for IBSEn where the numpy<2 and  Naima will be installed.
 
 
 Scripts now are mainly not suited for running from the command line... And I don't have proper tests yet, so to find out if the installation works, try running a very basic python script that simply initializes a lot of classes with more or less default parameters:
@@ -139,7 +139,7 @@ See tutorials in `tutorials` folder for the complete description of these models
  2. It seems rather simple to make a 3d interactable visualisation of the IBS. The only thing that stops me is the visualisation of winds in 3d. 
 For now, the only more or less visually pleasant 3d representation of winds in Python is plot a loooot of points with densities \propto density/pressure of winds,
 but it is very time-consuming. Maybe we shoud just ignore winds in 3d visualisation.
- 3. If one is bored so much that one feels the need to make the graphical interface better, it'd be cool to add all systems in the drop-down windows, as well as allow for the basic system parameters variation (such as Torb, Mopt, e...). Also, the default values and ranges of sliders should be system-dependent.
+ 3. If one is bored so much that one feels the need to make the graphical interface better, it'd be cool to add all gamma-ray binaies systems in the drop-down windows, as well as allow for the basic system parameters variation (such as Torb, Mopt, e...) instead of keeping them strictly fixed. Also, the default values and ranges of sliders should be system-dependent.
 
 
 ## License 

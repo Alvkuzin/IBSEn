@@ -63,7 +63,7 @@ winds_docstring =     f"""
     f_d : float, optional
         Dimensionless decretion-disk pressure normalization. Default 0.
     t_forwinds : float, optional
-        Time on which to calculate the winds structure. Default None.
+        Time on which to calculate the winds structure. Default 0.
     p_enh : list of floats and lists of length 2, optional
         A list of multipliers for the disk pressure. Default [1,].
     h_enh : list of floats and lists of length 2, optional
@@ -207,7 +207,7 @@ class Winds:
                  r_trunk = None, # if rad_prof == 'bkpl', it's used as a truncation radius
                                   # beyond which P \propto r^-2
                  ### for modeling jumps in pressure/height of the disk with time
-                 t_forwinds = None,
+                 t_forwinds = 0,
                  p_enh = [1, ],
                  p_enh_times = [0, ],
                  h_enh = [1, ],
@@ -985,7 +985,7 @@ class Winds:
         # norm = Normalize(vmin=np.min(disk_ps), vmax=np.max(disk_ps))
         ax0.contourf(XX, YY, disk_ps, levels=n_levels, cmap=custom_cmap)          
         
-        ax0.contour(XX, YY, pres_diff,  levels=[0], colors='k')
+        # ax0.contour(XX, YY, pres_diff,  levels=[0], colors='k')
 
         ax0.set_xlim(-1.2*x_scale, 1.2*min(x_scale, self.orbit.r_periastr) )
         ax0.set_ylim(-1.2*y_scale, 1.2*y_scale) 
