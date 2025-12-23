@@ -59,7 +59,7 @@ from LC, flux 0.3-10 keV =  [1.39607128e-10]
 ## Usage
 There is a very poor attempt at the graphical interface: run it with
 ```bash
-ibsen-giu
+ibsen-gui
 ```
 You can change the parameters there, display some data together with a model, and perform a simple normalization fitting. 
 
