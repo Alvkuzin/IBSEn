@@ -70,7 +70,7 @@ The package consists of six main classes, you can find their description and usa
  1. ``Orbit`` (self-explanatory);
 Let's initiate an Orbit object and plot an orbit: 
 ```python
-from ibsen.orbit import Orbit
+from ibsen import Orbit
 import matplotlib.pyplot as plt   
 import numpy as np
 DAY = 86400
@@ -82,7 +82,7 @@ plt.plot(orb.x(t), orb.y(t))
  2. ``Winds`` in which currently all information about NS, optical star, and their winds is stored. Here you can calculate the magnetic/photon fields in the random point from stars, winds pressure, or the position of the equilibrium between pulsar and optical stars winds as a function of time;
 Initiate Winds with a decretion disk pressure 100 times stronger than the polar wind (in which sense - see tutorials) and plot the star-emission zone separation VS time.
 ```python
-from ibsen.winds import Winds
+from ibsen import Winds
 winds = Winds(orbit=orb, f_d=100, Ropt=7e11, Mopt=28*2e33, Topt=4e4, ns_b_apex=10)
 t1 = np.linspace(-3*DAY, 3*DAY, 1000)
 plt.plot(t1/DAY, winds.dist_se_1d(t1))
@@ -93,14 +93,14 @@ plt.axvline(td2/DAY)
  3. ``IBS``: Intrabinary shock - an object with stuff about IBS geometry and the bulk motion along it;
 Initiate IBS at a time of 2 days after the periastron and take a look at it, colorcoding it with the doppler factor.
 ```python
-from ibsen.ibs import IBS
+from ibsen import IBS
 ibs = IBS(winds=winds, t_to_calculate_beta_eff=2*DAY)
 ibs.peek(showtime=(-3*DAY, 3*DAY), show_winds=True, ibs_color='doppler')
 ```
  4. ``ElectronsOnIBS`` describes the population of ultra-relativistic electrons on the IBS, allows to calculate stationary e-spectra in each point of IBS;
 Take a look at the electron spectrum over IBS if the apex magnetic field is 1G:
 ```python
-from ibsen.el_ev import ElectronsOnIBS
+from ibsen import ElectronsOnIBS
 elev = ElectronsOnIBS(ibs=ibs, cooling='stat_mimic')
 elev.calculate()
 elev.peek()
@@ -115,7 +115,7 @@ spec.peek()
 ```
  6. ``LightCurve`` performs the spectrum calculation for a number of moments of time calculating the light curve.
 ```python
-from ibsen.lc import LightCurve
+from ibsen import LightCurve
 t_lc = np.linspace(-3*DAY, 3*DAY, 100)
 lc = LightCurve(times = t_lc, 
                 to_parall=True, n_cores=4,

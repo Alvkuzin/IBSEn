@@ -35,8 +35,8 @@ ERG_TO_EV = 6.24E11 # 1 erg = 6.24E11 eV
 DAY = 86400.
 sed_unit = u.erg / u.s / u.cm**2
 RAD_IN_DEG = pi / 180.0
-
-docstr_lc = f"""
+### !!! correct the docstring!
+docstr_lc = f""" 
 Broadband light curve builder for an intrabinary shock (IBS) system.
 
 For a grid of times, this class assembles the full pipeline —
@@ -130,7 +130,7 @@ full_spec : bool, optional
     n_ibs : int, optional
         Sampling points (per horn) for IBS construction. Default 31.
     
-    # Electrons on IBS
+# Electrons on IBS
     cooling : {'no','stat_apex','stat_ibs','stat_mimic',
                'leak_apex','leak_ibs','leak_mimic','adv'}, optional
         Cooling/evolution mode for :class:`ElectronsOnIBS`. Default 'stat_mimic'.
