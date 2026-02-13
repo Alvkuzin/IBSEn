@@ -88,7 +88,7 @@ def value_on_ibs_with_weights(arr_xy, x, y_extended, y_eval, weights, y_scale,
     sed_s_e_up = I_interp * weights[:, None]
     return sed_s_e_up
 
-def calculate_sed_1zone_naima(e_photon, sed_function, dne_de, e_el, 
+def calculate_sed_1zone_naima(e_photon, sed_function, dne_de, e_el, distance,
                           **sed_function_kwargs):
     """
     Helper to calculate an SED using Naima emission models.
@@ -109,6 +109,8 @@ def calculate_sed_1zone_naima(e_photon, sed_function, dne_de, e_el,
         Relativistic electrons spectrum dne/de [1/eV].
     e_el : 1d np.narray (Ne, )
         Electron energies at whch dne/de is passed.
+    distance : float
+        Distance to the source in cm. Can be 0, then the luminosity is returned.
     **sed_function_kwargs : 
         Kwargs for the Naima model.
 
@@ -124,7 +126,7 @@ def calculate_sed_1zone_naima(e_photon, sed_function, dne_de, e_el,
     e_spec_for_naima = naima.models.TableModel(e_el[ok]*u.eV,
                                                (dne_de[ok])/u.eV )
     sed_object = sed_function(e_spec_for_naima, **sed_function_kwargs)
-    return sed_object.sed(e_photon * u.eV) / sed_unit
+    return sed_object.sed(e_photon * u.eV, distance = distance * u.cm) / sed_unit
 
 docstr_specibs =  f"""
     Spectral energy distribution (SED) from an intrabinary shock (IBS).
@@ -463,6 +465,7 @@ class SpectrumIBS: #!!!
                                     sed_function=emiss_function,
                                     dne_de=dne_de_tot,
                                     e_el=self.e_el,
+                                    distance = self.distance,
                                     **kwargs)
         return sed_apex # shape (e_ext.size, )
     
@@ -555,6 +558,7 @@ class SpectrumIBS: #!!!
                                     sed_function=emiss_function,
                                     dne_de=dne_de_tot,
                                     e_el=self.e_el,
+                                    distance = self.distance,
                                     **kwargs)
 
         return sed_eff[None, :] * rescale_coef[:, None]
@@ -621,6 +625,7 @@ class SpectrumIBS: #!!!
                                         sed_function=emiss_function,
                                         dne_de=self.dne_de[i_ibs, :],
                                         e_el=self.e_el,
+                                        distance = self.distance,
                                         **kwargs)
         return sed_s
 

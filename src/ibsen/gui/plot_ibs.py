@@ -1,30 +1,19 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
-Created on Sun Dec 21 12:59:09 2025
-
-@author: alvkuzin
+It's written mainly by ChatGPT. Sorry I'm not a coder jeez!!!!!!!!!! 
 """
-
-import sys
 import numpy as np
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QMainWindow, QWidget,
     QHBoxLayout, QVBoxLayout,
     QSplitter, QLabel, QSlider,
     QComboBox, QPushButton, QCheckBox,
 )
-from matplotlib.figure import Figure
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 
 from matplotlib.colors import Normalize
 from matplotlib.collections import LineCollection
-from ibsen.orbit import Orbit
-from ibsen.winds import Winds
-from ibsen.ibs import IBS
-from ibsen.gui.base import GradientPlot, ToolWindowBase
+from ibsen import Orbit, Winds, IBS
+from ibsen.gui.base import  ToolWindowBase
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from ibsen.get_obs_data import known_names
 
@@ -146,7 +135,7 @@ def add_gradient_line(ax, x, y, c, *, cmap="coolwarm", lw=2.5, alpha=1.0, vmin=N
 
 
 class IBSWindow(ToolWindowBase): #!!!
-    TOOL_NAME = "Winds + IBS (1-panel)"
+    TOOL_NAME = "Winds + IBS in real scale."
     IS_HEAVY = True  # Winds.peek() is expensive
 
     def __init__(self):

@@ -12,3 +12,11 @@ venv/
 # OS junk
 .DS_Store
 Thumbs.db
+
+# ---- Build / packaging ----
+*.egg
+*.egg-info/
+.eggs/
+build/
+dist/
+

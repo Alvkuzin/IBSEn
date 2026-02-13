@@ -18,14 +18,7 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 
 # from ibsen.utils import fit_norm, interplg
 from ibsen.gui.base import fit_norm_here
-from ibsen.orbit import Orbit
-from ibsen.winds import Winds
-from ibsen.ibs import IBS
-from ibsen.el_ev import ElectronsOnIBS
-from ibsen.spec import SpectrumIBS
-
-from vhe.vheutils import get_sed_values
-# from astropy.table import QTable
+from ibsen import Orbit, Winds, IBS, ElectronsOnIBS, SpectrumIBS
 from gammapy.estimators import FluxPoints
 
 NORMALIZATION_INITIAL = 1E37
@@ -57,6 +50,20 @@ def read_sed_txt_dat(path):
         'de': de*1e12, 'de_minus': de_m*1e12, 'de_plus': de_p*1e12,}
     return res    
 
+def get_sed_values(sed_gammapy, return_de=False):
+    """
+    From a FluxPoints gammapy object extracts e [TeV], sed [erg s-1 cm-2],
+    dsed [erg s-1 cm-2].
+        """
+    tab  = sed_gammapy.to_table(sed_type='e2dnde')
+    e, sed, dsed = tab['e_ref'].value, \
+        (tab['e2dnde'].to("erg s-1 cm-2")).value, \
+            (tab['e2dnde_err'].to("erg s-1 cm-2")).value
+    de = (tab['e_max'].value - tab['e_min'].value) / 2.0
+    if return_de:
+        return e, de, sed, dsed
+    return e, sed, dsed
+
 def read_sed_gammapy(path):
     sed = FluxPoints.read(path)
     e, sed, dsed = get_sed_values(sed)
@@ -86,10 +93,10 @@ def sed(t=0.0, f_d=100.0, b_13=1.0, gamma_max=2.0, s_max=1.0, cooling='stat_ibs'
                         norm_e = NORMALIZATION_INITIAL,
                  cooling=cooling, 
                  p_e=p_e,
-                 ecut = e_cut,  # Cutoff energy [eV] for ecpl. Default is 1e12.
-                 emax = 5e13, # If to_cut_e == True, then it is the max e-energy of inj spectrum [eV]. Default is 5.1e14. 
-                 emin_grid=3e8, # min of the energy grid. Default is 1e8.
-                 emax_grid=1e14, # max of the energy grid. Default is 5.1e14.
+                 ecut = e_cut,  
+                 emax = 5e13, 
+                 emin_grid=3e8,
+                 emax_grid=1e14,
                  eta_a=eta_a,
                  ) 
     spec = SpectrumIBS(els=els, mechanisms=['s', 'i'], method=method,

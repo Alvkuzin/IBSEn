@@ -1,3 +1,0 @@
-[console_scripts]
-ibsen-deconstruct = ibsen.cli.deconstruct:main
-ibsen-gui = ibsen.gui.app:main

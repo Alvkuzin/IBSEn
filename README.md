@@ -51,8 +51,9 @@ PSR B1259-63 periastron dist [au] =  0.9057236987554738
 effective beta =  0.04263905625747101
 IBS opening angle =  2.4449529220680466
 tot number of e on IBS =  1.1672539791890069e+42
-from spec, flux 0.3-10 keV =  1.3936420003622983e-10
-from LC, flux 0.3-10 keV =  [1.39607128e-10]
+from spec, flux 0.3-10 keV =  2.4195173617401234e-11
+from LC, flux 0.3-10 keV =  [2.42373486e-11]
+
 ```
 
 
@@ -65,7 +66,9 @@ You can change the parameters there, display some data together with a model, an
 
 Mainly, though, the package is meant to be ran as a part of a python script.
 
-The package consists of six main classes, you can find their description and usage examples in ``tutorials``:
+The package consists of six main classes, you can find their description and usage examples in ``tutorials``. The general idea is this: you define
+an orbit of the binary, then the outflows ("winds") properties, then the intrabinary shock (IBS), then the electrons evolution and transport over this IBS character,
+then the photon spectrum. There is also a possibility of skipping all these steps by calculating a light curve (which may consist of one point).
  
  1. ``Orbit`` (self-explanatory);
 Let's initiate an Orbit object and plot an orbit: 
@@ -134,12 +137,13 @@ See tutorials in `tutorials` folder for the complete description of these models
 
 
 ### TODO
-
- 1. Occasional NaNs in IC spectrum. Should we ignore them (e.g. by interpolating)? Are they there because of something internally Naimian or is it my fault?
- 2. It seems rather simple to make a 3d interactable visualisation of the IBS. The only thing that stops me is the visualisation of winds in 3d. 
+ 1. Make three-dimensional IBS.
+ 2. When calculating IC, should we account for the seed photons coming from the disk?
+ 3. Occasional NaNs in IC spectrum. Should we ignore them (e.g. by interpolating)? Are they there because of something internally Naimian or is it my fault?
+ 4. It seems rather simple to make a 3d interactable visualisation of the IBS. The only thing that stops me is the visualisation of winds in 3d. 
 For now, the only more or less visually pleasant 3d representation of winds in Python is plot a loooot of points with densities \propto density/pressure of winds,
 but it is very time-consuming. Maybe we shoud just ignore winds in 3d visualisation.
- 3. If one is bored so much that one feels the need to make the graphical interface better, it'd be cool to add all gamma-ray binaies systems in the drop-down windows, as well as allow for the basic system parameters variation (such as Torb, Mopt, e...) instead of keeping them strictly fixed. Also, the default values and ranges of sliders should be system-dependent.
+ 5. If one is bored so much that one feels the need to make the graphical interface better, it'd be cool to add all gamma-ray binaies systems in the drop-down windows, as well as allow for the basic system parameters variation (such as Torb, Mopt, e...) instead of keeping them strictly fixed. Also, the default values and ranges of sliders should be system-dependent.
 
 
 ## License 

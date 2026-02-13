@@ -1,4 +1,6 @@
-import sys
+"""
+It's written mainly by ChatGPT. Sorry I'm not a coder jeez!!!!!!!!!! 
+"""
 import numpy as np
 
 from PySide6.QtCore import Qt
@@ -10,16 +12,13 @@ from PySide6.QtWidgets import (
 )
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-
-from matplotlib.colors import Normalize
-from matplotlib.collections import LineCollection
 from ibsen.ibs_norm import IBS_norm
 from ibsen.gui.base import GradientPlot
 
                 
 def points_and_color(beta, nu_los, s_max, gamma_max, phi_rot, ibs_color):
     unit_los = np.array([np.cos(nu_los), np.sin(nu_los), 0])
-    _ibs0 = IBS_norm(beta, s_max=s_max, gamma_max=gamma_max, s_max_g=4., n=13,
+    _ibs0 = IBS_norm(beta=beta, s_max=s_max, gamma_max=gamma_max, s_max_g=4., n=13,
                 unit_los = unit_los)
     _ibs = _ibs0.rotate(phi_rot)
     ibs_color = ibs_color.lower()
@@ -43,7 +42,7 @@ def points_and_color(beta, nu_los, s_max, gamma_max, phi_rot, ibs_color):
 class IBSNormWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Interactive model explorer")
+        self.setWindowTitle("Explore the intrabinary shock shape!")
 
         # ---- Central widget
         central = QWidget()

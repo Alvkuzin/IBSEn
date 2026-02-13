@@ -18,8 +18,8 @@ requires = ["setuptools<81", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project.scripts]
-ibsen-gui = "ibsen.gui.app:main"
-ibsen-deconstruct = "ibsen.cli.deconstruct:main"
+ibsen = "ibsen.gui.app:main"
+deconstruct-ibsen = "ibsen.cli.dec:main"
 
 [project.optional-dependencies]
 gui = ["pyside6"]

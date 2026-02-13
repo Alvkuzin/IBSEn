@@ -1,4 +1,4 @@
-# ibs/ibs.py
+# ibsen/ibs.py
 import numpy as np
 from numpy import pi, sin, cos
 from scipy.interpolate import interp1d
