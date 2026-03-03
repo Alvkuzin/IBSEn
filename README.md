@@ -62,7 +62,7 @@ from LC, flux 0.4-10 TeV =  4.4840902791854023e-13
 ## Usage
 There is a very poor attempt at the graphical interface: run it with
 ```bash
-ibsen-gui
+ibsen
 ```
 You can change the parameters there, display some data together with a model, and perform a simple normalization fitting. 
 
