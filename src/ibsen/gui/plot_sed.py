@@ -18,7 +18,8 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 
 # from ibsen.utils import fit_norm, interplg
 from ibsen.gui.base import fit_norm_here
-from ibsen import Orbit, Winds, IBS, ElectronsOnIBS, SpectrumIBS
+from ibsen import Orbit, Winds, IBS,  ElectronsOnIBS, SpectrumIBS
+from ibsen.ibs import IBS3D
 from gammapy.estimators import FluxPoints
 
 NORMALIZATION_INITIAL = 1E37
@@ -73,22 +74,33 @@ def read_sed_gammapy(path):
     
                 
 def sed(t=0.0, f_d=100.0, b_13=1.0, gamma_max=2.0, s_max=1.0, cooling='stat_ibs',
-        p_e=2, e_cut=5e12, eta_a=1, ic_ani=False, 
-                        abs_gg=False, method='simple', lorentz_boost=True,
-                        abs_photoel=False, nh_tbabs=0.8):
+        p_e=2, e_cut=5e12, eta_a=1, ic_ani=False, three_dim=True,
+            abs_gg=False, method='simple', lorentz_boost=True,
+            abs_photoel=False, nh_tbabs=0.8):
     orb = Orbit(sys_name = 'psrb')
     winds = Winds(orbit=orb, sys_name = 'psrb', alpha=18/180*pi, incl=30*pi/180,
               f_d=f_d, f_p=0.1, delta=0.01, np_disk=3, rad_prof='pl', r_trunk=None,
              height_exp=0.25,  t_forwinds=t,
              ns_b_ref=b_13, ns_r_ref=1e13)
-    ibs = IBS(winds = winds,    
-      t_to_calculate_beta_eff=t, 
-      gamma_max=gamma_max,  
-      s_max=s_max,       
-      s_max_g=4,      
-      n=21,           
-      abs_gg_filename = None, # with tabulated gg-opacities; optional
-      ) 
+    if not three_dim:
+        ibs = IBS(winds = winds,    
+          t_to_calculate_beta_eff=t, 
+          gamma_max=gamma_max,  
+          s_max=s_max,       
+          s_max_g=4,      
+          n=21,           
+          abs_gg_filename = None, # with tabulated gg-opacities; optional
+          ) 
+    else:
+        ibs = IBS3D(winds = winds,    
+          t_to_calculate_beta_eff=t, 
+          gamma_max=gamma_max,  
+          s_max=s_max,       
+          s_max_g=4,      
+          n=21,           
+          n_phi=17,
+          abs_gg_filename = None, # with tabulated gg-opacities; optional
+          )
     els = ElectronsOnIBS(ibs=ibs, 
                         norm_e = NORMALIZATION_INITIAL,
                  cooling=cooling, 
@@ -177,7 +189,11 @@ class SEDWindow(QMainWindow):
             name="b_13", min_val=0.01, max_val=100.0, step_log10=0.01, initial=1.0
         )
         controls.addLayout(self.b_layout)
-
+        
+        self.three_dim = QCheckBox("three_dim")
+        self.three_dim.setChecked(True)
+        controls.addWidget(self.three_dim)
+        
         # gamma_max linear 1..4
         self.gm_layout, self.gamma_max = self._make_slider_linear(
             name="gamma_max", min_val=1.0, max_val=4.0, step=0.01, initial=2.0
@@ -517,7 +533,7 @@ class SEDWindow(QMainWindow):
         # self.ic_ani["box"].currentIndexChanged.connect(lambda _: on_any_change())
         # self.abs_gg["box"].currentIndexChanged.connect(lambda _: on_any_change())
         # self.lorentz_boost["box"].currentIndexChanged.connect(lambda _: on_any_change())
-
+        self.three_dim.stateChanged.connect(lambda _: on_any_change())
         self.ic_ani_cb.stateChanged.connect(lambda _: on_any_change())
         self.abs_gg_cb.stateChanged.connect(lambda _: on_any_change())
         self.lorentz_boost_cb.stateChanged.connect(lambda _: on_any_change())
@@ -550,7 +566,7 @@ class SEDWindow(QMainWindow):
         # self.ic_ani["box"].setCurrentText("False")
         # self.abs_gg["box"].setCurrentText("False")
         # self.lorentz_boost["box"].setCurrentText("True")
-
+        self.three_dim.setChecked(True)
         self.ic_ani_cb.setChecked(False)
         self.abs_gg_cb.setChecked(False)
         self.lorentz_boost_cb.setChecked(True)
@@ -581,6 +597,7 @@ class SEDWindow(QMainWindow):
                 e_cut=self._slider_value(self.e_cut),
                 eta_a=self._slider_value(self.eta_a),
                 ic_ani=self.ic_ani_cb.isChecked(),
+                three_dim=self.three_dim.isChecked(),
                 abs_gg=self.abs_gg_cb.isChecked(),
                 method=self.method.currentText(),
                 lorentz_boost=self.lorentz_boost_cb.isChecked(),

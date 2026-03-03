@@ -1,21 +1,22 @@
 # ibsen/lc.py
 import numpy as np
-import astropy.units as u
-import matplotlib.pyplot as plt
-import imageio.v2 as imageio
-from scipy.integrate import trapezoid
 from numpy import pi
+from scipy.interpolate import interp1d
+from scipy.integrate import trapezoid
+
 from joblib import Parallel, delayed
 import multiprocessing
-from scipy.interpolate import interp1d
-from astropy import constants as const
+
+import matplotlib.pyplot as plt
+import imageio.v2 as imageio
+
 from ibsen.get_obs_data import get_parameters, known_names
-from ibsen.utils import unpack_params, loggrid, fill_nans
-from ibsen.orbit import Orbit
-from ibsen.winds import Winds
-from ibsen.ibs import IBS
-from ibsen.spec import SpectrumIBS
-from ibsen.el_ev import ElectronsOnIBS
+from ibsen.utils import unpack_params, loggrid, fill_nans, trapz_loglog
+from ibsen import Orbit, Winds, IBS, SpectrumIBS, ElectronsOnIBS
+from ibsen.ibs import IBS3D
+
+from astropy import constants as const
+import astropy.units as u
 
 G = float(const.G.cgs.value)
 K_BOLTZ = float(const.k_B.cgs.value)
@@ -40,11 +41,11 @@ docstr_lc = f"""
 Broadband light curve builder for an intrabinary shock (IBS) system.
 
 For a grid of times, this class assembles the full pipeline —
-:class:`Orbit` → :class:`Winds` → :class:`IBS` → :class:`ElectronsOnIBS`
-→ :class:`SpectrumIBS` — and tabulates band fluxes, photon indices,
+:class:`Orbit` --> :class:`Winds` --> :class:`IBS`/'IBS3D' --> :class:`ElectronsOnIBS`
+--> :class:`SpectrumIBS`,  and tabulates band fluxes, photon indices,
 SEDs, and auxiliary physical quantities (separations, apex fields, etc.).
 Energies are in eV, distances in cm, times in seconds, and SEDs in
-erg s⁻¹ cm⁻².
+erg s-1 cm-2.
 
 Parameters
 ----------
@@ -53,7 +54,8 @@ times : array_like, shape (Nt,)
 bands : iterable of (float, float), optional
     Energy bands [e1, e2] (eV) for band-integrated fluxes. Default ``([3e2, 1e4],)``.
 bands_ind : iterable of (float, float), optional
-    Energy bands (eV) for photon-index fits. Default ``([3e3, 1e4],)``.
+    Energy bands (eV) for photon-index fits. Default ``([3e3, 1e4],)``. Note that
+    the absorbed photon spectrum is fitted.
 epows : None | scalar | iterable, optional
     Moment order(s) for band flux integrals (see :meth:`SpectrumIBS.fluxes`).
     If None, epow=1 is used for all bands. If scalar, the same epow is used
@@ -121,6 +123,8 @@ full_spec : bool, optional
         Stellar magnetic-field model and parameters.
 
 # IBS geometry
+    ibs_ndim : int, 2 or 3
+        The dimensoin of the IBS to use. Default 2.
     s_max : float, optional
         Dimensionless arclength cutoff passed to :class:`IBS_norm`. Default 1.0.
     gamma_max : float, optional
@@ -128,7 +132,9 @@ full_spec : bool, optional
     s_max_g : float, optional
         Arclength at which ``gamma==gamma_max`` (dimensionless). Default 4.0.
     n_ibs : int, optional
-        Sampling points (per horn) for IBS construction. Default 31.
+        Sampling points (per horn/arch) for IBS construction. Default 31.
+    n_phi : int, optional
+        Sampling points over azimuth for 3D IBS construction. Default 17    
     
 # Electrons on IBS
     cooling : {'no','stat_apex','stat_ibs','stat_mimic',
@@ -143,7 +149,7 @@ full_spec : bool, optional
     p_e : float, optional
         Injection spectral index. Default 2.0.
     norm_e : float, optional
-        Injection normalization (s⁻¹). Default 1e37.
+        Injection normalization (s-1). Default 1e37.
     eta_a, eta_syn, eta_ic : float, optional
         Multipliers for adiabatic, synchrotron, and IC terms. Defaults 1, 1, 1.
     emin, emax : float, optional
@@ -153,7 +159,7 @@ full_spec : bool, optional
     to_cut_e : bool, optional
         Zero injection outside [emin, emax]. Default True.
     to_cut_theta : bool, optional
-        Cut injection to |θ| < ``where_cut_theta``. Default False.
+        Cut injection to |theta| < ``where_cut_theta``. Default False.
     where_cut_theta : float, optional
         Angular cut (rad) if ``to_cut_theta`` is True. Default π/2.
 
@@ -162,7 +168,7 @@ full_spec : bool, optional
         Source distance (cm); if None and a named system is used, taken from
         system defaults.
     delta_power : float, optional
-        Doppler weight exponent (segment integration). Default 4.
+        Doppler weight exponent (segment integration). Default 3.
     lorentz_boost : bool, optional
         Apply comoving-frame treatment/boosting. Default True.
     simple : bool, optional
@@ -170,13 +176,13 @@ full_spec : bool, optional
     abs_photoel : bool, optional
         Apply photoelectric absorption. Default True.
     abs_gg : bool, optional
-        Apply γγ absorption along LoS (system-dependent). Default False.
+        Apply gamma_gamma absorption along LoS (system-dependent). Default False.
     abs_gg_filename: str or None, optional
         Name of the file with tabulated gamma-gamma absorbtion. If None,
         (default), IBSEn tries to find a tabulated
         gg-abs file if `sys_name` is a known system.
     nh_tbabs : float, optional
-        Column density for photoelectric absorption (10²² cm⁻² units used by helper).
+        Column density for photoelectric absorption (10^22 cm-2 units used by helper).
         Default 0.8.
     ic_ani : bool, optional
         Use anisotropic IC (requires IBS angles). Default False.
@@ -208,19 +214,21 @@ els_classes : list of ElectronsOnIBS
 spec_classes : list of SpectrumIBS
     Spectrum calculators at each time.
 dNe_des : list of ndarray, length Nt
-    Electron distributions on the IBS, each with shape (Ns, Ne) [1 s⁻¹ cm⁻¹ eV⁻¹].
+    Electron distributions on the IBS, each with shape (Ns, Ne) or (Nphi, Ns, Ne)
+    [cm-1 eV-1].
 e_es : list of ndarray, length Nt
     Energy grids corresponding to ``dNe_des`` (eV).
 seds : list of ndarray, length Nt
-    Total SEDs per time (erg s⁻¹ cm⁻²).
+    Total SEDs per time (erg s-1 cm-2).
 seds_s : list of ndarray, length Nt
-    Per-segment SEDs with shape (n_segments, Ne_ph) (erg s⁻¹ cm⁻²).
+    Per-segment SEDs with shape (2Ns - 1, Ne_ph) or (Nphi. Ns - 1, Ne_ph) 
+    [erg s-1 cm-2].
 e_phots : list of ndarray, length Nt
     Photon-energy grids used for the SEDs (eV).
 emiss_s : list of ndarray, length Nt
-    Emissivity integrated over photon energy along arclength [erg s⁻¹ cm⁻¹].
+    Emissivity integrated over photon energy along arclength [erg s-1 cm-1].
 fluxes : ndarray, shape (Nt, Nb)
-    Band fluxes in ``bands`` (erg s⁻¹ cm⁻²).
+    Band fluxes in ``bands`` (erg s-1 cm-2).
 indexes : ndarray, shape (Nt, Ni)
     Photon indices fitted in ``bands_ind``.
 
@@ -272,7 +280,7 @@ class LightCurve:
                  height_exp = 0.5,
                  rad_prof = 'pl', r_trunk = None,
                  
-                 s_max=1., gamma_max=3., s_max_g=4., n_ibs=31,   # ibs
+                ibs_ndim=2, s_max=1., gamma_max=3., s_max_g=4., n_ibs=31, n_phi=17,   # ibs
                              
                               
                 cooling='stat_mimic', to_inject_e = 'ecpl',   # el_ev
@@ -289,7 +297,7 @@ class LightCurve:
                 opt_b_model = 'linear', opt_b_ref = 0, opt_r_ref = 1e12,
                              
                              
-                delta_power=4, lorentz_boost=True, method='full',          # spec
+                delta_power=3, lorentz_boost=True, method='full',          # spec
                 abs_photoel=True, abs_gg=False, abs_gg_filename=None, nh_tbabs=0.8,
                 ic_ani=False, mechanisms=['syn', 'ic'],
                 mode='int',
@@ -360,6 +368,8 @@ class LightCurve:
         self.gamma_max = gamma_max
         self.s_max_g = s_max_g
         self.n_ibs = n_ibs
+        self.n_phi = n_phi
+        self.ibs_ndim = ibs_ndim
         ################ ---- arguments from el_ev ---- #######################
         self.cooling = cooling
         self.to_inject_e = to_inject_e
@@ -484,8 +494,9 @@ class LightCurve:
                 opt_r_ref = self.opt_r_ref,
                 allow_missing=self.allow_missing,
                 )
-
-        ibs_now = IBS(winds=winds_now, 
+        
+        if self.ibs_ndim == 2:
+            ibs_now = IBS(winds=winds_now, 
                     gamma_max=self.gamma_max, 
                     s_max=self.s_max, 
                     s_max_g=self.s_max_g, 
@@ -493,6 +504,17 @@ class LightCurve:
                     t_to_calculate_beta_eff=t_,
                     abs_gg_filename=self.abs_gg_filename,
                 )
+        if self.ibs_ndim == 3:
+            ibs_now = IBS3D(winds=winds_now, 
+                    gamma_max=self.gamma_max, 
+                    s_max=self.s_max, 
+                    s_max_g=self.s_max_g, 
+                    n=self.n_ibs, 
+                    n_phi = self.n_phi,
+                    t_to_calculate_beta_eff=t_,
+                    abs_gg_filename=self.abs_gg_filename,
+                )
+            
         r_sp_now = self.orbit.r(t=t_)
         r_se_now = winds_now.dist_se_1d(t=t_)
         r_pe_now = r_sp_now - r_se_now
@@ -534,19 +556,19 @@ class LightCurve:
                                 nEed_syn=self.nEed_syn,
                                 )
         if self.full_spec:
-            E_ = loggrid(1e2, 1e14, 25)
+            E_ = loggrid(1e2, 1e14, 51)
         else:
             E_ = []
             for band in self.bands:
                 # ndec=20-25 is enough for accuracy >1%
-                E_in_band = loggrid(band[0]/1.2, band[1]*1.2, 25)
+                E_in_band = loggrid(band[0]/1.2, band[1]*1.2, 37)
                 E_.append(E_in_band)
             E_ = np.concatenate(E_)
 
         E_ph_now, sed_tot_now, sed_s_now = spec_now.calculate(e_ph =  E_,                                         
                                         to_return=True)
         
-        emissiv_now = trapezoid(sed_s_now/E_ph_now, E_ph_now, axis=1)
+        emissiv_now = trapz_loglog(sed_s_now/E_ph_now, E_ph_now, axis=-1)
         fluxes_now = spec_now.fluxes(bands=self.bands, epows=self.epows)
         indexes_now = spec_now.indexes(bands=self.bands_ind)
         return (r_sp_now, r_pe_now, r_se_now, Bp_apex_now, Bopt_apex_now,
@@ -672,7 +694,13 @@ class LightCurve:
         seds, seds_s, emiss_s, dNe_des, e_es = [np.array(ar) for ar in (seds, 
                                         seds_s, emiss_s, dNe_des, e_es)]
         
-        dne_des_tot = np.sum(dNe_des, axis=1)
+        
+        dne_des = np.array([els_i.dNe_de_mid for els_i in els_classes])
+        if self.ibs_ndim == 2:
+            dne_des_tot = np.sum(dne_des, axis=1)
+        if self.ibs_ndim == 3:
+            dne_des_tot = np.sum(dne_des, axis=(1, 2))
+            
         sed_e_tot = np.array([ dne_des_tot[it_, :] * e_es[it_, :]**2 for 
                               it_ in range(self.t.size)])
         self.r_sps = r_sps
@@ -685,7 +713,7 @@ class LightCurve:
         self.ibs_classes = ibs_classes
         self.els_classes = els_classes
         self.spec_classes = spec_classes
-        self.dne_des = dNe_des
+        self.dne_des = dne_des
         self.e_es = e_es
         self.dne_des_tot = dne_des_tot
         self.seds_e_tot = sed_e_tot
@@ -968,7 +996,7 @@ class LightCurve:
         
         if ax is None:
             # import matplotlib.pyplot as plt
-            fig, ax = plt.subplots(nrows=1, ncols=4,
+            fig, ax = plt.subplots(nrows=1, ncols=3,
                                     figsize=(16, 4))
         
         ax_first = ax[0]
@@ -995,12 +1023,12 @@ class LightCurve:
             ax[2].scatter(self.e_phots[i_t], self.seds[i_t],
                         label=f't = {t_now_days:.2f} days',  **kwargs,
                         )
-            ax[3].plot(self.ibs_classes[i_t].s_mid, self.emiss_s[i_t],
-                        label=f't = {t_now_days:.2f} days', **kwargs)
+            # ax[3].plot(self.ibs_classes[i_t].s_mid, self.emiss_s[i_t],
+            #             label=f't = {t_now_days:.2f} days', **kwargs)
 
         
         ax_first.grid()
-        for i in range(4):   
+        for i in range(3):   
             if to_label:
                 ax[i].legend()
             ax[i].grid()
@@ -1013,14 +1041,14 @@ class LightCurve:
         ax_first.set_title('Light Curve')
         ax[1].set_title('Index')
         ax[2].set_title('SED')
-        ax[3].set_title('Emissivity')
+        # ax[3].set_title('Emissivity')
         
         ax_first.set_xlabel('t, days')
         ax_first.set_ylabel(r'$F$ erg s^-1 cm^-2')
         
         ax[1].set_xlabel('t, days')
         ax[2].set_xlabel('E, eV')
-        ax[3].set_xlabel(r'$s$')
+        # ax[3].set_xlabel(r'$s$')
 
         maxsed = np.nanmax(self.seds[np.isfinite(self.seds)])
         ax[2].set_ylim(1e-3*maxsed, maxsed*1.5)

@@ -368,7 +368,6 @@ def evolved_e_advection(s_, edot_func, f_inject_func,
                         method = 'FDM_cons', 
                         # method = 'FDM', 
                         # bound = 'dir',
-                        
                         bound = 'neun'
                         )
     # #### Only leave the part of the solution between emin_grid < e < emax_grid 
@@ -786,30 +785,69 @@ class ElectronsOnIBS: #!!!
     Attributes
     ----------
     ibs : IBS
-        The supplied IBS snapshot; used for s-grid, θ(s), r(s), and γ(s).
-    orbit : Orbit
-        Attached via ``ibs.winds.orbit`` (validated at init).
+        The supplied IBS snapshot; used for s-grid, theta(s), r(s), and gamma(s).
+        Should contain winds and winds.orbit.
     r_sp : float
         Star–pulsar separation at the IBS epoch [cm].
     eta_a, eta_syn, eta_ic : float
         Coefficients controlling adiabatic, synchrotron, and IC losses.
         Note that is cooling==`stat_mimic`, ``eta_a`` is scaled along the IBS.
-    dNe_deds_IBS : ndarray or None, shape (Ns, Ne)
-        Electron distribution per (s, E) after :meth:`calculate` [1/s/cm/eV].
-    e_vals : ndarray or None, shape (Ne,)
-        Energy grid corresponding to ``dNe_deds_IBS`` [eV].
-    e2dNe_deds_IBS : ndarray or None, shape (Ns, Ne)
-        Convenience SED array ``E^2 dN/(dE ds)``.
-    dNe_deds_mid : ndarray or None, shape (Ns-1, Ne)
-        Distribution at segment midpoints.
-    dNe_ds_mid : ndarray or None, shape (Ns-1,)
-        Number per unit s at midpoints, integrated over energy [1/s/cm].
-    dNe_de_mid : ndarray or None, shape (Ns-1, Ne)
-        Per-segment spectra, i.e. ``(dN/dEds) * ds`` [1/s/eV].
-    n_i_mid : ndarray or None, shape (Ns-1)
-        Total number of electrons in IBS midpoints.
-    ntot : float
-        Total number of electrons on IBS
+    e_vals : shape (Ne,) 
+        The energies [eV] of electrons for the electron spectrum.
+    e_vals_comov : shape (Ne_comov,) 
+        The energies [eV] of electrons for the electron spectra in 
+        comoving reference frames. Its length Ne_comov is calculated as
+        to have the same nods per decade as e_vals (see above).
+    smesh, emesh : shapes (n, Ne) 
+        Results of np.meshgrid(s_1horn, e_vals, indexing='ij').
+    dNe_deds_IBS_1horn : shape (n, Ne)
+        The electron spectrum dNe/ds/de [1 / cm / eV] calculated on
+        one horn (one arch) of the IBS.
+    dNe_deds_IBS : shape (2n, Ne) for 2D IBS and (n_phi, n, Ne) for 
+    3D IBS. 
+        The electron spectrum dNe/ds/de [1 / cm / eV] calculated on
+        the whole IBS. Obtained by copying, in the right order, the spectrum
+        from one horn, because of the assumed axial symmetry.
+    e2dNe_deds_IBS : shape (2n, Ne) for 2D IBS and (n_phi, n, Ne) for
+    3D IBS. 
+        electron "SED": e^2 * dNe_deds_IBS (see above) [eV / cm].
+    dNe_deds_mid : shape (2n-1, Ne) for 2D IBS and (n_phi, n-1, Ne) for
+    3D IBS. 
+        The electron spectrum dNe_deds_IBS (see above) calculated in the
+        IBS midpoints. Has units [1 / cm / eV].
+    dNe_ds_mid : shape (2n-1,) for 2D IBS and (n_phi, n-1, ) for
+    3D IBS. 
+        The electron spectrum dNe_ds_IBS [1 / cm] defined as
+        \int_{all_energies} dNe/ds/de * de.
+    dNe_de_mid : shape (2n-1, Ne) for 2D IBS and (n_phi, n-1, Ne) for
+    3D IBS. 
+        The electron spectrum dNe_de [1 / eV]; for each midpoint of the IBS, 
+        it is defined as: 
+        dNe_de_i = dNe_deds_i * (length of the i-th interval of the arc). 
+    dNe_de_mid_comov : shape (2n-1, Ne) for 2D IBS and (n_phi, n-1, Ne) for
+    3D IBS. 
+        The electron spectrum dNe_de [1 / eV], for each midpoint of the IBS
+        is it dNe_de_mid, but transfered into a comoving reference frame. 
+    e2dNe_de_mid : shape (2n-1, Ne) for 2D IBS and (n_phi, n-1, Ne) for
+    3D IBS. 
+        The electron spectrum "SED" defined as e^2 dNe_de_mid (see above).
+        has units [eV].
+    n_i_mid : shape (2n-1, ) for 2D IBS and (n_phi, n-1, ) for
+    3D IBS. 
+        The total number of electrons in each section of the IBS, defined
+        as: n_i_mid = \int_{all_evergies} dNe_de_mid * de. Dimensionless.
+    n_i_mid_comov : shape (2n-1, ) for 2D IBS and (n_phi, n-1, ) for
+    3D IBS. 
+        The total number of electrons in each section of the IBS, calculated
+        from the co-moving spectrum of electrons. Physically, should 
+        be = n_i_mid, but it is not guaranteed (though it was tested to be so).
+    ntot : float 
+        The total number of electrons on the IBS. Defined as 
+        \sum_{all IBS sections} n_i_mid.
+    ntot : float 
+        The total number of electrons on the IBS calculated
+        from the co-moving spectrum of electrons. Physically, should 
+        be = ntot, but it is not guaranteed (though it was tested to be so).
     calculated : bool
         Whether the e-spec was calculated.
 
@@ -817,15 +855,15 @@ class ElectronsOnIBS: #!!!
     -------
     calculate(to_return=False)
         Build the electron distribution on the IBS according to ``cooling``;
-        mirrors one horn to the full two-horn array. Optionally returns
-        both the distribution and its energy grid.
+        mirrors one horn to the full two-horn array (or all arches of the IBS,
+        in case of 3D IBS). Optionally returns the distribution and its energy grid.
     f_inject(s_, e_, spat_coord='s')
         Injection law in (s, E). Supports 's' or 'theta' as the spatial density.
     edot(s_, e_)
         Total electron energy loss rate dE/dt at (s, E) including synchrotron,
         IC, and optional adiabatic term.
     vel(s)
-        Bulk flow speed along the IBS from the γ(s) profile.
+        Bulk flow speed along the IBS from the gamma(s) profile.
     t_leakage(s, e)
         Leakage time T(s, E) used to mimic advection solutions.
     eta_flow_mimic(s)
@@ -833,9 +871,9 @@ class ElectronsOnIBS: #!!!
     analyt_adv_Ntot_self : property
         Total number of electrons along the **upper** horn (integrated over E).
     analyt_adv_Ntot(s_1d, f_inj_integrated)
-        Integral form for N_tot(s) given ∫ f_inject(s,E) dE.
+        Integral form for N_tot(s) given \int f_inject(s,E) dE.
     peek(ax=None, to_label=True, show_many=True, **kwargs)
-        Quick-look plots of E-SEDs, s·N(s), and apex cooling time.
+        Quick-look plots of E-SEDs, s * N(s), and apex cooling time.
 
     Notes
     -----
@@ -853,7 +891,7 @@ class ElectronsOnIBS: #!!!
         equation along s (uses ``evolved_e_advection``).
 
     Adiabatic loss handling
-        If ``eta_a`` is very large (≳1e10) the adiabatic loss term is effectively
+        If ``eta_a`` is very large (>=1e10) the adiabatic loss term is effectively
         disabled in :func:`total_loss`. Setting ``eta_a=None`` at init enforces
         this behavior. 
 
@@ -863,7 +901,7 @@ class ElectronsOnIBS: #!!!
                  ecut = 1.e12, p_e = 2., norm_e = 1.e37, beta_e=1,
                  eta_a = None,
                  eta_syn = 1., eta_ic = 1.,
-                 emin = 1e9, emax = 5.1e14,
+                 emin = 1e9, emax = 5.1e14, 
                  emin_grid=1e8, emax_grid=5.1e14,
                  to_cut_e = True, 
                  to_cut_theta =  False, 
@@ -1024,6 +1062,9 @@ class ElectronsOnIBS: #!!!
             thetas_part = np.abs(sin(thetas_here)) # \propto sin(th) how it should be in 3d
         else:
             raise ValueError("I don't know this to_inject_theta. It should be 2d, 3d.")
+        
+        if self.ibs.ndim == 3:
+            thetas_part = thetas_part / self.ibs.n_phi
             
         if self.to_cut_theta:
             thetas_part[np.abs(thetas_here) >= self.where_cut_theta] = 0.
@@ -1052,6 +1093,8 @@ class ElectronsOnIBS: #!!!
               
         # print(integral_over_e)
         overall_coef = self.norm_e / 4. / integral_over_e / integral_over_theta_quarter 
+        if self.ibs.ndim == 2 and self.to_inject_theta == '3d':
+            overall_coef /= 2 ## in this case 1 horn mimicks a hemisphere
         result = result * overall_coef
         ### what we have here is dNdot / de d theta. If we want 
         ### dNdot / de / ds, we do additional:
@@ -1175,51 +1218,34 @@ class ElectronsOnIBS: #!!!
         res_[res_ < floor_eta_a_] = floor_eta_a_
         return res_
     
-    def calculate(self, to_return=False):        ### s [cm], e[eV]
-
+    def _calculate_one_arch(self):        ### s [cm], e[eV]
         """
-        Calculates the electron spectrum on the IBS.
-        Sets the attributes: 
-            self._f_inj (f_inj calculated at s_mesh x e_mesh),
-            self._edots (edot calculated at s_mesh x e_mesh),
-            self.dNe_deds_IBS (dNe/dsde calculated at s_mesh x e_mesh),
-            self.e_vals (energy grid),
-            self.dNe_deds_mid (same as dNe_deds_IBS but at midpoints of s-grid),
-            self.dNe_ds_mid (tot number of e at midpoints, 1/s/cm),
-            self.dNe_de_mid (e-spec for every segmens at midpoints, 1/s/eV).
-
-        Parameters
-        ----------
-        to_return : bool, optional
-            Whether to return dNe_deds_IBS_2horns and e_vals.
-              The default is False.
-
-        Raises
-        ------
-        ValueError
-            If `cooling` is not recognized.
-
-        Returns
-        -------
-        dNe_deds_IBS_2horns : np.ndarray of shape (Ns, Ne)
-            The electron spectra dNedot/deds on the grid self.ibs.s 
-            and on a grid of energies evals between emin_grid and emax_grid,
-            [1/s/cm/eV].
-        e_vals : TYPE
-            The grid of energies [eV].
-
+        Calculates the electron spectrum on the one arch of the IBS. 
+        
+        The spectrum calculated
+        here is NOT suitable for immediate SED calculation, as it represents
+        dNe/ds/de and has unit [1 / length / energy]. To get a normal 
+        dNe/de [1 / energy] in each segment of the IBS, it needs to be further
+        multiplied by ds_i. Ah well, formally, it needs to be integrated. 
+        
+        This is done in '_set_solution_onto_ibs'.
+        
+        Sets attributes: e_vals, smesh, emesh, dNe_deds_IBS_1horn.
+        
         """
+
         ### we use the symmetry of ibs: calculate dNe_de only for 1 horn
-
-        s_1d_dim = self.ibs.s[self.ibs.n : 2*self.ibs.n] 
+        if self.ibs.ndim == 2:
+            ### upper horn
+            s_1d_dim = self.ibs.s[self.ibs.n : 2*self.ibs.n] 
+        if self.ibs.ndim == 3:
+            ### the arch corresponding to phi=0
+            s_1d_dim = self.ibs.s[0, :]
         
         if self.cooling not in self.allowed_coolings:
-            print('cooling should be one of these options:')
-            print(self.allowed_coolings)
-            print('setting cooling = \'no\'... ')
-            self.cooling = 'no'
-        # ndec_e = 101 if self.cooling in ('leak_apex', 'leak_ibs', 'leak_mimic') else 301
-        
+            raise ValueError(f"""cooling should be one of these options:{self.allowed_coolings},
+                             \nbut the value cooling={self.cooling} was given.""")
+
         if self.cooling == 'no':
             e_vals = loggrid(self.emin_grid, self.emax_grid, 301)
             smesh, emesh = np.meshgrid(s_1d_dim, e_vals, indexing = 'ij')
@@ -1287,60 +1313,120 @@ class ElectronsOnIBS: #!!!
         else:
             raise ValueError('I don\'t know this `cooling`!')
 
+        self.e_vals = e_vals
+        self.smesh, self.emesh = smesh, emesh
+        self.dNe_deds_IBS_1horn = dNe_deds_IBS
+        
+    def _set_solution_onto_ibs(self):
         # we fill the 2nd horn with the values 
         # from the 1st horn
-        self._vel = ElectronsOnIBS.vel(self, s=smesh)
-        self._f_inj = ElectronsOnIBS.f_inject(self, smesh, emesh)
-        self._edot = ElectronsOnIBS.edot(self, smesh, emesh)
-        dNe_deds_IBS_2horns = np.zeros((self.ibs.s.size, e_vals.size ))
-        dNe_deds_IBS_2horns[:self.ibs.n, :] = -dNe_deds_IBS[::-1, :] # in reverse order from s=smax to ~0
-        dNe_deds_IBS_2horns[self.ibs.n : 2*self.ibs.n, :] = dNe_deds_IBS        
+        self._vel = ElectronsOnIBS.vel(self, s=self.smesh)
+        self._f_inj = ElectronsOnIBS.f_inject(self, self.smesh, self.emesh)
+        self._edot = ElectronsOnIBS.edot(self, self.smesh, self.emesh)
         
-        self.dNe_deds_IBS = dNe_deds_IBS_2horns
-        self.e_vals = e_vals
-        e_sed = np.array([ dNe_deds_IBS_2horns[i_s, :] * e_vals**2
-                          for i_s in range(dNe_deds_IBS_2horns.shape[0])])
-        self.e2dNe_deds_IBS = e_sed
-        dNe_deds_m = dNe_deds_IBS_2horns[:self.ibs.s.size-1, :]
-        dNe_deds_p = dNe_deds_IBS_2horns[1:, :]
-        dNe_deds_mid = 0.5 * (dNe_deds_m + dNe_deds_p)
-        self.dNe_deds_mid = dNe_deds_mid
-        
-        dNe_ds_mid = trapz_loglog(dNe_deds_mid, e_vals, axis=1) # shape=(s_mid.size)
-        dNe_de_mid = np.abs(dNe_deds_mid * self.ibs.ds[:, None]) # basically, trapezoid rule; shape=(s_mid.size, e_vals.size)
-        self.dNe_ds_mid = dNe_ds_mid # wtf is that
-        self.dNe_de_mid = np.abs(dNe_de_mid) # e-spec dn/de in each part of IBS
-        self.e2dNe_de_mid =  np.abs(dNe_de_mid) * e_vals**2
-        self.n_i_mid = trapz_loglog(np.abs(dNe_de_mid),
-                                        e_vals, axis=1) # tot number of e in i-th IBS midpoint
-        self.ntot = np.sum(self.n_i_mid) # tot number of e???
-        
-        ### calculate e-spectrum in the co-moving reference frame on the 
-        ### extended grid of e-energies
-
-        ### it is probably less time-consuming to run it as a python cycle:
+        dNe_deds = self.dNe_deds_IBS_1horn
+        if self.ibs.ndim == 2:
+            dNe_deds_IBS_2horns = np.zeros((self.ibs.s.size, self.e_vals.size ))
+            dNe_deds_IBS_2horns[:self.ibs.n, :] = -dNe_deds[::-1, :] # in reverse order from s=smax to ~0
+            dNe_deds_IBS_2horns[self.ibs.n : 2*self.ibs.n, :] = dNe_deds        
+            self.dNe_deds_IBS = dNe_deds_IBS_2horns
+        if self.ibs.ndim == 3:
+            self.dNe_deds_IBS = np.array([dNe_deds for _i in range(self.ibs.n_phi)])
+            
+        self.e2dNe_deds_IBS = self.dNe_deds_IBS * (self.e_vals**2)[..., :]
+        self.dNe_deds_mid = 0.5 * (self.dNe_deds_IBS[..., 1:, :] + self.dNe_deds_IBS[..., :-1, :])
+        self.dNe_ds_mid = trapz_loglog(self.dNe_deds_mid, self.e_vals, axis=-1)
+        self.dNe_de_mid = np.abs(self.dNe_deds_mid * self.ibs.ds[..., None])
+        self.e2dNe_de_mid =  np.abs(self.dNe_de_mid) * (self.e_vals**2)[..., :]
+        self.n_i_mid = trapz_loglog(np.abs(self.dNe_de_mid),
+                                        self.e_vals, axis=-1) 
+        self.ntot = np.sum(self.n_i_mid) 
+    
+    def _calculate_comoving_e_spec(self):
+        """
+        Calculate e-spectrum in the co-moving reference frame on the 
+        extended grid of e-energies.
+        """
                 
         beta_v_ = beta_from_g(self.ibs.g_mid)
-        emi_co = np.min(e_vals) * np.min(self.ibs.g_mid * (1.0 - beta_v_))
-        ema_co = np.max(e_vals) * np.max(self.ibs.g_mid * (1.0 + beta_v_))
-        needed_len = int(len(e_vals) * np.log10(ema_co / emi_co) / 
-                         np.log10(np.max(e_vals) / np.min(e_vals)))
+        emi_co = np.min(self.e_vals) * np.min(self.ibs.g_mid * (1.0 - beta_v_))
+        ema_co = np.max(self.e_vals) * np.max(self.ibs.g_mid * (1.0 + beta_v_))
+        needed_len = int(len(self.e_vals) * np.log10(ema_co / emi_co) / 
+                         np.log10(np.max(self.e_vals) / np.min(self.e_vals)))
         e_comov = np.geomspace(emi_co, ema_co, needed_len)
-        dNe_de_mid_comov = np.zeros((self.ibs.s_mid.size, e_comov.size))
-        for i_s, gamma in zip( range(self.ibs.s_mid.size), self.ibs.g_mid ):
-            e_, dn_comov_ = lor_trans_e_spec_iso(E_lab=e_vals,
-                                                 dN_dE_lab=dNe_de_mid[i_s, :],
-                                                 gamma=gamma,
-                                                 E_comov=e_comov)
-            dNe_de_mid_comov[i_s, :] = dn_comov_
-        self.dNe_de_mid_comov = dNe_de_mid_comov
         self.e_vals_comov = e_comov
-        self.n_i_mid_comov = trapz_loglog(np.abs(dNe_de_mid_comov),
-                                        e_comov, axis=1) # tot number of e in i-th IBS midpoint
-        self.ntot_comov = np.sum(self.n_i_mid_comov) # tot number of e???
+        if self.ibs.ndim == 2:
+            dNe_de_mid_comov= np.zeros((self.ibs.s_mid.size, e_comov.size))
+            for i_s, gamma in zip( range(self.ibs.s_mid.size), self.ibs.g_mid ):
+                e_, dn_comov_ = lor_trans_e_spec_iso(E_lab=self.e_vals,
+                                                     dN_dE_lab=self.dNe_de_mid[i_s, :],
+                                                     gamma=gamma,
+                                                     E_comov=e_comov)
+                dNe_de_mid_comov[i_s, :] = dn_comov_
+            self.dNe_de_mid_comov = dNe_de_mid_comov
+        
+        if self.ibs.ndim == 3:
+            dNe_de_mid_comov_1horn = np.zeros((self.ibs.n-1, e_comov.size))
+            for i_s, gamma in enumerate(self.ibs.g_mid[0, :]):
+                e_, dn_comov_ = lor_trans_e_spec_iso(E_lab=self.e_vals,
+                                                     dN_dE_lab=self.dNe_de_mid[0, i_s, :],
+                                                     gamma=gamma,
+                                                     E_comov=e_comov)
+                dNe_de_mid_comov_1horn[i_s, :] = dn_comov_
+            self.dNe_de_mid_comov = np.array([dNe_de_mid_comov_1horn for _i in range(self.ibs.n_phi)])
+        
+        
+        self.n_i_mid_comov = trapz_loglog(np.abs(self.dNe_de_mid_comov),
+                                        e_comov, axis=-1) 
+        self.ntot_comov = np.sum(self.n_i_mid_comov)
+        
+    def calculate(self, to_return=False):
+        """
+        Calculates the electron spectrum on the IBS.
+        Sets the attributes: 
+            self._vel (vel calculated at s_mesh),
+            self._f_inj (f_inj calculated at s_mesh x e_mesh),
+            self._edots (edot calculated at s_mesh x e_mesh),
+            self.dNe_deds_IBS (dNe/dsde calculated at s_mesh x e_mesh),
+            self.e_vals (energy grid),
+            self.dNe_deds_mid (same as dNe_deds_IBS but at midpoints of s-grid),
+            self.dNe_ds_mid (tot number of e at midpoints, 1/cm),
+            self.dNe_de_mid (e-spec for every segmens at midpoints, 1/eV).
+            self.n_i_tot (tot number of e in each segment of the IBS),
+            self.ntot (tot number of e on the IBS),
+            and parameters into the comoving frames:
+            self.e_vals_comov,
+            self.dNe_de_mid_comov.
+            self.n_i_tot_comov,
+            self.ntot_comov.
+
+        Parameters
+        ----------
+        to_return : bool, optional
+            Whether to return dNe_deds_IBS_2horns and e_vals.
+              The default is False.
+
+        Raises
+        ------
+        ValueError
+            If `cooling` is not recognized.
+
+        Returns
+        -------
+        dNe_deds_IBS_2horns : np.ndarray of shape (Ns, Ne)
+            The electron spectra dNe/deds on the grid self.ibs.s 
+            and on a grid of energies evals between emin_grid and emax_grid,
+            [1/cm/eV].
+        e_vals : TYPE
+            The grid of energies [eV].
+
+        """
+        self._calculate_one_arch()
+        self._set_solution_onto_ibs()
+        self._calculate_comoving_e_spec()
         self.calculated = True
         if to_return:
-            return e_vals, dNe_de_mid
+            return self.e_vals, self.dNe_deds_IBS
         
     @property
     def _up(self):
@@ -1349,7 +1435,10 @@ class ElectronsOnIBS: #!!!
             e.g. self.dNe_deds_IBS[self._up, :] gives you the dNe/dsde on
             the upper horn (incl zero).
         """
-        return np.where(self.ibs.theta >= 0)[0]
+        if self.ibs.ndim == 2:
+            return np.where(self.ibs.theta >= 0)[0]
+        else:
+            raise NotImplementedError("'up'  is not defined for a 3D IBS.")
     
     @property
     def _low(self):
@@ -1358,7 +1447,10 @@ class ElectronsOnIBS: #!!!
             e.g. self.dNe_deds_IBS[self._low, :] gives you the dNe/dsde on
             the lower horn (without zero).
         """
-        return np.where(self.ibs.theta < 0)[0]
+        if self.ibs.ndim == 2:
+            return np.where(self.ibs.theta < 0)[0]
+        else:
+            raise NotImplementedError("'low'  is not defined for a 3D IBS.")
 
     @property
     def _up_mid(self):
@@ -1367,7 +1459,10 @@ class ElectronsOnIBS: #!!!
             e.g. self.dNe_deds_mid[self._up_mid, :] gives you the dNe/dsde on
             the upper horn midpoints (incl zero).
         """
-        return np.where(self.ibs.theta_mid >= 0)[0]
+        if self.ibs.ndim == 2:
+            return np.where(self.ibs.theta_mid >= 0)[0]
+        else:
+            raise NotImplementedError("'up_mid'  is not defined for a 3D IBS.")
     
     @property
     def _low_mid(self):
@@ -1376,7 +1471,10 @@ class ElectronsOnIBS: #!!!
             e.g. self.dNe_deds_mid[self._low_mid, :] gives you the dNe/dsde on
             the lower horn midpoints (without zero).
         """
-        return np.where(self.ibs.theta_mid < 0)[0]
+        if self.ibs.ndim == 2:
+            return np.where(self.ibs.theta_mid < 0)[0]
+        else:
+            raise NotImplementedError("'low_mid'  is not defined for a 3D IBS.")
 
     def peek(self, ax=None, 
              to_label=True,
@@ -1420,29 +1518,39 @@ class ElectronsOnIBS: #!!!
         if self.dNe_deds_IBS is None or self.e_vals is None:
             raise ValueError("You should call `calculate()` first to set dNe_deds_IBS and e_vals")
         
+        if self.ibs.ndim == 2:
+            Ne_tot_s = trapz_loglog(self.dNe_de_mid, self.e_vals, axis=-1)
+            sed_e_up = self.e2dNe_de_mid[self._up_mid, :]
+            edot_avg = np.average(self._edot, axis=0) 
+            s_mid_ = self.ibs.s_mid
+        if self.ibs.ndim == 3:
+            Ne_tot_s_phi = trapz_loglog(self.dNe_de_mid, self.e_vals, axis=-1)
+            Ne_tot_s = np.sum(Ne_tot_s_phi, axis=0)
+            sed_e_up = np.sum(self.e2dNe_de_mid, axis=0)
+            edot_avg = np.average(self._edot, axis=0)
+            s_mid_ = self.ibs.s_mid[0]
         
-        Ne_tot_s = trapz_loglog(self.dNe_de_mid, self.e_vals, axis=1)
-        # e_sed_averageS = trapezoid(self.e2dNe_deds_IBS[self.ibs.n+1 : 2*self.ibs.n-1, :],
-                # self.ibs.s[self.ibs.n+1 : 2*self.ibs.n-1], axis=0) / np.max(self.ibs.s)
-        sed_e_up = self.e2dNe_de_mid[self._up_mid, :]
         sed_e_up[~np.isfinite(sed_e_up)] = np.nan
         e_sed_averageS = np.nanmean(sed_e_up, axis=0)
 
         ax[0].plot(self.e_vals, e_sed_averageS, label=f'{self.cooling}', **kwargs)
-        ax[1].plot(self.ibs.s_mid,
+        ax[1].plot(s_mid_,
                    Ne_tot_s,  label=f'{self.cooling}', **kwargs)
 
 
         if show_many:
             _n = self.ibs.n-1
             for i_s in (
-                        int(_n * (1+1/7)),
-                        int(_n*(1+1/2)),
-                        int(_n*(1+6/7))
-                    ):
-                label_s = fr"{self.cooling}, $s = {(self.ibs.s_mid[i_s] / self.ibs.s_max) :.2f} s_\mathrm{{max}}$"
-   
-                ax[0].plot(self.e_vals, self.e2dNe_de_mid[i_s, :], alpha=0.3,
+                        int(_n * 1/7),
+                        int(_n * 1/2),
+                        int(_n * 6/7)
+                        ):
+                if self.ibs.ndim==2:
+                    label_s = fr"{self.cooling}, $s = {((s_mid_[self._up_mid])[i_s] / self.ibs.s_max) :.2f} s_\mathrm{{max}}$"
+                if self.ibs.ndim==3:
+                    label_s = fr"{self.cooling}, $s = {(s_mid_[i_s] / self.ibs.s_max) :.2f} s_\mathrm{{max}}$"
+                
+                ax[0].plot(self.e_vals, sed_e_up[i_s, :], alpha=0.3,
                            label=label_s, **kwargs)
 
             
@@ -1456,17 +1564,17 @@ class ElectronsOnIBS: #!!!
         ax[0].set_ylabel(r'$E^2 dN/dE$ [eV]')
         ax[0].set_title(r'$E^2dN/dE$')
 
-        ax[0].set_ylim(np.nanmax(self.e2dNe_de_mid) * 1e-3, 
-                       np.nanmax(self.e2dNe_de_mid) * 2)
+        ax[0].set_ylim(np.nanmax(sed_e_up * 1e-3), 
+                       np.nanmax(sed_e_up * 2))
 
         ax[1].set_xlabel(r'$s$')
         # ax[1].set_ylabel(r'$N(s)$')
         ax[1].set_title(r'$N_e(s)$')    
         
-        smesh, emesh = np.meshgrid(self.ibs.s[self.ibs.n:2*self.ibs.n],
-                                   self.e_vals, indexing='ij')
-        edot_ = ElectronsOnIBS.edot(self, smesh, emesh)
-        edot_avg = np.average(edot_, axis=0) #/ trapezoid(np.ones(smesh[:, 0].size), smesh[:, 0], axis=0)
+        # smesh, emesh = np.meshgrid(self.ibs.s[self.ibs.n:2*self.ibs.n],
+        #                            self.e_vals, indexing='ij')
+        # edot_ = ElectronsOnIBS.edot(self, smesh, emesh)
+        # if 
         ax[2].plot(self.e_vals, -self.e_vals / edot_avg)
         ax[2].set_xlabel('e, eV')
         ax[2].set_title('avg t cool(e) [s]')

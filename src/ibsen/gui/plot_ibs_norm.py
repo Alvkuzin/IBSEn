@@ -5,7 +5,7 @@ import numpy as np
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QApplication,
+    # QApplication,
     QMainWindow, QWidget,
     QHBoxLayout, QVBoxLayout,
     QSplitter, QLabel, QSlider, QComboBox, QPushButton
@@ -238,3 +238,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+# ha!

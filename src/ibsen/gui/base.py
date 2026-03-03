@@ -17,6 +17,10 @@ from matplotlib.collections import LineCollection
 from ibsen.utils import interplg, fit_norm
 from scipy.interpolate import interp1d
 
+import matplotlib.pyplot as plt
+from matplotlib.cm import ScalarMappable
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
 def fit_norm_here(x_obs, y_obs, dy_obs, x_model, y_model, norm_init,
                   grid_scale='log', return_err=False):
     """
@@ -171,6 +175,84 @@ class GradientPlot:
                 self.cbar.update_normal(self.artist)
 
 
+def plot_surface_quads_local(ax, coords, param, cmap="coolwarm",
+                       vmin=None, vmax=None, alpha=1.0,
+                       edgecolor="none", linewidth=0.0,
+                       close_phi=False):
+    """
+    Draw quads on a 3D axis.
+
+    Returns:
+        poly (Poly3DCollection or None),
+        mappable (ScalarMappable or None),
+        norm (Normalize or None)
+    """
+    P = np.asarray(coords, float)
+    if P.ndim != 3 or P.shape[-1] != 3:
+        raise ValueError("coords must have shape (Ntheta, Nphi, 3)")
+
+    S = None
+    if param is not None:
+        S = np.asarray(param, float)
+        if S.shape != P.shape[:-1]:
+            raise ValueError("param must have shape (Ntheta, Nphi)")
+
+    if close_phi:
+        P = np.concatenate([P, P[:1, :, :]], axis=0)
+        if S is not None:
+            S = np.concatenate([S, S[:1, :]], axis=0)
+
+    # Build quads
+    A = P[:-1, :-1]
+    B = P[ 1:, :-1]
+    C = P[ 1:,  1:]
+    D = P[:-1,  1:]
+    quads = np.stack([A, B, C, D], axis=2).reshape(-1, 4, 3)
+
+    mappable = None
+    norm = None
+    colors = None
+
+    if S is not None:
+        s_quad = 0.25 * (S[:-1, :-1] + S[1:, :-1] + S[1:, 1:] + S[:-1, 1:]).ravel()
+
+        good = np.isfinite(s_quad)
+        good &= np.isfinite(quads).all(axis=(1, 2))
+        quads = quads[good]
+        s_quad = s_quad[good]
+        if s_quad.size == 0:
+            return None, None, None
+
+        vmin = np.nanmin(s_quad) if vmin is None else vmin
+        vmax = np.nanmax(s_quad) if vmax is None else vmax
+        norm = Normalize(vmin=vmin, vmax=vmax)
+
+        cmap_obj = plt.get_cmap(cmap)
+        colors = cmap_obj(norm(s_quad))
+
+        # this is what the colorbar will use
+        mappable = ScalarMappable(norm=norm, cmap=cmap_obj)
+        mappable.set_array(s_quad)
+
+    poly = Poly3DCollection(
+        quads,
+        facecolors=colors,
+        edgecolors=edgecolor,
+        linewidths=linewidth,
+        alpha=alpha
+    )
+    ax.add_collection3d(poly)
+
+    # Autoscale
+    xyz = P.reshape(-1, 3)
+    m = np.isfinite(xyz).all(axis=1)
+    xyz = xyz[m]
+    if xyz.size:
+        ax.auto_scale_xyz(xyz[:, 0], xyz[:, 1], xyz[:, 2])
+
+    return poly, mappable, norm
+
+
 class ToolWindowBase(QMainWindow):
     """
     Base window with:
@@ -181,8 +263,9 @@ class ToolWindowBase(QMainWindow):
     """
 
     TOOL_NAME: str = "Tool"
-    IS_HEAVY: bool = False            # set True for SED/LC; False for IBS
+    IS_HEAVY: bool = False            # set True for SED/LC; False for IBS/IBS3D
     DEBOUNCE_MS: int = 250
+    THREE_DIMENSIONAL_PLOT: bool = False
 
     def __init__(self) -> None:
         super().__init__()
@@ -218,7 +301,10 @@ class ToolWindowBase(QMainWindow):
 
         self.fig = Figure()
         self.canvas = FigureCanvas(self.fig)
-        self.ax = self.fig.add_subplot(111)
+        if not self.THREE_DIMENSIONAL_PLOT:
+            self.ax = self.fig.add_subplot(111)
+        if self.THREE_DIMENSIONAL_PLOT:
+            self.ax = self.fig.add_subplot(111, projection="3d")
 
         plot_layout.addWidget(self.canvas)
         self.splitter.addWidget(self.plot_widget)

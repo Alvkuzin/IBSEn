@@ -348,7 +348,7 @@ class Winds:
                 # t_b_ns = 
                 raise ValueError("""To calculate NS field from apex 
                                  value, provide t_b_ns.""")
-            r_se = Winds.dist_se_1d(self, t_b_ns)
+            r_se = self.dist_se_1d(t_b_ns)
             r_pe = self.orbit.r(t_b_ns) - r_se
             if model in ('linear', 'from_L_sigma'):
                 b_puls = B_apex * r_pe / r_to_p
@@ -387,7 +387,7 @@ class Winds:
             The ns-originating magnetic field.
 
         """
-        return Winds.ns_field(self, r_to_p, model=self.ns_b_model,
+        return self.ns_field(r_to_p, model=self.ns_b_model,
                               B_apex=self.ns_b_apex, t_b_ns = t,
                      B_ref = self.ns_b_ref, r_ref = self.ns_r_ref,
                      L_spindown = self.ns_L_spindown,
@@ -444,7 +444,7 @@ class Winds:
                 raise ValueError("""To calculate Opt field from apex 
                                  value, `Winds` class should be initialized
                                  with t_forwinds value.""")
-            r_se = Winds.dist_se_1d(self, t_b_opt)
+            r_se = self.dist_se_1d(t_b_opt)
             if model == 'linear':
                 b_opt = B_apex * r_se / r_to_s
             else:
@@ -478,7 +478,7 @@ class Winds:
             The otical star-originating magnetic field.
 
         """
-        return Winds.opt_field(self, r_to_s, model=self.opt_b_model,
+        return self.opt_field(r_to_s, model=self.opt_b_model,
                               B_apex=self.opt_b_apex, t_b_opt = t,
                      B_ref = self.opt_b_ref, r_ref = self.opt_r_ref)
     
@@ -693,31 +693,30 @@ class Winds:
 
         Parameters
         ----------
-        vec_r_from_s : np.ndarray of shape (3,)
+        vec_r_from_s : np.ndarray of shape (N1, ..., Nm, 3,)
             Vector from the star to the point.
 
         Returns
         -------
-        float
+        np.ndarray of shape (N1, ..., Nm)
             P_d(vec_r_from_s), dimensionless.
 
         """
-        ndisk = self.n_disk
-        r_fromdisk = mydot(vec_r_from_s, ndisk) * ndisk
-        r_indisk = vec_r_from_s - r_fromdisk
-        r_to_d = absv(r_fromdisk) 
-        r_indisk = vec_r_from_s - r_fromdisk
-        r_in_d = absv(r_indisk)
-        z0 = Winds.disk_height(self, r_in_d)
-        vert = np.exp(-r_to_d**2 / 2 / z0**2)
+        ndisk = self.n_disk # (3,)
+        r_fromdisk = mydot(vec_r_from_s, ndisk)[..., None] * ndisk # (shape0, 3)
+        r_indisk = vec_r_from_s - r_fromdisk # (shaape0, 3)
+        r_to_d = absv(r_fromdisk) # (shape0)
+        r_in_d = absv(r_indisk) # (shape0)
+        z0 = self.disk_height(r_in_d) # (shape0)
+        vert = np.exp(-r_to_d**2 / 2 / z0**2) # (shape0)
         if self.rad_prof == 'pl':
-            rad = (self.Ropt / r_in_d)**self.np_disk
+            rad = (self.Ropt / r_in_d)**self.np_disk  # (shape0)
         if self.rad_prof == 'bkpl':
-            if r_in_d < self.r_trunk:
-                rad = (self.Ropt / r_in_d)**self.np_disk
-            if r_in_d >= self.r_trunk:
-                rad = (self.Ropt / self.r_trunk)**self.np_disk * (self.r_trunk
-                                                                  / r_in_d)**2
+            rad = np.where(r_in_d < self.r_trunk,
+                    (self.Ropt / r_in_d)**self.np_disk,
+                    (self.Ropt / self.r_trunk)**self.np_disk * (self.r_trunk / r_in_d)**2
+                           )
+
         return self.f_d * rad * vert 
     
     def _dist_se_1d_nonvec(self, t):  
@@ -745,9 +744,9 @@ class Winds:
         r_sp_vec = self.orbit.vector_sp(t)
         nwind = n_from_v(r_sp_vec) # unit vector from S to P
         r_sp = absv(r_sp_vec)
-        pres_w = lambda r_se: Winds.polar_wind_pressure(self, r_from_s = r_se)
-        pres_d = lambda r_se: Winds.decr_disk_pressure(self, vec_r_from_s = nwind * r_se)
-        pres_p = lambda r_se: Winds.pulsar_wind_pressure(self, r_from_p = np.abs(r_sp - r_se))
+        pres_w = lambda r_se: self.polar_wind_pressure(r_from_s = r_se)
+        pres_d = lambda r_se: self.decr_disk_pressure(vec_r_from_s = nwind * r_se)
+        pres_p = lambda r_se: self.pulsar_wind_pressure(r_from_p = np.abs(r_sp - r_se))
         to_solve = lambda r_se: pres_d(r_se) + pres_w(r_se) - pres_p(r_se)
         rse = brentq(to_solve, self.Ropt, r_sp*(1-1e-8))
         ### ---------------- test if the solution is good -------------------------
@@ -755,7 +754,7 @@ class Winds:
         max_rel_err = np.max(to_solve(rse) / p_ref)
         if max_rel_err > 1e-3:
             raise ValueError(f'Huge relative error of {max_rel_err} in the solution of the '
-                          'disk-wind balance equation at {t/DAY}    days. ')        # r_fromdisk = Winds.vec_r_to_dp(self, t=0)  # t is irrelevant here
+                          'disk-wind balance equation at {t/DAY}    days. ')       
 
         return rse
     
@@ -783,10 +782,10 @@ class Winds:
         """
         t_ = np.asarray(t)
         if t_.ndim == 0:
-            return float(Winds._dist_se_1d_nonvec(self, float(t_)))
+            return float(self._dist_se_1d_nonvec(float(t_)))
         
         return np.array( [
-            Winds._dist_se_1d_nonvec(self, t_now) for t_now in t_
+            self._dist_se_1d_nonvec(t_now) for t_now in t_
             ] )
     
     def beta_eff(self, t):
@@ -807,7 +806,7 @@ class Winds:
 
         """
         r_sp = self.orbit.r(t)
-        r_se = Winds.dist_se_1d(self, t)
+        r_se = self.dist_se_1d(t)
         r_pe = r_sp - r_se
         return (r_pe / r_se)**2
     
@@ -828,16 +827,16 @@ class Winds:
             The magnetic field of the optical star at the apex point [G].
 
         """
-        r_se = Winds.dist_se_1d(self, t)
+        r_se = self.dist_se_1d(t)
         r_pe = self.orbit.r(t) - r_se
-        _b_ns_apex = Winds.ns_field(self, r_to_p =r_pe, model=self.ns_b_model,
+        _b_ns_apex = self.ns_field(r_to_p = r_pe, model=self.ns_b_model,
                               B_ref = self.ns_b_ref, B_apex=self.ns_b_apex,
                               t_b_ns=self.t_forwinds,
                               r_ref = self.ns_r_ref,
                               L_spindown = self.ns_L_spindown,
                               sigma_magn =self.ns_sigma_magn)
 
-        _b_opt_apex = Winds.opt_field(self, r_to_s = r_se,
+        _b_opt_apex = self.opt_field(r_to_s = r_se,
                                      model = self.opt_b_model,
                                      B_apex=self.opt_b_apex,
                                      t_b_opt=self.t_forwinds,
@@ -863,11 +862,11 @@ class Winds:
           The optical star photon field energy density at the apex point.
 
         """
-        r_se = Winds.dist_se_1d(self, t)
-        return Winds.u_g_density(self, 
-                                 r_from_s = r_se,
+        r_se = self.dist_se_1d( t)
+        return self.u_g_density( r_from_s = r_se,
                                  r_star = self.Ropt,
                                  T_star = self.Topt)
+            
     
     def peek(self, ax=None,
              showtime = None,
@@ -944,29 +943,29 @@ class Winds:
         xx1, yy1, zz1 = vec_disk1                                                 
         xx2, yy2, zz2 = vec_disk2                                                 
         ax0.plot([xx1, xx2], [yy1, yy2], color='orange', ls='--', lw=2)    
-
-        x_forp = np.linspace(np.min(orb_x)*3, np.max(orb_x)*4, 301)
-        y_forp = np.linspace(np.min(orb_y)*2, np.max(orb_y)*2, 201)
+        
+        Nx = 301
+        Ny = 201
+        x_forp = np.linspace(np.min(orb_x)*3, np.max(orb_x)*4, Nx)
+        y_forp = np.linspace(np.min(orb_y)*2, np.max(orb_y)*2, Ny)
         
         ###### ------------ tabulating pressure values ------------------ #####
 
         XX, YY = np.meshgrid(x_forp, y_forp, indexing='ij')
         disk_ps = np.zeros((x_forp.size, y_forp.size))
-        pulsar_ps = np.zeros((x_forp.size, y_forp.size))
-        xpuls, ypuls = self.orbit.x(self.t_forwinds), self.orbit.y(self.t_forwinds)
-        for ix in range(x_forp.size):
-            for iy in range(y_forp.size):
-                vec_from_s_ = np.array([x_forp[ix], y_forp[iy], 0])
-                r_ = (x_forp[ix]**2 + y_forp[iy]**2)**0.5
-                r_topulsar = ((x_forp[ix] - xpuls)**2 +
-                              (y_forp[iy] - ypuls)**2)**0.5
-                disk_ps[ix, iy] = (Winds.decr_disk_pressure(self, vec_from_s_) 
-                                +
-                                Winds.polar_wind_pressure(self, r_)
-                                )
-                pulsar_ps[ix, iy] = Winds.pulsar_wind_pressure(self, r_topulsar)
-                
-        pres_diff = disk_ps - pulsar_ps
+
+        vec_from_s_ = np.empty((Nx, Ny, 3))
+        vec_from_s_[:, :, 0] = XX
+        vec_from_s_[:, :, 1] = YY
+        vec_from_s_[:, :, 2] = XX * 0
+        # pulsar_ps = np.zeros((x_forp.size, y_forp.size))
+        # xpuls, ypuls = self.orbit.x(self.t_forwinds), self.orbit.y(self.t_forwinds)
+        # vec_sp = np.array([xpuls, ypuls, 0])
+        # vec_to_p_ = vec_sp[..., :] - vec_from_s_
+        # pulsar_ps = self.pulsar_wind_pressure(absv(vec_to_p_))        
+        # pres_diff = disk_ps - pulsar_ps
+
+        disk_ps = self.decr_disk_pressure(vec_from_s_) + self.polar_wind_pressure(absv(vec_from_s_))
         disk_ps = np.log10(disk_ps) 
 
         # P_norm = (disk_ps - np.min(disk_ps)) / (np.max(disk_ps) - np.min(disk_ps))

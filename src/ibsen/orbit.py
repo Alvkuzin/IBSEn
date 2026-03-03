@@ -5,7 +5,7 @@ from scipy.optimize import brentq
 import matplotlib.pyplot as plt
 from astropy import constants as const
 from ibsen.get_obs_data import get_parameters, known_names
-from ibsen.utils import unpack_params
+from ibsen.utils import unpack_params, n_from_v, rotated_vector
 G = float(const.G.cgs.value)
 
 R_SOLAR = float(const.R_sun.cgs.value)
@@ -135,6 +135,7 @@ class Orbit:
         self.M = M_
         self.nu_los = nu_los_
         self.incl_los = incl_los_
+        self.unit_los = n_from_v(rotated_vector(alpha=nu_los_, incl=incl_los_))
         self.GM = G * M_
         self.name = sys_name
         self.xtab = None
@@ -230,7 +231,7 @@ class Orbit:
             E(t).
 
         """
-        func_to_solve = lambda E: E - self.e * sin(E) - Orbit.mean_motion(self, t)
+        func_to_solve = lambda E: E - self.e * sin(E) - self.mean_motion(t)
         try:
             E = brentq(func_to_solve, -1e3, 1e3)
             return E
@@ -255,10 +256,10 @@ class Orbit:
         """
         t_ = np.asarray(t)
         if t_.ndim == 0:
-            return float(Orbit._ecc_an_novec(self, float(t_)))
+            return float(self._ecc_an_novec(float(t_)))
         
         E_ = np.array([
-            Orbit._ecc_an_novec(self, t_now) for t_now in t_
+            self._ecc_an_novec(t_now) for t_now in t_
             ])
         return E_
         
@@ -278,7 +279,7 @@ class Orbit:
             r(t).
 
         """
-        return self.a * (1 - self.e * cos(Orbit.ecc_an(self, t)))
+        return self.a * (1 - self.e * cos(self.ecc_an(t)))
        
         
     def true_an(self, t):
@@ -297,7 +298,7 @@ class Orbit:
             nu_true(t).
 
         """
-        ecc_ = Orbit.ecc_an(self, t)
+        ecc_ = self.ecc_an(t)
         b_ = self.e / (1 + (1 - self.e**2)**0.5)
         return ecc_ + 2 * np.arctan(b_ * sin(ecc_) / (1 - b_ * cos(ecc_))) 
     
@@ -320,7 +321,7 @@ class Orbit:
         nu = np.asarray(nu, dtype=float)
         twopi = 2 * pi
     
-        # Normalize ν to (-π, π] for a consistent branch
+        # Normalize nu to (-π, π] for a consistent branch
         nu_norm = (nu + pi) % twopi - pi
     
         # Convert true anomaly -> eccentric anomaly using a quadrant-safe formula
@@ -332,10 +333,10 @@ class Orbit:
         # Wrap E to (-π, π] to match the chosen branch
         E = (E + pi) % twopi - pi
         M = E - self.e * sin(E)
-        # Add the correct number of full revolutions from the *unwrapped* ν
-        # k is the integer number of 2π turns implied by ν with t=0 at ν=0.
-        # For ν >= 0: k = floor(ν / 2π); for ν < 0: k = ceil(ν / 2π)
-        # This makes small negative ν map to small negative t (not near -T).
+        # Add the correct number of full revolutions from the *unwrapped* nu
+        # k is the integer number of 2pi turns implied by nu with t=0 at nu=0.
+        # For nu >= 0: k = floor(nu / 2π); for ν < 0: k = ceil(nu / 2π)
+        # This makes small negative nu map to small negative t (not near -T).
         turns = np.where(nu >= 0.0, np.floor(nu / twopi+0.5),
                          np.ceil(nu / twopi-0.5)).astype(float)
         M_ext = M + turns * twopi
@@ -355,10 +356,10 @@ class Orbit:
             t_los.
 
         """
-        if abs(Orbit.true_an(self, self.T/2) - self.nu_los) < 1e-6:
+        if abs(self.true_an(self.T/2) - self.nu_los) < 1e-6:
             return self.T/2
         else:
-            to_solve = lambda t_: Orbit.true_an(self, t_) - self.nu_los
+            to_solve = lambda t_: self.true_an(t_) - self.nu_los
             t_to_obs = brentq(to_solve, -self.T/2, self.T/2)
             return t_to_obs
     
@@ -441,7 +442,6 @@ class Orbit:
         """
         _E_tab = np.linspace(-2.5 * pi, 2.5 * pi, int(self.n))
         t_tab = self.T/ (2 * pi) * (_E_tab - self.e * sin(_E_tab))
-        # t_tab = np.linspace(-self.T * 1.1, self.T * 1.1, int(self.n))
         self.xtab = Orbit.x(self, t_tab)
         self.ytab = Orbit.y(self, t_tab)
         self.ztab = Orbit.z(self, t_tab)    

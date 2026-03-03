@@ -220,7 +220,10 @@ def compute_lc(ts, bands, sys_name='psrb',
                ### ibs params:
                gamma_max=2, 
                n_ibs=13,
-               s_max=1,
+               ibs_ndim=2,
+               n_phi=11,
+               s_max=1.,
+               s_max_g=2.,
                ### electron spec parameters:
                cooling='stat_mimic',
                p_e=2,
@@ -250,6 +253,7 @@ def compute_lc(ts, bands, sys_name='psrb',
                         incl_deg=incl_deg,
                         ### -----------------------------------------------
                         gamma_max=gamma_max, s_max=s_max, n_ibs=n_ibs,
+                        s_max_g=s_max_g, ibs_ndim=ibs_ndim, n_phi=n_phi,
                         ### -----------------------------------------------
                         norm_e=NORMALIZATION_INITIAL,
                         cooling=cooling, p_e=p_e, ecut=e_cut,
@@ -447,15 +451,30 @@ class LightCurveWindow(ToolWindowBase):
     
         # ----- IBS parameters -----
         lay_ibs = _page_widget("IBS parameters")
-    
+        
+        self.ibs_3dim = QCheckBox("ibs_3dim")
+        self.ibs_3dim.setChecked(True)
+        lay_ibs.addWidget(self.ibs_3dim)
+        self.ibs_3dim.stateChanged.connect(lambda _: self.schedule_update())
+        
         lay, self.gamma_max = self.make_linear_slider("gamma_max", 1.0001, 5.0, 0.01, 2.3)
         lay_ibs.addLayout(lay); _wire_slider(self.gamma_max)
     
         lay, self.s_max = self.make_linear_slider("s_max", 0.5, 4.0, 0.01, 1.0)
         lay_ibs.addLayout(lay); _wire_slider(self.s_max)
         
+        lay, self.s_max_g = self.make_linear_slider("s_max_g", 0.5, 4.0, 0.01, 1.0)
+        lay_ibs.addLayout(lay); _wire_slider(self.s_max_g)
+        
+        
         lay, self.n_ibs = self.make_linear_slider("n_ibs", 5, 40, 1, 15)
         lay_ibs.addLayout(lay); _wire_slider(self.n_ibs)
+        
+        lay, self.n_phi = self.make_linear_slider("n_phi", 2, 40, 1, 13)
+        lay_ibs.addLayout(lay); _wire_slider(self.n_phi)
+        
+        
+        
         
         # ----- e-spec parameters -----
         lay_espec = _page_widget("e-spec parameters")
@@ -934,6 +953,7 @@ class LightCurveWindow(ToolWindowBase):
             fluxes = compute_lc(ts, bands, 
                         sys_name=self.sys_name.currentText(),
                         to_parall=self.to_parall.isChecked(),
+                        
                         b_ns_13=float(self.slider_value(self.b_ns_13)),
                         b_opt_13=float(self.slider_value(self.b_opt_13)),
                         f_d=float(self.slider_value(self.f_d)),
@@ -942,15 +962,21 @@ class LightCurveWindow(ToolWindowBase):
                         height_exp=float(self.slider_value(self.height_exp)),
                         alpha_deg=float(self.slider_value(self.alpha_deg)),
                         incl_deg=float(self.slider_value(self.incl_deg)),
+                        
                         gamma_max=float(self.slider_value(self.gamma_max)),
                         s_max=float(self.slider_value(self.s_max)),
+                        s_max_g=float(self.slider_value(self.s_max_g)),
+                        ibs_ndim = (3 if self.ibs_3dim.isChecked() else 2),
                         n_ibs=int(self.slider_value(self.n_ibs)),
+                        n_phi=int(self.slider_value(self.n_phi)),
+                        
                         cooling=self.cooling.currentText(),
                         p_e=float(self.slider_value(self.p_e)),
                         e_cut=float(self.slider_value(self.e_cut)),
                         eta_a=float(self.slider_value(self.eta_a)),
                         emin=float(self.slider_value(self.emin)),
                         emax=float(self.slider_value(self.emax)),
+                        
                         method=self.method.currentText(),
                         delta_pow=float(self.slider_value(self.delta_pow)),
                         nh_tbabs=float(self.slider_value(self.nh_tbabs)),

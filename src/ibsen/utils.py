@@ -17,16 +17,16 @@ from matplotlib.colors import Normalize
 G = float(const.G.cgs.value)
 DAY = 86400.
 
+
+""" #!!!
+ ------------------------------------------------------------------------------
+ ------------------- #####  some general functions  ##### ---------------------
+ ------------------------------------------------------------------------------
+
+"""
+
 def lin(x, k, b):
     return k * x + b
-
-def linear_slope(x, y):
-    """
-    Analytical linear fit of the data x, y by y=kx+b; returns slope k
-    """
-    _n = x.size
-    return ((_n * np.sum(x*y) - np.sum(x) * np.sum(y)) 
-            / (_n * np.sum(x**2) - np.sum(x)**2))
 
 def ecpl(E, ind, ecut, norm):
     """
@@ -248,43 +248,118 @@ def unpack_params(
     return out if return_dict else tuple(out[n] for n in param_names)
 
 
-def vectorize_func(func_simple):
+""" #!!! 
+ ------------------------------------------------------------------------------
+ --------------------- #####  vector operations  ##### ------------------------
+ ------------------------------------------------------------------------------
+
+"""
+
+def _asvec(x, dtype=float):
+    """Ensure numpy array, and last dimension is 3."""
+    x = np.asarray(x, dtype=dtype)
+    if x.shape == (3,):
+        return x
+    if x.ndim >= 1 and x.shape[-1] == 3:
+        return x
+    raise ValueError(f"Expected shape (3,) or (...,3), got {x.shape}")
+
+def mydot(a, b):
     """
-    Vectorises a function func_simple of *args, so that each can be either
-    a single vector or a tuple of vectors. In the second case, the lengths
-    of tuples should be the same.
-
-    Parameters
-    ----------
-    func_simple : callable
-        Function of some vector arguments.
-
-    Raises
-    ------
-    ValueError
-        If any argument is not a vector or a list of vectors.
-
-    Returns
-    -------
-    callable
-        Vectorized function.
-
+    Dot product along last axis.
+    a: (...,3)
+    b: (...,3) or (3,)
+    returns: (...)  (broadcasted)
     """
-    def wrapper(*args):
-        if all(isinstance(x, np.ndarray) for x in args):
-            return func_simple(*args)
-        for x in args:
-            if isinstance(x, list):
-                n = len(x)
-                break
-        else:
-            raise ValueError("No list argument found!")
-        result = []
-        for i in range(n):
-            new_args = [x[i] if isinstance(x, list) else x for x in args]
-            result.append(func_simple(*new_args))
-        return result
-    return wrapper    
+    a = _asvec(a)
+    b = _asvec(b)
+    return np.sum(a * b, axis=-1)
+
+def mycross(a, b):
+    """
+    Cross product along last axis.
+    a: (...,3)
+    b: (...,3) or (3,)
+    returns: (...,3) (broadcasted)
+    """
+    a = _asvec(a)
+    b = _asvec(b)
+    return np.cross(a, b, axis=-1)
+
+def absv(a):
+    """
+    Euclidean norm (magnitude) along last axis.
+    a: (...,3)
+    returns: (...)
+    """
+    a = _asvec(a)
+    # faster & stable:
+    return np.sqrt(np.sum(a*a, axis=-1))
+
+def n_from_v(a, eps=0.0):
+    """
+    Normalize vectors along last axis.
+    a: (...,3)
+    returns: (...,3)
+
+    eps=0: zero vectors stay zero (no NaNs)
+    eps>0: treat norms < eps as zero
+    """
+    a = _asvec(a)
+    norm = absv(a)  # (...)
+    if eps > 0:
+        mask = norm > eps
+    else:
+        mask = norm > 0
+
+    out = np.zeros_like(a, dtype=float)
+    out[mask] = a[mask] / norm[mask][..., None]   # broadcast denom to (...,1)
+    return out
+
+""" #!!!
+ ------------------------------------------------------------------------------
+ ----------------- #####  manipulations with arrays  ##### --------------------
+ ------------------------------------------------------------------------------
+
+"""
+
+# def vectorize_func(func_simple):
+#     """
+#     Vectorises a function func_simple of *args, so that each can be either
+#     a single vector or a tuple of vectors. In the second case, the lengths
+#     of tuples should be the same.
+
+#     Parameters
+#     ----------
+#     func_simple : callable
+#         Function of some vector arguments.
+
+#     Raises
+#     ------
+#     ValueError
+#         If any argument is not a vector or a list of vectors.
+
+#     Returns
+#     -------
+#     callable
+#         Vectorized function.
+
+#     """
+#     def wrapper(*args):
+#         if all(isinstance(x, np.ndarray) for x in args):
+#             return func_simple(*args)
+#         for x in args:
+#             if isinstance(x, list):
+#                 n = len(x)
+#                 break
+#         else:
+#             raise ValueError("No list argument found!")
+#         result = []
+#         for i in range(n):
+#             new_args = [x[i] if isinstance(x, list) else x for x in args]
+#             result.append(func_simple(*new_args))
+#         return result
+#     return wrapper    
 
 def unpack(query, dictat):
     """
@@ -596,44 +671,51 @@ def enhanche_jump(t, t1_disk, t2_disk, times_enh, param_to_enh):
     current_H_enh = thresh_crit(t, t_enh_final, param_to_enh)
     return current_H_enh
 
-def mydot_novec(a, b):
-    """
-    Scalar product of vectors a, b.
-    """
-    xa, ya, za = a
-    xb, yb, zb = b
-    return xa * xb +  ya * yb + za * zb
+# def mydot_novec(a, b):
+#     """
+#     Scalar product of vectors a, b.
+#     """
+#     xa, ya, za = a
+#     xb, yb, zb = b
+#     return xa * xb +  ya * yb + za * zb
 
-mydot = vectorize_func(mydot_novec)
+# mydot = vectorize_func(mydot_novec)
 
-def mycross_novec(a, b):
-    """
-    Vector product of vectors a, b.
-    """
-    ax, ay, az = a
-    bx, by, bz = b
-    return np.array([ay * bz - az * by,
-                     az * bx - ax * bz,
-                     ax * by - ay * bx])
+# def mycross_novec(a, b):
+#     """
+#     Vector product of vectors a, b.
+#     """
+#     ax, ay, az = a
+#     bx, by, bz = b
+#     return np.array([ay * bz - az * by,
+#                      az * bx - ax * bz,
+#                      ax * by - ay * bx])
 
-mycross = vectorize_func(mycross_novec)
+# mycross = vectorize_func(mycross_novec)
 
-def absv_novec(vec):
-    """
-    Absolute value of a vector vec.
-    """
-    return (mydot(vec, vec))**0.5
+# def absv_novec(vec):
+#     """
+#     Absolute value of a vector vec.
+#     """
+#     return (mydot(vec, vec))**0.5
 
-absv = vectorize_func(absv_novec)
+# absv = vectorize_func(absv_novec)
 
 
-def n_from_v_novec(vec):
-    """
-    Normalized vector vec.
-    """
-    return vec / absv(vec)
+# def n_from_v_novec(vec):
+#     """
+#     Normalized vector vec.
+#     """
+#     return vec / absv(vec)
 
-n_from_v = vectorize_func(n_from_v_novec)
+# n_from_v = vectorize_func(n_from_v_novec)
+
+""" #!!!
+-------------------------------------------------------------------------------
+-------- #####  special relativity, Lorentz transformations  ##### ------------
+-------------------------------------------------------------------------------
+
+"""
 
 
 def g_from_beta(beta_vel):
@@ -750,41 +832,137 @@ def lor_trans_Teff_iso(Teff_iso, gamma): # assuming u ~ T^4
     return Teff_iso * (gamma**2 * (3 + beta_from_g(gamma)) / 3.)**0.25
 
 
-def lor_trans_vec_novec(vec_n, vec_beta):
+# def lor_trans_vec_novec(vec_n, vec_beta):
+#     """
+#     Lorentz tranformes a spatial unit vector vec_n (in lab frame) into \
+#     a system moving with vec_beta.
+    
+
+#     Parameters
+#     ----------
+#     vec_n : np.array([n_x, n_y, n_z])
+#         A unit vector in lab frame to transform. Should be a np.array with \
+#         three coordinates
+#         x, y, and z.
+#     vec_beta : np.array([beta_x, beta_y, beta_z])
+#         A vector beta = v/c of the co-moving system in lab frame. Should be \
+#         a np.array with three coordinates x, y, and z.
+
+#     Returns
+#     -------
+#     np.array([n_prime_x, n_prime_y, n_prime_z])
+#         The unit vector in a co-moving system.
+
+#     """
+#     vec_norm = n_from_v(vec_n) # just making sure that it is, indeed, a unit vector
+#     beta_norm = n_from_v(vec_beta)
+#     _gamma = g_from_beta(absv(vec_beta))
+#     _nbeta = mydot(vec_norm, vec_beta) # scalar product (n * beta)
+#     vec_norm_parall = _nbeta / absv(vec_beta)  * beta_norm
+#     vec_norm_perp = vec_norm - vec_norm_parall
+#     vec_norm_parall_prime = (vec_norm_parall - vec_beta) / (1 - _nbeta)
+#     vec_norm_perp_prime = vec_norm_perp / _gamma  / (1 - _nbeta)
+#     return vec_norm_parall_prime + vec_norm_perp_prime
+
+def lor_trans_vec(vec_n, vec_beta, eps=1e-5):
     """
     Lorentz tranformes a spatial unit vector vec_n (in lab frame) into \
-    a system moving with vec_beta.
+    a system moving with vec_beta. Everywhere where |beta| < eps, the vector
+    is left the same.
     
 
     Parameters
     ----------
-    vec_n : np.array([n_x, n_y, n_z])
-        A unit vector in lab frame to transform. Should be a np.array with \
-        three coordinates
-        x, y, and z.
-    vec_beta : np.array([beta_x, beta_y, beta_z])
-        A vector beta = v/c of the co-moving system in lab frame. Should be \
-        a np.array with three coordinates x, y, and z.
+    vec_n : np.ndarray or shape (3,) or (..., 3)
+        Unit vectors in lab frame to transform. 
+    vec_beta : np.array either of shape (3,) OR of the same shape as vec_n.
+        A vector beta = v/c of the co-moving system in lab frame. Either 
+        one vector to define the transformation for all vectors from vec_n, 
+        or an array of vectors for each vector from vec_n.
+    eps : float, optional
+        A lower threshold for |beta|, below which the transformation is not
+        applied (needed because formulas contain division by 0).
 
     Returns
     -------
-    np.array([n_prime_x, n_prime_y, n_prime_z])
-        The unit vector in a co-moving system.
+    np.ndarray of the same shape as the input vec_n.
 
     """
-    vec_norm = n_from_v(vec_n) # just making sure that it is, indeed, a unit vector
-    beta_norm = n_from_v(vec_beta)
-    _gamma = g_from_beta(absv(vec_beta))
-    _nbeta = mydot(vec_norm, vec_beta) # scalar product (n * beta)
-    vec_norm_parall = _nbeta / absv(vec_beta)  * beta_norm
-    vec_norm_perp = vec_norm - vec_norm_parall
-    vec_norm_parall_prime = (vec_norm_parall - vec_beta) / (1 - _nbeta)
-    vec_norm_perp_prime = vec_norm_perp / _gamma  / (1 - _nbeta)
-    return vec_norm_parall_prime + vec_norm_perp_prime
 
-lor_trans_vec = vectorize_func(lor_trans_vec_novec)
+    n0 = _asvec(vec_n)
+    b0 = _asvec(vec_beta)
 
-def vector_angle_nonvec(n1, n2, vec_beta=np.zeros(3), lor_trans=False):
+    n0 = n_from_v(n0)
+    n, beta = np.broadcast_arrays(n0, b0)
+
+    beta_mag = np.linalg.norm(beta, axis=-1)
+    mask = beta_mag >= eps
+
+    out = n.copy()
+
+    if not np.any(mask):
+        return out
+
+    n_m = n[mask]           # (K,3)
+    b_m = beta[mask]        # (K,3)
+    bmag_m = beta_mag[mask] # (K,)
+
+    gamma_m = np.asarray(g_from_beta(bmag_m))  # (K,)
+    nbeta_m = np.sum(n_m * b_m, axis=-1)       # dot product; (K,)
+
+    n_par = (nbeta_m / (bmag_m**2))[:, None] * b_m
+    n_perp = n_m - n_par
+
+    denom = (1.0 - nbeta_m)  # (K,)
+
+    n_par_prime  = (n_par - b_m) / denom[:, None]
+    n_perp_prime = n_perp / (gamma_m * denom)[:, None]
+
+    n_prime = n_par_prime + n_perp_prime
+
+    out[mask] = n_prime
+    return out
+
+# lor_trans_vec = vectorize_func(lor_trans_vec_novec)
+
+# def vector_angle_nonvec(n1, n2, vec_beta=np.zeros(3), lor_trans=False):
+#     """
+#     Calculates the angle between two UNIT vectors either in lab system, where \
+#         they are given, or in a system co-moving with velosity vec_beta.
+
+#     Parameters
+#     ----------
+#     n1 : my vector 
+#         1st vector in a lab system.
+#     n2 : my vector 
+#         2nd vector in a lab system.
+#     vec_beta : my vector, optional
+#         Vector of the beta (=v/c) of the other lorentz frame where you want to 
+#         calculate an angle. The default is np.zeros(3).
+#     lor_trans : bool, optional
+#         Whether to perform a lorentz boost (True) or to calculate in a lab
+#         frame (False). The default is False.
+
+#     Returns
+#     -------
+#     float
+#         Angle between vectors (always 0 <= angle <= pi).
+
+#     """
+#     ######### making sure they are indeed unit vectors. If not, well, you should
+#     ######### have read the documentation.
+#     n1_ = n_from_v(n1)
+#     n2_ = n_from_v(n2)
+#     if np.all(vec_beta == 0) or (not lor_trans):
+#         return np.arccos( mydot(n1_, n2_) )
+#     else:    
+#         n1_prime = lor_trans_vec(n1_, vec_beta)
+#         n2_prime = lor_trans_vec(n2_, vec_beta)
+#         return np.arccos( mydot(n1_prime, n2_prime) 
+#                          / absv(n1_prime) / absv(n2_prime) )
+    
+# vector_angle = vectorize_func(vector_angle_nonvec)    
+def vector_angle(n1, n2, vec_beta=np.zeros(3), lor_trans=False):
     """
     Calculates the angle between two UNIT vectors either in lab system, where \
         they are given, or in a system co-moving with velosity vec_beta.
@@ -808,19 +986,16 @@ def vector_angle_nonvec(n1, n2, vec_beta=np.zeros(3), lor_trans=False):
         Angle between vectors (always 0 <= angle <= pi).
 
     """
-    ######### making sure they are indeed unit vectors. If not, well, you should
-    ######### have read the documentation.
+    ###### making sure they are indeed unit vectors. If not, well, you should
+    ###### have read the documentation.
     n1_ = n_from_v(n1)
     n2_ = n_from_v(n2)
     if np.all(vec_beta == 0) or (not lor_trans):
         return np.arccos( mydot(n1_, n2_) )
     else:    
-        n1_prime = lor_trans_vec(n1_, vec_beta)
-        n2_prime = lor_trans_vec(n2_, vec_beta)
-        return np.arccos( mydot(n1_prime, n2_prime) 
-                         / absv(n1_prime) / absv(n2_prime) )
-    
-vector_angle = vectorize_func(vector_angle_nonvec)    
+        n1_prime = n_from_v(lor_trans_vec(n1_, vec_beta))
+        n2_prime = n_from_v(lor_trans_vec(n2_, vec_beta))
+        return np.arccos( mydot(n1_prime, n2_prime))
 
 # def vector_angle(n1, n2, vec_beta=np.zeros(3), lor_trans=False):
 #     # If all are vectors, just operate directly
@@ -925,6 +1100,12 @@ def lor_trans_e_spec_iso(E_lab, dN_dE_lab, gamma, E_comov=None, n_mu=51,
         dN_dE_comov = 0.5 * trapz_loglog(integrand, eta, axis=1) / beta_v / gamma
     return E_comov, dN_dE_comov
 
+""" #!!!
+-------------------------------------------------------------------------------
+--------- #####  manipulations with grids and interpolation  ##### ------------
+-------------------------------------------------------------------------------
+
+"""
 
 def loggrid(x1, x2, n_dec):
     """
@@ -1141,129 +1322,6 @@ def trapz_loglog(y, x, axis=-1, intervals=False):
 
     return ret
 
-def rotated_vector(alpha, incl):
-    """
-    Creates a vector np.array([x, y, z]), which is initially a unit
-    vector in z-direction np.array([0, 0, 1]) rotated by `incl` around
-    y-axis and then by `alpha` around z-axis. 
-
-    Parameters
-    ----------
-    alpha : float
-        The angle of the second turn around z-axis [rad].
-    incl : float
-        The angle of the first turn around y-axis [rad].
-
-    Returns
-    -------
-    np.ndarray of length 3
-        The rotated vector.
-
-    """
-    return np.array([  cos(alpha) * sin(incl),
-                       sin(alpha) * sin(incl),
-                       cos(incl)
-                       ])
-
-def rotate_z(vec, phi):
-    
-    """
-    rotates vector vec=np.array([x, y, z]) around z-axis at the 
-    angle phi in a positive direction
-    """
-    
-    _x, _y, _z = vec
-    c_, s_ = cos(phi), sin(phi)
-    x_rotated_ = c_ * _x - s_ * _y
-    y_rotated_ = s_ * _x + c_ * _y
-    return np.array([x_rotated_, y_rotated_, _z])
-
-def rotate_z_xy(x, y, phi):
-    """
-    Rotates a 2-D vector (x, y) around z-axis at the angle phi in a positive direction.
-
-    Parameters
-    ----------
-    x : float
-        vector x-coordinate.
-    y : float
-        vector y-coordinate.
-    phi : float
-        angle [rad] to rotate the vector around z-axis.
-
-    Returns
-    -------
-    x_rotated_ : float
-        x-coordinate of the rotated vector.
-        
-    y_rotated_ : float
-        y-coordinate of the rotated vector.
-
-    """
-    c_, s_ = cos(phi), sin(phi)
-    x_rotated_ = c_ * x - s_ * y
-    y_rotated_ = s_ * x + c_ * y
-    return x_rotated_, y_rotated_
-
-
-def t_avg_func(func, t1, t2, n_t):
-    """
-    Averages function func(e, t) over a time period t = [t1, t2],
-    currently giving an algebraic average.
-
-    Parameters
-    ----------
-    func : Callable
-        A function func = func(e, t)
-    t1 : float
-        min time for averaging.
-    t2 : float
-        max time for averaging.
-    n_t_points : int
-        A number of points to span on the t-array.
-
-    Returns
-    -------
-    Function \tilde func(e).
-
-    """
-    # t_grid = np.linspace(t1, t2, n_t)
-
-    def func_avg(e):
-        # # ensure e is array for broadcasting
-        # e_arr = np.atleast_1d(e)
-        # # evaluate Edot on full (e, t) mesh: shape (len(e), len(t))
-        # vals = func(e_arr[:, None], t_grid[None, :])
-        # # integrate over t for each e
-        # integral = np.trapz(vals, t_grid, axis=1)
-        # # normalize by interval length
-        # avg = integral / (t2 - t1)
-        # # if user passed scalar, return scalar
-        # return avg.item() if np.isscalar(e) else avg
-        return 0.5 * (func(e, t1) + func(e, t2)) 
-
-    return func_avg
-
-def l2_norm(xarr, yarr):
-    """
-    An L2-norm of a function yarr(xarr) defined on the grid xarr.
-
-    Parameters
-    ----------
-    xarr : np.ndarray
-        1D array of x-coordinates. Should be sorted in ascending order.
-    yarr : np.ndarray
-        1D array of y-coordinates. Should be the same length as xarr.
-
-    Returns
-    -------
-    float
-        The L2-norm of the function yarr(xarr), defined as
-        \sqrt{ \int y^2 dx }.
-
-    """
-    return ( trapezoid(yarr**2, xarr) )**0.5
-
 def wrap_grid(x, frac=0.10, num_points=1000, single_num_points=15):
     """
     Creates a grid of points around the range of x, with a 10% margin
@@ -1364,6 +1422,220 @@ def make_grid(x_grid, grid_kind, n_grid, per_decade=True):
             return loggrid(xmin, xmax, n_grid)
     else:
         raise ValueError(f"Unknown grid_kind: {grid_kind}")
+        
+        
+""" #!!!
+-------------------------------------------------------------------------------
+---------------- #####  vector rotations and angles  ##### --------------------
+-------------------------------------------------------------------------------
+
+"""
+
+def rotated_vector(alpha, incl):
+    """
+    Creates a vector np.array([x, y, z]), which is initially a unit
+    vector in z-direction np.array([0, 0, 1]) rotated by `incl` around
+    y-axis and then by `alpha` around z-axis. 
+
+    Parameters
+    ----------
+    alpha : float
+        The angle of the second turn around z-axis [rad].
+    incl : float
+        The angle of the first turn around y-axis [rad].
+
+    Returns
+    -------
+    np.ndarray of length 3
+        The rotated vector.
+
+    """
+    return np.array([  cos(alpha) * sin(incl),
+                       sin(alpha) * sin(incl),
+                       cos(incl)
+                       ])
+
+
+def rotate_vec1_around_vec2(v, axis, theta):
+    """
+    Rotate vector(s) v around axis vector(s) 'axis' by angle(s) theta (radians).
+    The rotation is in the positive direction around vec 'axis.
+
+    Parameters
+    ----------
+    v : array-like, shape (3,) or (...,3)
+    axis : array-like, shape (3,) or (...,3)  (will be normalized)
+    theta : float or array-like
+        If theta has shape (T,), result has shape (T,...,3).
+
+    Returns
+    -------
+    rotated : ndarray
+        Shape (...,3) if theta is scalar, else (T,...,3) (or theta.shape + v.shape).
+    """
+    v = _asvec(v)
+    k = n_from_v(axis, eps=1e-5)  # (...,3) or (3,)
+
+    theta = np.asarray(theta, dtype=float)
+
+    # If theta is an array, add leading axes to v and k so output becomes theta.shape + v.shape
+    if theta.ndim > 0:
+        lead = (None,) * theta.ndim
+        v = v[lead + (Ellipsis,)]   # -> (1,1,...,...,3) broadcast to theta.shape + (...,3)
+        k = k[lead + (Ellipsis,)]   # same
+
+        # reshape theta to theta.shape + (1,1,...,1) so it broadcasts with v/k
+        theta = theta.reshape(theta.shape + (1,) * (v.ndim - theta.ndim))
+
+    c = np.cos(theta)
+    s = np.sin(theta)
+
+    # Rodrigues' formula:
+    # v_rot = v*c + (k×v)*s + k*(k·v)*(1-c)
+    kv = np.sum(k * v, axis=-1, keepdims=True)          # (...,1)
+    k_cross_v = np.cross(k, v, axis=-1)                 # (...,3)
+
+    return v * c + k_cross_v * s + k * kv * (1.0 - c)
+
+def rotate_z(vec, phi):
+    
+    """
+    rotates vector(s) 'vec' around z-axis at the 
+    angle phi in a positive direction
+    """
+    
+    # _x, _y, _z = vec
+    # c_, s_ = cos(phi), sin(phi)
+    # x_rotated_ = c_ * _x - s_ * _y
+    # y_rotated_ = s_ * _x + c_ * _y
+    # return np.array([x_rotated_, y_rotated_, _z])
+    return rotate_vec1_around_vec2(v=vec, axis=np.array([0, 0, 1]), theta=phi)
+
+def rotate_z_xy(x, y, phi):
+    """
+    Rotates a 2-D vector (x, y) around z-axis at the angle phi in a positive direction.
+
+    Parameters
+    ----------
+    x : float
+        vector x-coordinate.
+    y : float
+        vector y-coordinate.
+    phi : float
+        angle [rad] to rotate the vector around z-axis.
+
+    Returns
+    -------
+    x_rotated_ : float
+        x-coordinate of the rotated vector.
+        
+    y_rotated_ : float
+        y-coordinate of the rotated vector.
+
+    """
+    c_, s_ = cos(phi), sin(phi)
+    x_rotated_ = c_ * x - s_ * y
+    y_rotated_ = s_ * x + c_ * y
+    return x_rotated_, y_rotated_
+
+# def rotation_matrix(vec, theta):
+#     vec = n_from_v(vec)
+#     x, y, z = vec
+#     _c, _s = cos(theta), sin(theta)
+#     mc = 1 - _c
+#     return np.array([
+#         [_c + mc * x**2,         mc * x * y - _s * z,    mc * x * z + _s * y],
+#         [mc * y * x + _s * z,    _c + mc * y**2,         mc * y * z - _s * x],
+#         [mc * z * x - _s * y,    mc * z * y + _s * x,    _c + mc * z**2],
+#         ])
+    
+# def rotate_vec1_around_vec2_novec(vec1, vec2, theta):
+#     return vec1 @ rotation_matrix(vec2, theta)
+
+# rotate_vec1_around_vec2 = vectorize_func(rotate_vec1_around_vec2_novec)
+
+
+""" #!!!
+-------------------------------------------------------------------------------
+------------------------ #######  uuhhh ?  ####### ----------------------------
+-------------------------------------------------------------------------------
+
+"""
+
+
+def t_avg_func(func, t1, t2, n_t):
+    """
+    Averages function func(e, t) over a time period t = [t1, t2],
+    currently giving an algebraic average.
+
+    Parameters
+    ----------
+    func : Callable
+        A function func = func(e, t)
+    t1 : float
+        min time for averaging.
+    t2 : float
+        max time for averaging.
+    n_t_points : int
+        A number of points to span on the t-array.
+
+    Returns
+    -------
+    Function \tilde func(e).
+
+    """
+    # t_grid = np.linspace(t1, t2, n_t)
+
+    def func_avg(e):
+        # # ensure e is array for broadcasting
+        # e_arr = np.atleast_1d(e)
+        # # evaluate Edot on full (e, t) mesh: shape (len(e), len(t))
+        # vals = func(e_arr[:, None], t_grid[None, :])
+        # # integrate over t for each e
+        # integral = np.trapz(vals, t_grid, axis=1)
+        # # normalize by interval length
+        # avg = integral / (t2 - t1)
+        # # if user passed scalar, return scalar
+        # return avg.item() if np.isscalar(e) else avg
+        return 0.5 * (func(e, t1) + func(e, t2)) 
+
+    return func_avg
+
+def l2_norm(xarr, yarr):
+    """
+    An L2-norm of a function yarr(xarr) defined on the grid xarr.
+
+    Parameters
+    ----------
+    xarr : np.ndarray
+        1D array of x-coordinates. Should be sorted in ascending order.
+    yarr : np.ndarray
+        1D array of y-coordinates. Should be the same length as xarr.
+
+    Returns
+    -------
+    float
+        The L2-norm of the function yarr(xarr), defined as
+        \sqrt{ \int y^2 dx }.
+
+    """
+    return ( trapezoid(yarr**2, xarr) )**0.5
+
+        
+"""
+ ------------------------------------------------------------------------------
+ -------------------------  fitting procedures --------------------------------
+ ------------------------------------------------------------------------------
+
+"""
+        
+def linear_slope(x, y):
+    """
+    Analytical linear fit of the data x, y by y=kx+b; returns slope k
+    """
+    _n = x.size
+    return ((_n * np.sum(x*y) - np.sum(x) * np.sum(y)) 
+            / (_n * np.sum(x**2) - np.sum(x)**2))
         
 def fit_norm(ydata, dy_data, y0_normalized, return_err=False):
     """
@@ -1500,6 +1772,16 @@ def avg(arr, weights=None, power=None, axis=None):
         
     return (np.average(arr**power, weights=weights, axis=axis))**(1. / power)
 
+
+""" #!!!
+ ------------------------------------------------------------------------------
+ ------------------------- #####  plotting  ##### -----------------------------
+ ------------------------------------------------------------------------------
+
+"""
+import matplotlib.pyplot as plt
+
+
 def plot_with_gradient(fig, ax, xdata, ydata, some_param, colorbar=False, lw=2,
                        ls='-', colorbar_label='grad', minimum=None, maximum=None,
                        scatter=False, marker='o', s=20, alpha=1.0, cmap='coolwarm'):
@@ -1549,3 +1831,77 @@ def plot_with_gradient(fig, ax, xdata, ydata, some_param, colorbar=False, lw=2,
     if colorbar:
         fig.colorbar(mappable, ax=ax, label=colorbar_label)
     return mappable
+
+from matplotlib.cm import ScalarMappable
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
+def plot_surface_quads(ax, coords, param, cmap="coolwarm",
+                       vmin=None, vmax=None, alpha=1.0,
+                       edgecolor="none", linewidth=0.0,
+                       colorbar=False, cbar_label="param",
+                       close_phi=False):
+    """
+    coords: (Ntheta, Nphi, 3)
+    param:  (Ntheta, Nphi)
+    close_phi: if True, adds an extra last column equal to the first to close the seam.
+    """
+    P = np.asarray(coords, float)
+    if P.ndim != 3 or P.shape[-1] != 3:
+        raise ValueError("coords must have shape (Ntheta, Nphi, 3)")
+    if param is not None: 
+        S = np.asarray(param, float)
+        if S.shape != P.shape[:-1]:
+            raise ValueError("param must have shape (Ntheta, Nphi)")
+
+    if close_phi:
+        P = np.concatenate([P, P[:1, :, :]], axis=0)   # (Ntheta, Nphi+1, 3)
+        if param is not None:
+            S = np.concatenate([S, S[:1, :]], axis=0)      # (Ntheta, Nphi+1)
+
+    # Build quads
+    A = P[:-1, :-1]
+    B = P[ 1:, :-1]
+    C = P[ 1:,  1:]
+    D = P[:-1,  1:]
+    quads = np.stack([A, B, C, D], axis=2).reshape(-1, 4, 3)
+
+    if param is not None:
+        # Per-quad scalar: average of 4 corners (computed from the SAME S)
+        s_quad = 0.25*(S[:-1, :-1] + S[1:, :-1] + S[1:, 1:] + S[:-1, 1:]).ravel()
+
+        # Mask bad quads: any NaN/inf in geometry or scalar
+        good = np.isfinite(s_quad)
+        good &= np.isfinite(quads).all(axis=(1,2))
+    
+        quads = quads[good]
+        s_quad = s_quad[good]
+    
+        if s_quad.size == 0:
+            return None
+    
+        vmin = np.nanmin(s_quad) if vmin is None else vmin
+        vmax = np.nanmax(s_quad) if vmax is None else vmax
+        norm = Normalize(vmin=vmin, vmax=vmax)
+    
+        colors = plt.get_cmap(cmap)(norm(s_quad))
+    else:
+        colors = None
+
+    poly = Poly3DCollection(quads, facecolors=colors, edgecolors=edgecolor,
+                            linewidths=linewidth, alpha=alpha)
+    # poly.set_zsort('average')
+    ax.add_collection3d(poly)
+
+    # Autoscale
+    xyz = P.reshape(-1, 3)
+    m = np.isfinite(xyz).all(axis=1)
+    xyz = xyz[m]
+    ax.auto_scale_xyz(xyz[:,0], xyz[:,1], xyz[:,2])
+
+    if colorbar and param is not None:
+        mappable = ScalarMappable(norm=norm, cmap=cmap)
+        mappable.set_array(s_quad)
+        plt.colorbar(mappable, ax=ax, pad=0.05, label=cbar_label)
+        
+    return poly
+

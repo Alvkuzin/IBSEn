@@ -1,7 +1,8 @@
 import numpy as np
 from numpy import sin, cos
 from ibsen.utils import beta_from_g, absv, \
- vector_angle, rotate_z, rotate_z_xy, n_from_v, plot_with_gradient
+ vector_angle, rotate_z, rotate_z_xy, n_from_v, plot_with_gradient, \
+     rotate_vec1_around_vec2, _asvec, plot_surface_quads
 from pathlib import Path
 from scipy.interpolate import interp1d
 from scipy.optimize import brentq
@@ -22,7 +23,8 @@ class BaseIBSNorm_2D:
      tang, ds_dtheta>, and also unit_los).
     """
     def __init__(self, unit_los=np.array([1, 0, 0])):
-        self.unit_los = unit_los
+        self.unit_los = _asvec(unit_los)
+        self.ndim = 2
         self._set_reflected_horn()
         self._set_midparams_and_vecs()
         self._set_beta_vecs()
@@ -44,30 +46,16 @@ class BaseIBSNorm_2D:
         self.r1 = np.concatenate((r1p[::-1], r1p))
         self.tang = np.concatenate((-tanp[::-1], np.pi+tanp))
         self.ds_dtheta = np.concatenate((ds_dthetap[::-1], ds_dthetap))
-        
-        norms_r = []
-        norms_r1 = []
-        unit_beta_= []
+
         self.unit_los = n_from_v(np.array(self.unit_los) )
-        vec_rsp = self.unit_rsp 
-        for x_, y_, th_, tan_ in zip(self.x, self.y, self.theta, self.tang):
-            n_ = np.array([x_, y_, 0])
-            n_r_ = n_from_v(n_)
-            n_r1_ = n_from_v(vec_rsp + n_)
-            norms_r.append(n_r_)
-            norms_r1.append(n_r1_)
-            
-            if th_ < 0: # if lower horn
-                unit_beta_vec = -np.array([cos(tan_), sin(tan_), 0])
-            else: # if upper horn
-                unit_beta_vec = np.array([cos(tan_), sin(tan_), 0])
-            unit_beta_.append(n_from_v(unit_beta_vec))
-        
-        
-        # norms_r, norms_r1, unit_beta_ = [np.array(ar_) for ar_ in (norms_r, norms_r1, unit_beta_)]
-        self.unit_r = norms_r
-        self.unit_r1 = norms_r1
-        self.unit_beta = unit_beta_
+        self.r_vec = np.array([ np.array([x_, y_, 0])  for x_, y_ in zip(self.x, self.y)])
+        self.r1_vec = np.array([ np.array([x_-1, y_, 0])  for x_, y_ in zip(self.x, self.y)])
+
+        self.unit_r = n_from_v(self.r_vec)
+        self.unit_r1 = n_from_v(self.r1_vec)
+        reflected_unit_beta_1horn = rotate_vec1_around_vec2(v=self.unit_beta_1horn, axis=np.array([1, 0, 0]), theta=np.pi)
+        self.unit_beta = np.concatenate((reflected_unit_beta_1horn[::-1, :],
+                                         self.unit_beta_1horn), axis=0)
     
     def _set_mid_attrs(self, name):
         """
@@ -87,26 +75,18 @@ class BaseIBSNorm_2D:
     def _set_midparams_and_vecs(self):
         for name in ("x", "y", "s", "theta", "r", "r1", "tang", "ds_dtheta"):
             self._set_mid_attrs(name)
-        unit_r_mid_ = []
-        unit_r1_mid_ = []
-        unit_beta_mid_ = []
-        # vec_beta_mid_ = []
-        for i_m in range(0, self.s.size-1):
-            unit_r_mid_.append(0.5 * (self.unit_r[i_m+1] + self.unit_r[i_m]) )
-            unit_r1_mid_.append(0.5 * (self.unit_r1[i_m+1] + self.unit_r1[i_m]))
-            unit_beta_mid_.append(0.5 * (self.unit_beta[i_m+1] + self.unit_beta[i_m]))
-        
-        self.unit_r_mid = unit_r_mid_
-        self.unit_r1_mid = unit_r1_mid_
-        self.unit_beta_mid = unit_beta_mid_
+            
+        # self.r_vec_mid = 0.5 * (self.r_vec[:-1, :] + self.r_vec[1:, :])
+        # self.r1_vec_mid = 0.5 * (self.r1_vec[:-1, :] + self.r1_vec[1:, :])
+        self.unit_r_mid = 0.5 * (self.unit_r[:-1, :] + self.unit_r[1:, :])
+        self.unit_r1_mid = 0.5 * (self.unit_r1[:-1, :] + self.unit_r1[1:, :])
+        self.unit_beta_mid = 0.5 * (self.unit_beta[:-1, :] + self.unit_beta[1:, :])
+
         
     def _set_beta_vecs(self):
-        self.vec_beta = [_unit_beta * _v for _unit_beta, _v in
-                         zip(self.unit_beta, beta_from_g(self.g))]
-        self.vec_beta_mid = [_unit_beta * _v for _unit_beta, _v 
-                             in zip(self.unit_beta_mid, beta_from_g(self.g_mid))]
-        
-        
+        self.vec_beta = self.unit_beta * (beta_from_g(self.g))[..., None]
+        self.vec_beta_mid = self.unit_beta_mid * (beta_from_g(self.g_mid))[..., None]
+
     def s_interp(self, s_, what):
         """
         Returns the interpolated value of 'what' (x, y, ...) at the coordinate 
@@ -222,18 +202,16 @@ class BaseIBSNorm_2D:
         rotated_ibs.x_mid, rotated_ibs.y_mid  = rotate_z_xy(self.x_mid, self.y_mid, phi)
         
         rotated_ibs.tang = self.tang + phi
-        for i in range(self.s.size):
-            rotated_ibs.unit_r[i] = rotate_z(self.unit_r[i], phi)
-            rotated_ibs.unit_beta[i] = rotate_z(self.unit_beta[i], phi)
-            rotated_ibs.vec_beta[i] = rotate_z(self.vec_beta[i], phi)
-            rotated_ibs.unit_r1[i] = rotate_z(self.unit_r1[i], phi)
-            if i != self.s.size-1:
-                rotated_ibs.unit_r_mid[i] = rotate_z(self.unit_r_mid[i], phi)
-                rotated_ibs.unit_r1_mid[i] = rotate_z(self.unit_r1_mid[i], phi)
-                rotated_ibs.vec_beta_mid[i] = rotate_z(self.vec_beta_mid[i], phi)
-                rotated_ibs.unit_beta_mid[i] = rotate_z(self.unit_beta_mid[i], phi)
-            
-            
+        
+        rotated_ibs.unit_r = rotate_z(self.unit_r, phi)
+        rotated_ibs.unit_beta = rotate_z(self.unit_beta, phi)
+        rotated_ibs.vec_beta = rotate_z(self.vec_beta, phi)
+        rotated_ibs.unit_r1 = rotate_z(self.unit_r1, phi)
+
+        rotated_ibs.unit_r_mid = rotate_z(self.unit_r_mid, phi)
+        rotated_ibs.unit_beta_mid = rotate_z(self.unit_beta_mid, phi)
+        rotated_ibs.vec_beta_mid = rotate_z(self.vec_beta_mid, phi)
+        rotated_ibs.unit_r1_mid = rotate_z(self.unit_r1_mid, phi)
             
         rotated_ibs.unit_rsp = rotate_z(self.unit_rsp, phi)
 
@@ -414,7 +392,325 @@ class BaseIBSNorm_2D:
             
         ax.legend()
     
+class BaseIBSNorm_3D: #!!!
+    """
+    Base class for the 3D IBS. It needs mixins that define kinematics
+    (method self.gma(s)) and the geometry of one horn of the IBS
+    (attributes x_1horn, y_1horn, ... <same for s, theta, theta1, r, r1, 
+     tang, ds_dtheta>, and also unit_los).
     
+    All parameters on the IBS have the shape (n_phi, n), or (n_phi,  n-1) for
+    "middle" parameters. 
+    
+    It is assumed that the IBS has axial symmerty around self.unit_symmetry_axis,
+    which is by default, a vector (-1, 0, 0) (X-axis).
+    """
+    def __init__(self, unit_symmetry_axis=np.array([-1, 0, 0]),
+                 unit_los=np.array([1, 0, 0]),
+                 n_phi=12, 
+                 ):
+        self.unit_symmetry_axis = n_from_v(unit_symmetry_axis)
+        self.unit_los = n_from_v(unit_los)
+        self.n_phi = n_phi
+        self.phis = np.linspace(0, 2*np.pi, n_phi, endpoint=False)
+        self.ndim = 3
+        self._set_whole_ibs()
+        self._set_midparams_and_vecs()
+        self._set_beta_vecs()
+
+    def _set_whole_ibs(self):
+        xs, ys, zs, ss, thetas, rs, r1s = [np.empty((self.n, self.n_phi)) for _i in range(7)]
+        r0_vecs = np.array([np.array([_x, _y, 0]) for _x, _y in zip(self.x_1horn, self.y_1horn)])
+        r1_vecs = np.array([np.array([_x-1, _y, 0]) for _x, _y in zip(self.x_1horn, self.y_1horn)])
+        rot_ax = self.unit_symmetry_axis
+        self.r_vec = rotate_vec1_around_vec2(v=r0_vecs, axis=rot_ax,
+                                        theta=self.phis)
+        self.r1_vec = rotate_vec1_around_vec2(v=r1_vecs, axis=rot_ax,
+                                        theta=self.phis)
+        
+        self.unit_beta = rotate_vec1_around_vec2(v=self.unit_beta_1horn, axis=rot_ax,
+                                            theta=self.phis)
+        self.unit_r = rotate_vec1_around_vec2(v=self.unit_r_1horn, axis=rot_ax,
+                                            theta=self.phis)
+        self.unit_r1 = rotate_vec1_around_vec2(v=self.unit_r1_1horn, axis=rot_ax,
+                                            theta=self.phis)
+        
+        self.s = np.array([self.s_1horn for _i in self.phis])
+        self.theta = np.array([self.theta_1horn for _i in self.phis])
+        self.x = self.r_vec[..., 0]
+        self.y = self.r_vec[..., 1]
+        self.z = self.r_vec[..., 2]
+        self.r = absv(self.r_vec)
+        self.r1 = absv(self.r1_vec)
+        
+        
+        self.ds_dtheta = np.array([self.ds_dtheta_1horn for _i in self.phis])
+        self.unit_rsp = np.array([-1, 0, 0])
+        
+        
+        
+    def _set_mid_attrs(self, name):
+        """
+        For an attribute named X, sets attributes X_m and X_p as self.X[:-1]
+        and self.X[1:], as well as X_mid as their average and dX as their difference.
+        """
+        arr = getattr(self, name)
+        _m, _p = arr[:, :-1], arr[:, 1:]
+        _mid, _d = 0.5 * (_p + _m), (_p - _m)
+        
+        setattr(self, f"{name}_m", _m)
+        setattr(self, f"{name}_p", _p)
+        setattr(self, f"{name}_mid", _mid)
+        setattr(self, f"d{name}", _d)
+        
+        
+    def _set_midparams_and_vecs(self):
+        for name in ("x", "y", "z", "s", "theta", "r", "r1", "ds_dtheta"):
+            self._set_mid_attrs(name)
+
+        self.r_vec_mid = 0.5 * (self.r_vec[:, :-1, :] + self.r_vec[:, 1:, :])
+        self.r1_vec_mid = 0.5 * (self.r1_vec[:, :-1, :] + self.r1_vec[:, 1:, :])
+        self.unit_r_mid = 0.5 * (self.unit_r[:, :-1, :] + self.unit_r[:, 1:, :])
+        self.unit_r1_mid = 0.5 * (self.unit_r1[:, :-1, :] + self.unit_r1[:, 1:, :])
+        self.unit_beta_mid = 0.5 * (self.unit_beta[:, :-1, :] + self.unit_beta[:, 1:, :])
+
+        
+    def _set_beta_vecs(self):
+        self.vec_beta = self.unit_beta * (beta_from_g(self.g))[..., None]
+        self.vec_beta_mid = self.unit_beta_mid * (beta_from_g(self.g_mid))[..., None]
+   
+        
+    def gma(self, s):
+        raise NotImplementedError
+    
+    @property
+    def g(self):
+        """
+        The bulk motion Lorentz factor at every point on the IBS.
+
+        Returns
+        -------
+        np.ndarray
+            Gamma(s_ibs).
+
+        """
+        return self.gma(s = self.s)
+    
+    @property
+    def g_mid(self):
+        """
+        The bulk motion Lorentz factor at mid points on the IBS.
+
+        Returns
+        -------
+        np.ndarray
+            Gamma(s_mid).
+
+        """
+        return IBS_norm.gma(self, s = self.s_mid)
+    
+    
+    @property
+    def beta_vel(self):
+        """
+        The bulk motion velocity in units of c at every point on the IBS.
+
+        Returns
+        -------
+        np.ndarray 
+            beta(s_ibs).
+
+        """
+        return beta_from_g(g_vel = self.g)
+    
+    @property
+    def beta_vel_mid(self):
+        """
+        The bulk motion velocity in units of c at mid points on the IBS.
+
+        Returns
+        -------
+        np.ndarray 
+            beta(s_mid).
+
+        """
+        return beta_from_g(g_vel = self.g_mid)
+    
+    def rotate(self, phi, vec_ax=np.array([0, 0, 1])):
+        """
+        Rotates the shock at the angle phi COUNTERCLOCKWISE around axis vec_ax. 
+        Note that the vector of the line of sight unit_los is not rotated.
+        
+        Parameters
+        ----------
+        phi : float
+            The angle to rotate at [rad].
+        vec_ax : np.array of shape (3,)
+            The vector defining the axis of rotation. Default is the positive
+            direction of Z-axis: np.array([0, 0, 1])
+            
+        Returns
+        -------
+        rotated_ibs : class IBS_norm
+            The class of dimentionleess IBS corresponding to the rotated IBS.
+            Relative to the initial IBS object, changed attributes are: x, y, z,
+            r_vec, r1_vec, unit_r, unit_r1, unit_beta, vec_beta, and the same
+            with "_mid". And also, unit_rsp.
+            
+        """
+        vec_ax = n_from_v(vec_ax)
+        rotated_ibs = self.__class__(beta=self.beta, gamma_max=self.gamma_max, s_max=self.s_max,
+                               s_max_g = self.s_max_g, n=self.n,
+                               n_phi=self.n_phi,
+                               unit_los=self.unit_los)
+        ### rotate: r_vec, r1_vec, unit_r, unit_r1, unit_beta, vec_beta, and the same with "_mid":
+        ### first, only vector stuff
+        for name in ("r_vec", "r1_vec", "unit_r", "unit_r1", "unit_beta", "vec_beta"):
+            for suffix in ("", "_mid"):
+                arr = getattr(self, name+suffix)
+                new_arr = rotate_vec1_around_vec2(v=arr, axis=vec_ax, theta=phi)
+                setattr(rotated_ibs, name+suffix, new_arr)
+        ### now set new rotated x, y, z + the same with "_mid"
+        for suffix in ("", "_mid"):
+            rotated_rvec = getattr(rotated_ibs, "r_vec"+suffix)
+            _x, _y, _z = [rotated_rvec[..., _i] for _i in (0, 1, 2)]
+            setattr(rotated_ibs, "x"+suffix, _x)
+            setattr(rotated_ibs, "y"+suffix, _y)
+            setattr(rotated_ibs, "z"+suffix, _z)
+        
+            
+        rotated_ibs.unit_rsp = rotate_vec1_around_vec2(v=self.unit_rsp, theta=phi,
+                                                       axis=vec_ax)
+
+        return rotated_ibs
+    
+    @staticmethod
+    def doppler_factor(g_vel, ang_):
+        """
+        The doppler factor for a blob moving with a Lorentz factor g_vel at an angle
+        ang_ to the observer: 1 / g / (1 - beta * cos(ang_)).
+
+        Parameters
+        ----------
+        g_vel : np.ndarray
+            Lorentz factor of the blob.
+        ang_ : np.ndarray
+            The angle between the blob velocity and the LoS [rad].
+
+        Returns
+        -------
+        TYPE
+            DESCRIPTION.
+
+        """
+        beta_vels = beta_from_g(g_vel=g_vel)
+        return 1 / g_vel / (1 - beta_vels * cos(ang_))
+            
+            
+    @property
+    def dopl_angle(self):
+        """
+        The angle between the velocity and the LoS direction for every point
+        on the IBS. np.ndarray
+        of length len(self.x).
+        """
+        angs = np.array(vector_angle(self.unit_los, self.unit_beta))
+        return angs
+    
+    @property
+    def dopl_angle_mid(self):
+        """
+        The angle between the velocity and the LoS direction for mid points of
+        IBS. np.ndarray of length len(self.x)-1.
+        """
+        angs = np.array(vector_angle(self.unit_los, self.unit_beta_mid))
+        return angs
+ 
+    @property
+    def dopl(self):
+        """IBS doppler factors delta in every point of the IBS"""
+        return IBS_norm.doppler_factor(g_vel = self.g, ang_ = self.dopl_angle)
+    @property
+    def dopl_mid(self):
+        """IBS doppler factors delta in mid points of the IBS"""
+        return IBS_norm.doppler_factor(g_vel = self.g_mid, ang_ = self.dopl_angle_mid)
+    
+
+    @property
+    def scattering_angle(self):
+        """
+        The scattering angle for a photon from the star scattered at the IBS
+        towards the observer in the lab frame. For every point of the IBS.
+        """
+        return np.array(vector_angle(self.unit_r1, self.unit_los))
+
+
+    @property
+    def scattering_angle_mid(self):
+        """
+        The scattering angle for a photon from the star scattered at the IBS
+        towards the observer in the lab frame. For mid points of the IBS.
+        """
+        return np.array(vector_angle(self.unit_r1_mid, self.unit_los))
+
+    @property
+    def scattering_angle_comov(self):
+        """
+        The scattering angle for a photon from the star scattered at the IBS
+        towards the observer in the frame co-moving with the bulk motion 
+        velocity. For every point of the IBS.
+        """        
+        return np.array(vector_angle(self.unit_r1, self.unit_los,
+                                     self.vec_beta, True))
+    
+    @property
+    def scattering_angle_mid_comov(self):
+        """
+        The scattering angle for a photon from the star scattered at the IBS
+        towards the observer in the frame co-moving with the bulk motion 
+        velocity. For mid points of the IBS.
+        """        
+        return np.array(vector_angle(self.unit_r1_mid, self.unit_los,
+                                     self.vec_beta_mid, True))    
+        
+    def peek(self, ax=None, ibs_color=None, to_label=True,
+             edgecolor='k', linewidth=0.15):
+        xstar_, ystar_, zstar_ = -self.unit_rsp
+        xlos_, ylos_, zlos_ = self.unit_los
+
+        if ibs_color in ( 'doppler', 'scattering', 'scattering_comov', 'scattering_comoving'):
+            if ibs_color == 'doppler':
+                color_param = self.dopl
+                bar_label = r'doppler factor $\delta$'
+            elif ibs_color == 'scattering':
+                color_param = self.scattering_angle / np.pi
+                bar_label = r'scattering angle / $\pi$'
+            elif ibs_color in ('scattering_comoving', 'scattering_comov'):
+                color_param = self.scattering_angle_comov / np.pi
+                bar_label = r'comoving scattering angle / $\pi$'
+            else:
+                raise ValueError(f"Unknown ibs_color: {ibs_color}. "
+                                 "Use 'doppler', 'scattering' or 'scattering_comoving'.")
+            colorbar = True
+        else:
+            color_param = None
+            bar_label=None
+            colorbar=False
+        plot_surface_quads(ax=ax, coords=self.r_vec, param=color_param, linewidth=linewidth,
+                           edgecolor=edgecolor, colorbar=colorbar, close_phi=True,
+                           cbar_label=bar_label,
+                           )
+        ax.scatter(0, 0, 0, color='r')
+        ax.scatter(xstar_, ystar_, zstar_, color='b')
+        ax.set_xlim(-2, 2)
+        ax.set_ylim(-2, 2)
+        ax.set_zlim(-2, 2)
+        
+        ax.quiver(0, 0, 0, 1.7*xlos_, 1.7*ylos_, 1.7*zlos_, arrow_length_ratio=0.12, linewidth=2, color='g')
+        
+        
+        
+        
 
 class IBS_kinematics:
     """
@@ -426,12 +722,12 @@ class IBS_kinematics:
         super().__init__(*args, **kwargs)
         
     def gma(self, s):
-        return 1. + (self.gamma_max - 1.) * np.abs(s) / self.s_max_g  
+        return 1.0 + (self.gamma_max - 1.) * np.abs(s) / self.s_max_g  
     
 
 
 
-class IBSGeometryOneHorn:
+class IBSGeometryOneHorn: #!!!
     """
     The mixin passed to this class should contain as attributes: 
     x_1horn, y_1horn, s_1horn, tang_1horn, ds_dtheta_1horn, x_apex.
@@ -442,7 +738,7 @@ class IBSGeometryOneHorn:
         self.beta = kwargs.pop("beta")
         self.n = kwargs.pop("n", 15)
         self.s_max = kwargs.pop("s_max", 1.0)
-        
+            
                 
         self._set_ibs_coords()
         self._set_auxil_params()
@@ -498,22 +794,22 @@ class IBSGeometryOneHorn:
             n_r1_ = n_from_v(vec_rsp + n_)
             norms_r_1horn.append(n_r_)
             norms_r1_1horn.append(n_r1_)            
-            unit_beta_1horn.append(n_from_v(np.array([cos(tan_), sin(tan_), 0])))
+            unit_beta_1horn.append(n_from_v(np.array([cos(tan_+np.pi), sin(tan_+np.pi), 0])))
         
         
         # norms_r, norms_r1, unit_beta_ = [np.array(ar_) for ar_ in (norms_r, norms_r1, unit_beta_)]
-        self.unit_r_1horn = norms_r_1horn
-        self.unit_r1_1horn = norms_r1_1horn
+        self.unit_r_1horn = _asvec(norms_r_1horn)
+        self.unit_r1_1horn = _asvec(norms_r1_1horn)
         self.unit_rsp = unit_rsp
         self.r_sp = absv(vec_rsp)
-        self.unit_beta_1horn = unit_beta_1horn
+        self.unit_beta_1horn = _asvec(unit_beta_1horn)
         
         
         
 class IBSToyModel: 
     """
     A mixin describing an IBS in a shape of a hemisphere. Not fully working,
-    it's more for testing.
+    it's only for testing.
     """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -542,7 +838,7 @@ class IBSToyModel:
         all_ds_dthetas = np.gradient(all_ss, all_thetas, edge_order=2)
         #######################################################################
         ys_when_s_is_smax = all_ys[np.argmin(np.abs(all_ss-self.s_max)) - 1]
-        ys_needed = np.linspace(np.min(all_ys)*1.001, ys_when_s_is_smax*0.999, int(self.n))
+        ys_needed = np.linspace(np.min(all_ys)*1.001+1e-3, ys_when_s_is_smax*0.999, int(self.n))
         thetas_needed, theta1s_needed, rs_needed, xs_needed, ss_needed, \
             r1s_needed, tangs_needed, dsdts_needed = [np.interp(x=ys_needed, xp=all_ys, fp=_ar)
             for _ar in (all_thetas, all_theta1s, all_rs, all_xs, all_ss, all_r1s, all_tangs, all_ds_dthetas)]
@@ -553,6 +849,8 @@ class IBSToyModel:
         self.tang_1horn = tangs_needed
         self.ds_dtheta_1horn = dsdts_needed
         self.x_apex = self.radius
+        
+    
         
 
         
@@ -695,6 +993,12 @@ class IBS_CRW96:
     
 class IBS_norm_toy(IBSToyModel, IBSGeometryOneHorn, IBS_kinematics, BaseIBSNorm_2D):
     """Toy IBS_norm class."""
+    pass
+
+class IBS_norm3D(IBS_CRW96, IBSGeometryOneHorn, IBS_kinematics, BaseIBSNorm_3D):
+    """
+    An analog of the IBS_norm class for three dimensions. See docs for IBS_norm.
+    """
     pass
 
 class IBS_norm(IBS_CRW96, IBSGeometryOneHorn, IBS_kinematics, BaseIBSNorm_2D):

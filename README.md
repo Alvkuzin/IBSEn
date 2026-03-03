@@ -50,9 +50,11 @@ PSR B1259-63 periastron dist [au] =  0.9057236987554738
 ----- at t=20 days after periastron -----
 effective beta =  0.04263905625747101
 IBS opening angle =  2.4449529220680466
-tot number of e on IBS =  1.1672539791890069e+42
-from spec, flux 0.3-10 keV =  2.4195173617401234e-11
-from LC, flux 0.3-10 keV =  [2.42373486e-11]
+tot number of e on IBS =  9.225547709297475e+39
+from spec, flux 0.3-10 keV =  4.157533428117742e-12
+from spec, flux 0.4-10 TeV =  4.4840902791854023e-13
+from LC, flux 0.3-10 keV =  4.157533428117742e-12
+from LC, flux 0.4-10 TeV =  4.4840902791854023e-13
 
 ```
 
@@ -96,7 +98,7 @@ plt.axvline(td2/DAY)
  3. ``IBS``: Intrabinary shock - an object with stuff about IBS geometry and the bulk motion along it;
 Initiate IBS at a time of 2 days after the periastron and take a look at it, colorcoding it with the doppler factor.
 ```python
-from ibsen import IBS
+from ibsen import IBS # or from ibsen.ibs import IBS3D 
 ibs = IBS(winds=winds, t_to_calculate_beta_eff=2*DAY)
 ibs.peek(showtime=(-3*DAY, 3*DAY), show_winds=True, ibs_color='doppler')
 ```
@@ -137,12 +139,9 @@ See tutorials in `tutorials` folder for the complete description of these models
 
 
 ### TODO
- 1. Make three-dimensional IBS.
- 2. When calculating IC, should we account for the seed photons coming from the disk?
- 3. Occasional NaNs in IC spectrum. Should we ignore them (e.g. by interpolating)? Are they there because of something internally Naimian or is it my fault?
- 4. It seems rather simple to make a 3d interactable visualisation of the IBS. The only thing that stops me is the visualisation of winds in 3d. 
-For now, the only more or less visually pleasant 3d representation of winds in Python is plot a loooot of points with densities \propto density/pressure of winds,
-but it is very time-consuming. Maybe we shoud just ignore winds in 3d visualisation.
+ 1. When calculating IC, should we account for the seed photons coming from the disk?
+ 2. Occasional problems with IC.
+ 3. How to visualize winds in 3D?
  5. If one is bored so much that one feels the need to make the graphical interface better, it'd be cool to add all gamma-ray binaies systems in the drop-down windows, as well as allow for the basic system parameters variation (such as Torb, Mopt, e...) instead of keeping them strictly fixed. Also, the default values and ranges of sliders should be system-dependent.
 
 
