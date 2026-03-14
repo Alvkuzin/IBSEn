@@ -198,6 +198,7 @@ class Orbit:
 
         """
         return self.a * (1 + self.e)
+
     
     def mean_motion(self, t): 
         """
@@ -280,6 +281,23 @@ class Orbit:
 
         """
         return self.a * (1 - self.e * cos(self.ecc_an(t)))
+    
+    def d_ecc_an(self, t):
+        """
+        The time derivative of the eccentric anomaly: \dot{E} = a/r 2pi/T.
+
+        Parameters
+        ----------
+        t : np.ndarray
+            Time relative to the periastron passage [s].
+
+        Returns
+        -------
+        np.ndarray
+            dot E.
+
+        """
+        return self.a / self.r(t) * 2 * pi / self.T
        
         
     def true_an(self, t):
@@ -378,7 +396,7 @@ class Orbit:
             x(t).
 
         """
-        return self.a * (cos(Orbit.ecc_an(self, t)) - self.e)
+        return self.a * (cos(self.ecc_an( t)) - self.e)
 
     def y(self, t):
         """
@@ -395,7 +413,7 @@ class Orbit:
             y(t).
 
         """
-        return self.a * (1 - self.e**2)**0.5 * sin(Orbit.ecc_an(self, t))
+        return self.b * sin(self.ecc_an( t))
 
     def z(self, t):
         """
@@ -412,7 +430,8 @@ class Orbit:
             z(t).
 
         """
-        return Orbit.x(self, t) * 0
+        return t * 0
+    
 
     def vector_sp(self, t):
         """
@@ -429,25 +448,39 @@ class Orbit:
             3D position vector at time t.
 
         """
-        return np.array([Orbit.x(self, t), Orbit.y(self, t), Orbit.z(self, t)])   
+        return np.array([self.x( t), self.y( t), self.z( t)])   
+    
+    def dx(self, t):
+        """Time derivative of an x-coordinate: \dot{x}. """
+        return -self.a * self.d_ecc_an(t) * sin(self.ecc_an(t))
+    
+    def dy(self, t):
+        """Time derivative of an y-coordinate: \dot{y}. """
+        return self.b * self.d_ecc_an(t) * cos(self.ecc_an(t))
+    
+    def dz(self, t):
+        """Time derivative of an z-coordinate: \dot{z}. """
+        return t * 0
+    
+    def vector_v(self, t):
+        """ Vector of the pulsar velocity."""
+        return np.array([self.dx(t), self.dy(t), self.dz(t)])
+    
+
 
     def _calculate(self):
         """
         Tabulate the orbit, set xtab, ytab, ztab, ttab, rtab, nu_truetab.
 
-        Returns
-        -------
-        None.
-
         """
         _E_tab = np.linspace(-2.5 * pi, 2.5 * pi, int(self.n))
         t_tab = self.T/ (2 * pi) * (_E_tab - self.e * sin(_E_tab))
-        self.xtab = Orbit.x(self, t_tab)
-        self.ytab = Orbit.y(self, t_tab)
-        self.ztab = Orbit.z(self, t_tab)    
+        self.xtab = self.x( t_tab)
+        self.ytab = self.y( t_tab)
+        self.ztab = self.z( t_tab)    
         self.ttab = t_tab
-        self.rtab = Orbit.r(self, t_tab)
-        self.nu_truetab = Orbit.true_an(self, t_tab)
+        self.rtab = self.r( t_tab)
+        self.nu_truetab = self.true_an( t_tab)
 
     def peek(self, ax=None,
              showtime = None,
@@ -475,10 +508,6 @@ class Orbit:
             What should the x-axis be on the plots.
             Either 'time' or 'phase'.
                The default is 'time'.
-
-        Returns
-        -------
-        None.
 
         """
         if ax is None:
@@ -520,10 +549,10 @@ class Orbit:
         
         
         for t_pos in times_pos:
-            ax[0].scatter(x=Orbit.x(self, t_pos),
-                          y=Orbit.y(self, t_pos), color=color) # draw a point at time t_pos
+            ax[0].scatter(x=self.x( t_pos),
+                          y=self.y( t_pos), color=color) # draw a point at time t_pos
             
-            ax[1].scatter(x=t_pos/x_norma, y=Orbit.r(self, t_pos), color=color)
+            ax[1].scatter(x=t_pos/x_norma, y=self.r( t_pos), color=color)
             ax[2].scatter(x=t_pos/x_norma,
-                          y=Orbit.true_an(self, t_pos) * 180. / pi, color=color)
+                          y=self.true_an( t_pos) * 180. / pi, color=color)
             

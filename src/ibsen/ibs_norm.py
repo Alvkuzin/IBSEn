@@ -2,7 +2,7 @@ import numpy as np
 from numpy import sin, cos
 from ibsen.utils import beta_from_g, absv, \
  vector_angle, rotate_z, rotate_z_xy, n_from_v, plot_with_gradient, \
-     rotate_vec1_around_vec2, _asvec, plot_surface_quads
+     rotate_vec1_around_vec2, _asvec, plot_surface_quads, rotate_fromax_toax
 from pathlib import Path
 from scipy.interpolate import interp1d
 from scipy.optimize import brentq
@@ -584,6 +584,53 @@ class BaseIBSNorm_3D: #!!!
 
         return rotated_ibs
     
+    def rotate_to_ax(self, new_axis):
+        """
+        Rotates the shock in such a way that the `new_axis` is the new symmetry
+        axis. Follows the same logic as the method `rotate`, but instead of 
+        rotating an IBS at some angle around some axis, it is rotated TO the
+        axis `new_axis`.
+        Note that the vector of the line of sight unit_los is not rotated.
+        
+        Parameters
+        ----------
+        new_axis : np.array of shape (3,)
+            The vector defining the new symmetry axis.
+            
+        Returns
+        -------
+        rotated_ibs : class IBS_norm
+            The class of dimentionleess IBS corresponding to the rotated IBS.
+            Relative to the initial IBS object, changed attributes are: x, y, z,
+            r_vec, r1_vec, unit_r, unit_r1, unit_beta, vec_beta, and the same
+            with "_mid". And also, unit_rsp.
+            
+        """
+        new_axis = n_from_v(new_axis)
+        old_axis = np.array([-1, 0, 0])
+        rotated_ibs = self.__class__(beta=self.beta, gamma_max=self.gamma_max, s_max=self.s_max,
+                               s_max_g = self.s_max_g, n=self.n,
+                               n_phi=self.n_phi,
+                               unit_los=self.unit_los)
+
+        for name in ("r_vec", "r1_vec", "unit_r", "unit_r1", "unit_beta", "vec_beta"):
+            for suffix in ("", "_mid"):
+                arr = getattr(self, name+suffix)
+                new_arr = rotate_fromax_toax(v=arr, ax1=old_axis, ax2=new_axis)
+                setattr(rotated_ibs, name+suffix, new_arr)
+                
+        for suffix in ("", "_mid"):
+            rotated_rvec = getattr(rotated_ibs, "r_vec"+suffix)
+            _x, _y, _z = [rotated_rvec[..., _i] for _i in (0, 1, 2)]
+            setattr(rotated_ibs, "x"+suffix, _x)
+            setattr(rotated_ibs, "y"+suffix, _y)
+            setattr(rotated_ibs, "z"+suffix, _z)
+        
+            
+        rotated_ibs.unit_rsp = rotate_fromax_toax(v=self.unit_rsp, ax1=old_axis, ax2=new_axis)
+
+        return rotated_ibs
+    
     @staticmethod
     def doppler_factor(g_vel, ang_):
         """
@@ -677,7 +724,12 @@ class BaseIBSNorm_3D: #!!!
              edgecolor='k', linewidth=0.15):
         xstar_, ystar_, zstar_ = -self.unit_rsp
         xlos_, ylos_, zlos_ = self.unit_los
-
+        
+        if ax is None:
+            import matplotlib.pyplot as plt
+            fig = plt.figure()
+            ax = fig.add_subplot(111, projection="3d")   
+            
         if ibs_color in ( 'doppler', 'scattering', 'scattering_comov', 'scattering_comoving'):
             if ibs_color == 'doppler':
                 color_param = self.dopl
@@ -697,7 +749,7 @@ class BaseIBSNorm_3D: #!!!
             bar_label=None
             colorbar=False
         plot_surface_quads(ax=ax, coords=self.r_vec, param=color_param, linewidth=linewidth,
-                           edgecolor=edgecolor, colorbar=colorbar, close_phi=True,
+                           edgecolor=edgecolor, colorbar=colorbar, phi_close=True,
                            cbar_label=bar_label,
                            )
         ax.scatter(0, 0, 0, color='r')

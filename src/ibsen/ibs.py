@@ -722,10 +722,15 @@ class IBS3D: #!!!
         self.unit_los = unit_los_
         _nu_tr = self.winds.orbit.true_an(self.t_forbeta)
 
+        # self.ibs_n = IBS_norm3D(beta=self.beta, s_max=self.s_max,
+        #     gamma_max=self.gamma_max, s_max_g=self.s_max_g, n=self.n,
+        #     n_phi=self.n_phi,
+        #     unit_los=unit_los_).rotate(phi=pi + _nu_tr, vec_ax=np.array([0, 0, 1]))
+        
         self.ibs_n = IBS_norm3D(beta=self.beta, s_max=self.s_max,
             gamma_max=self.gamma_max, s_max_g=self.s_max_g, n=self.n,
             n_phi=self.n_phi,
-            unit_los=unit_los_).rotate(phi=pi + _nu_tr, vec_ax=np.array([0, 0, 1]))
+            unit_los=unit_los_).rotate_to_ax(new_axis=self.winds.orbit.vector_sp(self.t_forbeta))
         
     def _rescale_to_position(self):
         """
@@ -1147,7 +1152,7 @@ class IBS3D: #!!!
         ax.set_zlim(-1.2*x_scale, 1.2*x_scale) 
         
         plot_surface_quads(ax=ax, coords=self.r_vec, param=color_param, linewidth=linewidth,
-                           edgecolor=edgecolor, colorbar=colorbar, close_phi=True,
+                           edgecolor=edgecolor, colorbar=colorbar, phi_close=True,
                            cbar_label=bar_label, alpha=alpha,
                            )
         # ax.scatter(xstar_, ystar_, zstar_, color='b')

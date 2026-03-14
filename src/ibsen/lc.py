@@ -280,7 +280,7 @@ class LightCurve:
                  height_exp = 0.5,
                  rad_prof = 'pl', r_trunk = None,
                  
-                ibs_ndim=2, s_max=1., gamma_max=3., s_max_g=4., n_ibs=31, n_phi=17,   # ibs
+                ibs_ndim=2, s_max=1., gamma_max=3., s_max_g=4., n_ibs=31, n_phi=33,   # ibs
                              
                               
                 cooling='stat_mimic', to_inject_e = 'ecpl',   # el_ev

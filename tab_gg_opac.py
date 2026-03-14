@@ -9,7 +9,7 @@ def main():
     DAY = 86400.
     R_SOLAR = float(const.R_sun.cgs.value)
     M_SOLAR = float(const.M_sun.cgs.value)
-    RAD_IN_DEG = np.pi / 180.0
+    # RAD_IN_DEG = np.pi / 180.0
     
     parser = argparse.ArgumentParser(
         description="""
@@ -45,19 +45,19 @@ def main():
     parser.add_argument(
         "--nrho",
         type=int,
-        default=21,          # <--- used if user doesn't pass --c
+        default=21,        
         help="nrho: number of nods on r-axis, optional, default 21"
     )
     parser.add_argument(
         "--nphi",
         type=int,
-        default=25,          # <--- used if user doesn't pass --c
+        default=25,        
         help="nphi: number of nods on phi-axis, optional, default 25"
     )
     parser.add_argument(
         "--ne",
         type=int,
-        default=28,          # <--- used if user doesn't pass --c
+        default=28,       
         help="ne: number of nods on e-axis, optional, default 28"
     )
                         
@@ -66,8 +66,8 @@ def main():
     orb = Orbit(T = args.T * DAY,
                 e = args.e,
                 M = args.M * M_SOLAR,
-                nu_los = args.nu_los * RAD_IN_DEG,
-                incl_los = args.incl_los * RAD_IN_DEG,
+                nu_los = np.deg2rad(args.nu_los),
+                incl_los = np.deg2rad(args.incl_los),
                 )
     tabulate_absgg(orb = orb,
                    nrho = args.nrho,

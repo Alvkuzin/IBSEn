@@ -1,11 +1,12 @@
 # ibsen/winds.py
 import numpy as np
 from numpy import pi, sin, cos
-from scipy.optimize import brentq
+from scipy.optimize import brentq, least_squares, root
 from astropy import constants as const
 from ibsen.get_obs_data import get_parameters, known_names
 from ibsen.utils import unpack_params
-from ibsen.utils import rotated_vector, mydot, mycross, n_from_v, absv, enhanche_jump
+from ibsen.utils import rotated_vector, mydot, mycross, n_from_v, absv, \
+    enhanche_jump, angles_from_vec, vector_angle, orthonormal_basis_perp, rotate_vec1_around_vec2
 from ibsen.orbit import Orbit
 import matplotlib.pyplot as plt
 
@@ -192,6 +193,7 @@ class Winds:
                  Topt=None,
                  Mopt=None, 
                  M_ns = 1.4*M_SOLAR,
+                 f_w = 1.0, #  dimentionless Be star polar wind pressure strength
                  f_p = 0.1, # dimentionless pulsar wind pressure strength
                  alpha = 0, # Be-star rotation axis position angle: 2d angle between two planes:
                             # the perpendicular to xy-plane and containing the Omega_Be vector
@@ -206,6 +208,7 @@ class Winds:
                  rad_prof = 'pl', # rad profile for r-dependence of disk pressure
                  r_trunk = None, # if rad_prof == 'bkpl', it's used as a truncation radius
                                   # beyond which P \propto r^-2
+                 v_polar_wind = 3e8, # (constant) radial velocity of polar wind
                  ### for modeling jumps in pressure/height of the disk with time
                  t_forwinds = 0,
                  p_enh = [1, ],
@@ -243,6 +246,7 @@ class Winds:
         self.initiate_disk(f_d, delta, t_forwinds, p_enh,
                            p_enh_times, h_enh, h_enh_times) # sets self.delta and self.f_d 
         self.f_p = f_p
+        self.f_w = f_w
         self.np_disk = np_disk
         self.height_exp = height_exp
         self.rad_prof = rad_prof
@@ -251,6 +255,7 @@ class Winds:
         else:
             self.r_trunk = r_trunk
             
+        self.v_polar_wind = v_polar_wind
         self.ns_b_model = ns_b_model
         self.ns_b_apex = ns_b_apex
         self.ns_b_ref = ns_b_ref 
@@ -634,6 +639,8 @@ class Winds:
         ndisk = self.n_disk
         return mycross(ndisk, n_indisk)
     
+    
+    
     def pulsar_wind_pressure(self, r_from_p):
         """
         Dimensionless pulsar wind pressure at the distance r_from_p from the pulsar.
@@ -667,7 +674,7 @@ class Winds:
             P_w(r_from_s), dimensionless.
 
         """
-        return (self.Ropt / r_from_s)**2
+        return (self.Ropt / r_from_s)**2 * self.f_w
     
     def disk_height(self, r):
         """
@@ -788,6 +795,315 @@ class Winds:
             self._dist_se_1d_nonvec(t_now) for t_now in t_
             ] )
     
+    def _vecs(self, t, vec, which):
+        """
+        If `which` == 'se', treats `vec` as s-e-vector; if 
+        `which` == 'pe', treats `vec` as a p-e-vector;
+        returns vec_pe, vec_se.
+        """
+        vec_sp = self.orbit.vector_sp(t)
+        if which == 'pe':
+            vec_pe = vec
+            vec_se = vec_pe + vec_sp
+        elif which == 'se':
+            vec_se = vec
+            vec_pe = vec_se - vec_sp
+        return vec_pe, vec_se
+    
+    def u_polar_w(self, t, vec, which='pe'):
+        """
+        Vector of the polar wind  relative to pulsar at the point in space
+        defined by `vec`, which is treated either as pe- or se-vector depending
+        on the  `which`={'se', 'pe'}.
+        """
+        v_orbital_pulsar =self.orbit.vector_v(t)
+        vec_pe, vec_se = self._vecs(t, vec, which)
+        norm_se = n_from_v(vec_se)
+        v_wind = norm_se * self.v_polar_wind
+        relative_v_wind = v_wind - v_orbital_pulsar[..., :]
+        return relative_v_wind
+    
+    def vec_polar_w(self, t, vec, which='pe'):
+        """
+        Vector of the polar wind pressure projection onto a vector pe
+        at the point in space
+        defined by `vec`, which is treated either as pe- or se-vector depending
+        on the  `which`={'se', 'pe'}.
+        """
+        vec_pe, vec_se = self._vecs(t, vec, which)
+        n_pe = n_from_v(vec_pe)
+        relative_v_wind = self.u_polar_w(t, vec, which)
+        n_v_w = n_from_v(relative_v_wind)
+        # p_w = self.polar_wind_pressure(absv(vec_se)) * mydot(n_v_w, norm_se) * n_v_w
+        # p_w = self.polar_wind_pressure(absv(vec_se)) * n_v_w
+        p_w = self.polar_wind_pressure(absv(vec_se)) * mydot(n_v_w, n_pe) * n_v_w
+        # p_w = self.polar_wind_pressure(absv(vec_se)) * n_v_w    
+        return p_w
+    
+    def u_disk_w(self, t, vec, which='pe'):
+        """
+        Vector of the disk wind  (relative to pulsar?..) at the point in space
+        defined by `vec`, which is treated either as pe- or se-vector depending
+        on the  `which`={'se', 'pe'}.
+        """
+        v_orbital_pulsar =self.orbit.vector_v(t)
+        vec_sp = self.orbit.vector_sp(t)
+        vec_pe, vec_se = self._vecs(t, vec, which)
+        vec_se = vec_pe + vec_sp
+        norm_se = n_from_v(vec_se)
+        vec_r_in_disc = vec_se - mydot(vec_se, self.n_disk) * self.n_disk
+        v_disc_absv = np.sqrt(self.orbit.GM / absv(vec_r_in_disc))
+        keplerian_direction = n_from_v(mycross(self.n_disk, norm_se))
+        v_disc = v_disc_absv * keplerian_direction
+        relative_v_disc = v_disc# - v_orbital_pulsar
+        return relative_v_disc
+    
+    def vec_disk_w(self, t, vec, which='pe'):
+        """
+        Vector of the decretion disk pressure projection onto a vector pe
+        at the point in space
+        defined by `vec`, which is treated either as pe- or se-vector depending
+        on the  `which`={'se', 'pe'}.
+        """
+        vec_sp = self.orbit.vector_sp(t)
+        vec_pe, vec_se = self._vecs(t, vec, which)
+        vec_se = vec_pe + vec_sp
+        n_pe = n_from_v(vec_pe)
+        relative_v_disc = self.u_disk_w(t, vec, which)
+        n_v_d = n_from_v(relative_v_disc)
+        # p_d = self.decr_disk_pressure(vec_se) * mydot(n_v_d, norm_se) * n_v_d
+        # p_d = self.decr_disk_pressure(vec_se) * n_v_d
+        p_d = self.decr_disk_pressure(vec_se) * mydot(n_v_d, n_pe) * n_v_d
+        # p_d = self.decr_disk_pressure(vec_se) * n_v_d
+        return p_d
+    
+    def vec_pulsar_p(self, t, vec, which='pe'):
+        """
+        Vector of the pulsar pressure projection onto a vector pe
+        at the point in space
+        defined by `vec`, which is treated either as pe- or se-vector depending
+        on the  `which`={'se', 'pe'}.
+        """
+        vec_pe, vec_se = self._vecs(t, vec, which)
+        # p_p = self.pulsar_wind_pressure(absv(vec_pe)) * norm_se
+        p_p = self.pulsar_wind_pressure(absv(vec_pe)) * n_from_v(vec_pe)
+        return p_p
+    
+    def make_vec_(self, r, theta, phi):
+        """
+        Vector vec_se is defined as such: its length is r_se, while theta
+        and phi are the positional angles relative to the orbit coordinate
+        system.
+        """
+        return r * rotated_vector(phi, theta)
+
+    def vec_pe_3d(self, t, eps=1e-3, init_guess=None, norm=True, solve=False,
+                  hemisphere_penalty=1e-3):
+        """
+        
+        """
+        vec_sp = self.orbit.vector_sp(t)
+        rsp = absv(vec_sp)
+            
+        r_se_1d = self.dist_se_1d(t) # zero approximation
+        r_pe_1d = rsp - r_se_1d
+        r_pe_wind = self.f_p**0.5 / (self.f_p**0.5+1.) * rsp
+        def zero_approx_resid(q_red, r_to_use=None):
+            theta, phi = q_red
+            _n = rotated_vector(alpha=phi, incl=theta)
+            if r_to_use is None:
+                vec_pe_zero_approx = r_pe_1d * _n
+            else:
+                vec_pe_zero_approx = r_to_use * _n
+            return (self.vec_disk_w(t, vec_pe_zero_approx) + 
+                    self.vec_polar_w(t, vec_pe_zero_approx) - 
+                    self.vec_pulsar_p(t, vec_pe_zero_approx) )
+
+        q0_prev = [rsp, pi/2., self.orbit.true_an(t)+pi]
+
+        count = 0
+        def d_nn1_dth(n1, theta, phi):
+            """
+            d (n \dot n1) / d theta, where n = rotated_vector(phi, theta)
+            """
+            return mydot(n1, rotated_vector(phi, theta+pi/2))
+        
+        def d_nn1_dph(n1, theta, phi):
+            """
+            d (n \dot n1) / d phi, where n = rotated_vector(phi, theta)
+            """
+            return mydot(n1, rotated_vector(phi+pi/2, theta))
+        
+        def jac_zero_approx(q_red, r_to_use=None):
+            theta, phi = q_red
+            _n = rotated_vector(alpha=phi, incl=theta)
+            if r_to_use is None:
+                vec_pe_zero_approx = r_pe_1d * _n
+            else:
+                vec_pe_zero_approx = r_to_use * _n
+            vec_se = vec_pe_zero_approx + vec_sp
+            vec_pw = self.vec_disk_w(t, vec_pe_zero_approx) 
+            vec_pd = self.vec_polar_w(t, vec_pe_zero_approx) 
+            vec_pp = self.vec_pulsar_p(t, vec_pe_zero_approx) 
+            n_w = n_from_v(vec_pw)
+            n_d = n_from_v(vec_pd)
+            # n_p = n_from_v(vec_pp)
+            pw = self.polar_wind_pressure(absv(vec_se))
+            pd = self.decr_disk_pressure(vec_se)
+            pp = self.pulsar_wind_pressure(absv(vec_pp))
+            dnp_dtheta = rotated_vector(phi, theta+pi/2.)
+            dnp_dphi = rotated_vector(phi+pi/2., theta)
+            
+            df_dth = pw * d_nn1_dth(n_w, theta, phi)*n_w + pd * d_nn1_dth(n_d, theta, phi)*n_d - pp * cos(phi)*dnp_dtheta
+            df_dph = pw * d_nn1_dph(n_w, theta, phi)*n_w + pd * d_nn1_dph(n_d, theta, phi)*n_d - pp * cos(phi)*dnp_dphi
+            return np.array([
+                            [df_dth[0], df_dph[0]],
+                            [df_dth[1], df_dph[1]],
+                            [df_dth[2], df_dph[2]]
+                            ])
+            
+        
+        """
+        Get initial direction estimation as a direction opposite of the 
+        vector:
+            P_w \vec{n_u_w} + P_d \vec{n_u_d} (as if 'external' pressure). 
+        """
+
+        q0_sp = np.array([r_pe_1d, pi/2., self.orbit.true_an(t)+pi])
+        pw = self.polar_wind_pressure(r_se_1d)
+        pd = self.decr_disk_pressure(vec_sp*r_pe_1d/rsp)
+        totp = pw+pd
+        vec_pw_zero = (pw+1e-3*totp) * n_from_v(self.u_polar_w(t, vec_sp*r_pe_1d/rsp, 'se'))
+        vec_pd_zero = (pd+1e-3*totp) * n_from_v(self.u_disk_w(t, vec_sp*r_pe_1d/rsp, 'se'))
+        
+        tot_ext_at_p = -vec_pw_zero - vec_pd_zero
+        # print('d / w = ', absv(vec_pd_zero) / absv(vec_pw_zero))
+        # print('ang(d, w)', np.rad2deg(vector_angle(vec_pw_zero, vec_pd_zero)))
+        # print('ang(result, w)', np.rad2deg(vector_angle(vec_pw_zero, vec_pw_zero)))
+        
+        init_direction = n_from_v(tot_ext_at_p)
+        v_phi, v_theta = angles_from_vec(n_from_v(tot_ext_at_p))
+        v_phi = (v_phi + 2. * pi) % (2. * pi)
+        q0_ext_p = np.array([r_pe_1d, v_theta, v_phi])
+        # resid_ext_p = absv(full_resid(q0_ext_p))
+        # direction_v = n_from_v(v_orbital_pulsar)
+        # v_phi, v_theta = angles_from_vec(n_from_v(v_orbital_pulsar))
+        # q0_v = np.array([r_pe_1d, v_theta, v_phi])
+        # resid_v = absv(full_resid(q0_v))
+        # q0_full = (q0_sp / resid_sp + q0_ext_p / resid_ext_p + q0_v / resid_v) / (1 / resid_sp + 1 / resid_ext_p + 1 / resid_v)
+        # q0_full = list(q0_full)
+        # q0_full = list(q0_sp)
+        # q0_full = list(q0_ext_p)
+        q0_full = [r_pe_1d, 0., 0.]
+        e1, e2, _ = orthonormal_basis_perp(init_direction)
+        
+        def from_loc_to_glob(theta, phi):
+            """
+            Treat theta, phi like local angles around init_direction; translate
+            them into a real direction: theta_glob, phi_glob; 
+            returns a normalized vector in that direction.
+            """
+            norm_1 = rotate_vec1_around_vec2(init_direction, e1, theta)
+            norm_2 = rotate_vec1_around_vec2(norm_1, init_direction, phi)
+            return n_from_v(norm_2)
+        
+        def full_resid(q):
+            
+            r_pe, theta, phi = q
+            
+            # vec_pe = self.make_vec_(r_pe, theta, phi)
+            vec_pe = r_pe * from_loc_to_glob(theta, phi)
+            vec_p_w = self.vec_disk_w(t, vec_pe) 
+            vec_p_d = self.vec_polar_w(t, vec_pe)
+            vec_p_p = self.vec_pulsar_p(t, vec_pe)
+            # n_ext = n_from_v(vec_p_w + vec_p_d)
+            n_pe = n_from_v(vec_pe)
+            n_forward_guess = n_from_v(tot_ext_at_p)
+            penalty = (1 - mydot(n_pe, n_forward_guess))
+            return (vec_p_d + vec_p_w - vec_p_p * (1. + hemisphere_penalty * penalty)
+                    )
+        
+        def full_resid_scalar(r, direction):
+            vec_pe = r * direction
+            return (mydot(self.vec_disk_w(t, vec_pe), direction) + 
+                    mydot(self.vec_polar_w(t, vec_pe), direction) -
+                    absv(self.vec_pulsar_p(t, vec_pe)) )
+
+        
+        while (np.max( np.abs( (np.array(q0_prev) - np.array(q0_full) ) / np.array(q0_full) )) > eps) and (count < 10):
+            rmin = 1e-3 * rsp
+            # rmax = 0.49999 * rsp
+            rmax = r_pe_wind*1.2
+            
+            # rmin = 0.90*r_pe_1d
+            # rmax = 1.1*r_pe_1d
+            
+            
+            # lb = [rmin, 0., 0.]
+            # rb = [rmax, pi, 2.*pi]
+            
+            # lb_dir = [0., 0.]
+            # rb_dir = [pi, 2.*pi]
+            lb = [rmin, 0., 0.]
+            rb = [rmax, pi/2., 2.*pi]
+            
+            # lb_dir = [0., 0.]
+            # rb_dir = [pi/2., 2.*pi]
+            # print(q0_full[1], q0_full[2])
+            
+            q0_prev = q0_full
+            # if norm:
+            #     sol_direction = least_squares(zero_approx_resid, x0=[q0_full[1], q0_full[2]],
+            #                                   bounds=(lb_dir, rb_dir), args=(q0_full[0], ),
+            #                                   ftol=eps, 
+            #                                   # method='trf', 
+            #                                   method='dogbox', 
+                                              
+            #                                   jac=jac_zero_approx,
+            #                                   # jac='3-point',
+            #                                   )
+    
+                # q0_full = [q0_full[0], sol_direction.x[0], sol_direction.x[1]]            
+            sol_full = least_squares(fun=full_resid, x0=q0_full, bounds=(lb, rb),
+                                     jac='3-point', 
+                                     method='trf',
+                                     # tr_solver='exact',
+                                     tr_solver='lsmr',
+                                     ftol=eps, xtol=1e-3,
+                                     x_scale=(r_pe_1d, 0.1, 0.3),
+                                     # method='trf'
+                                     )
+            q0_full = sol_full.x
+            # direction = n_from_v(rotated_vector(alpha=q0_full[2], incl=q0_full[1]))
+            # _r = brentq(full_resid_scalar, 1e-4*rsp, 0.499999*rsp,
+            #             args=(direction, ), rtol=eps,
+            #             )
+            # q0_full = [_r, q0_full[1], q0_full[2]]
+            q0_prev = q0_full
+            # q0_full = sol_full.x
+            count += 1
+            # print(count)
+            if count > 9:
+                print('a!')
+            
+        # vec_pe_solution = self.make_vec_(r=_r, theta=_theta, phi=_phi)
+        
+        if solve:
+            sol_root = root(full_resid, q0_full, method='hybr', tol=eps)
+            q0_full = sol_root.x
+            
+        _r, _theta, _phi = q0_full
+        vec_pe_solution = from_loc_to_glob(_theta, _phi) * _r
+
+        # _r, _theta, _phi = q0_full
+        # vec_se_solution = make_vec_se(r_se=_r, theta=_theta, phi=_phi)
+        final_scalar_res = full_resid_scalar(q0_full[0], n_from_v(vec_pe_solution))
+        p_p_final = absv(self.vec_pulsar_p(t, vec_pe_solution))
+        n_solution = n_from_v(vec_pe_solution) 
+        
+        return n_solution, vec_pe_solution, final_scalar_res / p_p_final
+        
+
     def beta_eff(self, t):
         """
         The effective momentum flux ratio of the pulsar wind to the
