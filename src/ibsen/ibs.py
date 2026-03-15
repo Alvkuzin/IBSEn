@@ -6,7 +6,7 @@ from ibsen.winds import Winds
 from ibsen.ibs_norm import IBS_norm, IBS_norm3D
 from ibsen.utils import plot_with_gradient, \
  lor_trans_ug_iso, lor_trans_b_iso, lor_trans_Teff_iso, rotated_vector, absv, \
-     plot_surface_quads, vector_angle
+     plot_surface_quads, vector_angle, n_from_v
 from ibsen.absorbtion.absorbtion import gg_analyt, gg_tab
 from ibsen.get_obs_data import known_names
 
@@ -680,6 +680,33 @@ class IBS3D: #!!!
     n_phi : int, optional
         The number of sampling points over azimuth, meaning, in the plane
             perpendicular to the line of symmetry. Default is 33.
+    orientation : str or None, optional
+        How the IBS symmetry axis is oriented at the given time. Either None (default),
+        'flow', 'direction', 'projection', or 'full'. 
+        --- None: the IBS symetry axis is along the S-P line.
+        --- 'flow': takes the 1D solutoin for PE; calculates the velocities
+        of polar/disk components in the pulsar reference frame: u_w/u_d;
+        defies the axis as anti-parallel to the vector
+            P_w(1D) * u_w(1D) + P_d(1D) * u_d(1D).
+        ONLY THIS OPTION AND `None` GIVE STABLE AND TESTED RESULTS.
+        
+        For the next two options, let us define an equation: a ram pressure
+        tensor P_ij = P n_i n_j (n --- a normal vector in the direciton of the
+        relative vel), so if we want the polar+disk pressure projection onto a
+        PE line to be equal to the pulsar pressure, we get the vector equation:
+            
+        P_d (n_d * n_pe) n_d + P_w (n_w * n_pe) n_w = P_p n_pe.
+        
+        --- 'projection':  fixing the direction n_pe as given by the 'flow', 
+        solves the scalar equation which is a projection of the equation above
+        onto a PE line. Starts from the 1D r_pe. 
+        --- 'direction':  fixing |r_pe| at its 1D solution, solves the
+        equation above in the least-squares sense for the direction n_pe. Starts
+        from the solution given by 'flow' as an initial guess.
+        --- 'full':  solves the equation above in the least-squares sense for
+        the direction n_pe and |r_pe|.Starts from the solution given by 'flow' 
+        as an initial guess.
+        
     abs_gg_filename : str or None, optional
         Name of the file with tabukated gg-opacity. If None (default),
         IBSEn searches for a file tabulated for winds.sys_name if it is in
@@ -687,8 +714,8 @@ class IBS3D: #!!!
         searches for a file tabulated for a system with this name.
     
     """
-    def __init__(self, t_to_calculate_beta_eff, s_max=1.0, gamma_max=3.0, s_max_g=4.0, n=31, 
-                 n_phi=33,
+    def __init__(self, t_to_calculate_beta_eff, s_max=1.0, gamma_max=3.0, s_max_g=4.0,
+                 n=31, n_phi=33, orientation = None,
                  winds = None, 
                  abs_gg_filename = None):
         self.t_forbeta = t_to_calculate_beta_eff
@@ -698,6 +725,8 @@ class IBS3D: #!!!
         self.n = n
         self.n_phi = n_phi
         self.winds = winds
+        self.orientation = orientation
+        
         self.ug_apex = winds.u_g_density_apex(t=t_to_calculate_beta_eff)
         b_ns_apex, b_opt_apex = winds.magn_fields_apex(t=t_to_calculate_beta_eff)
         self.b_ns_apex, self.b_opt_apex = b_ns_apex, b_opt_apex
@@ -714,23 +743,31 @@ class IBS3D: #!!!
         """calculate the effective beta from Winds at time t_forbeta and 
             initialize the normalized IBS with this beta.
         """
-        self.beta = self.winds.beta_eff(self.t_forbeta)
         self.r_sp = self.winds.orbit.r(self.t_forbeta)
-        self.r_se = self.winds.dist_se_1d(self.t_forbeta)
-
+        if self.orientation is None:
+            self.beta = self.winds.beta_eff(self.t_forbeta)
+            self.r_se = self.winds.dist_se_1d(self.t_forbeta)
+            self.symm_ax = self.winds.orbit.vector_sp(self.t_forbeta)
+        else:
+            vec_pe_3d = self.winds.vec_pe_3d(self.t_forbeta, method=self.orientation)
+            r_pe = absv(vec_pe_3d)
+            self.r_se = self.r_sp - r_pe
+            self.symm_ax = n_from_v(vec_pe_3d)
+            self.beta = self.winds.beta_eff(self.t_forbeta, method=self.orientation)
         unit_los_ = rotated_vector(self.winds.orbit.nu_los, self.winds.orbit.incl_los)
         self.unit_los = unit_los_
-        _nu_tr = self.winds.orbit.true_an(self.t_forbeta)
-
+        
+        # _nu_tr = self.winds.orbit.true_an(self.t_forbeta)
         # self.ibs_n = IBS_norm3D(beta=self.beta, s_max=self.s_max,
         #     gamma_max=self.gamma_max, s_max_g=self.s_max_g, n=self.n,
         #     n_phi=self.n_phi,
         #     unit_los=unit_los_).rotate(phi=pi + _nu_tr, vec_ax=np.array([0, 0, 1]))
+            
         
         self.ibs_n = IBS_norm3D(beta=self.beta, s_max=self.s_max,
             gamma_max=self.gamma_max, s_max_g=self.s_max_g, n=self.n,
             n_phi=self.n_phi,
-            unit_los=unit_los_).rotate_to_ax(new_axis=self.winds.orbit.vector_sp(self.t_forbeta))
+            unit_los=unit_los_).rotate_to_ax(new_axis=self.symm_ax)
         
     def _rescale_to_position(self):
         """

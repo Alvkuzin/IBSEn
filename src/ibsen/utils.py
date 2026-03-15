@@ -966,7 +966,7 @@ def loggrid(x1, x2, n_dec):
     """
     if x2 <= x1:
         raise ValueError('x2 should be > x1 for loggrid.')
-    n_points = max(int( np.log10(x2 / x1) * n_dec) + 1., 2.)
+    n_points = max(int( np.log10(x2 / x1) * n_dec) + 1, 2)
     return np.geomspace(x1, x2, n_points)
 
 def logrep(xdata, ydata):

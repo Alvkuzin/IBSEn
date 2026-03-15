@@ -296,7 +296,7 @@ class Winds:
     
     def ns_field(self, r_to_p, model='linear', B_apex=None, t_b_ns = None,
                  B_ref = None, r_ref = None,
-                 L_spindown = None, sigma_magn = None):   
+                 L_spindown = None, sigma_magn = None, orientation=None):   
         """
         The magnetic field of the NS [G] at the distance r_to_p. If B_apex 
         is provided, the field is calculated relative to the IBS apex 
@@ -353,8 +353,9 @@ class Winds:
                 # t_b_ns = 
                 raise ValueError("""To calculate NS field from apex 
                                  value, provide t_b_ns.""")
-            r_se = self.dist_se_1d(t_b_ns)
-            r_pe = self.orbit.r(t_b_ns) - r_se
+            # r_se = self.dist_se_1d(t_b_ns)
+            # r_pe = self.orbit.r(t_b_ns) - r_se
+            r_pe = self.dist_pe(t_b_ns, orientation)
             if model in ('linear', 'from_L_sigma'):
                 b_puls = B_apex * r_pe / r_to_p
             else:
@@ -371,7 +372,7 @@ class Winds:
         
         return b_puls
     
-    def ns_field_initialized(self, r_to_p, t):
+    def ns_field_initialized(self, r_to_p, t, orientation=None):
         """
         Helper that collects all parameters passed to Winds class and returns
         the NS field at distance r_to_sp, supposing that if any B_apex was
@@ -396,11 +397,12 @@ class Winds:
                               B_apex=self.ns_b_apex, t_b_ns = t,
                      B_ref = self.ns_b_ref, r_ref = self.ns_r_ref,
                      L_spindown = self.ns_L_spindown,
-                     sigma_magn = self.ns_sigma_magn)
+                     sigma_magn = self.ns_sigma_magn,
+                     orientation=orientation)
     
     def opt_field(self, r_to_s, model = 'linear', B_apex=None, 
                   t_b_opt = None,
-                  r_ref=None, B_ref=None):
+                  r_ref=None, B_ref=None, orientation=None):
         """
         The magnetic field of the opt. star [G] at the distance r_to_s.
         If B_apex 
@@ -449,7 +451,9 @@ class Winds:
                 raise ValueError("""To calculate Opt field from apex 
                                  value, `Winds` class should be initialized
                                  with t_forwinds value.""")
-            r_se = self.dist_se_1d(t_b_opt)
+            # r_se = self.dist_se_1d(t_b_opt)
+            r_pe = self.dist_pe(t_b_opt, orientation)
+            r_se = self.orbit.r(t_b_opt) - r_pe
             if model == 'linear':
                 b_opt = B_apex * r_se / r_to_s
             else:
@@ -462,7 +466,7 @@ class Winds:
         
         return b_opt
     
-    def opt_field_initialized(self, r_to_s, t):
+    def opt_field_initialized(self, r_to_s, t, orientation=None):
         """
         Helper that collects all parameters passed to Winds class and returns
         the optical star field at distance r_to_s, supposing that if any B_apex was
@@ -485,7 +489,8 @@ class Winds:
         """
         return self.opt_field(r_to_s, model=self.opt_b_model,
                               B_apex=self.opt_b_apex, t_b_opt = t,
-                     B_ref = self.opt_b_ref, r_ref = self.opt_r_ref)
+                     B_ref = self.opt_b_ref, r_ref = self.opt_r_ref,
+                     orientation=orientation)
     
     def u_g_density(self, r_from_s, r_star, T_star):      
         """
@@ -855,7 +860,7 @@ class Winds:
         v_disc_absv = np.sqrt(self.orbit.GM / absv(vec_r_in_disc))
         keplerian_direction = n_from_v(mycross(self.n_disk, norm_se))
         v_disc = v_disc_absv * keplerian_direction
-        relative_v_disc = v_disc# - v_orbital_pulsar
+        relative_v_disc = v_disc - v_orbital_pulsar
         return relative_v_disc
     
     def vec_disk_w(self, t, vec, which='pe'):
@@ -897,17 +902,19 @@ class Winds:
         """
         return r * rotated_vector(phi, theta)
 
-    def vec_pe_3d(self, t, eps=1e-3, init_guess=None, norm=True, solve=False,
-                  hemisphere_penalty=1e-3):
+    def _vec_pe_3d_novec(self, t, eps=1e-3, orientation='flow'):
         """
         
         """
+        if orientation not in ('flow', 'projection', 'direction', 'full'):
+            raise ValueError("Invalid keyword `orientation` in Winds.vec_pe_3d.")
         vec_sp = self.orbit.vector_sp(t)
         rsp = absv(vec_sp)
             
         r_se_1d = self.dist_se_1d(t) # zero approximation
         r_pe_1d = rsp - r_se_1d
         r_pe_wind = self.f_p**0.5 / (self.f_p**0.5+1.) * rsp
+        
         def zero_approx_resid(q_red, r_to_use=None):
             theta, phi = q_red
             _n = rotated_vector(alpha=phi, incl=theta)
@@ -961,6 +968,7 @@ class Winds:
                             [df_dth[1], df_dph[1]],
                             [df_dth[2], df_dph[2]]
                             ])
+        
             
         
         """
@@ -985,18 +993,7 @@ class Winds:
         v_phi, v_theta = angles_from_vec(n_from_v(tot_ext_at_p))
         v_phi = (v_phi + 2. * pi) % (2. * pi)
         q0_ext_p = np.array([r_pe_1d, v_theta, v_phi])
-        # resid_ext_p = absv(full_resid(q0_ext_p))
-        # direction_v = n_from_v(v_orbital_pulsar)
-        # v_phi, v_theta = angles_from_vec(n_from_v(v_orbital_pulsar))
-        # q0_v = np.array([r_pe_1d, v_theta, v_phi])
-        # resid_v = absv(full_resid(q0_v))
-        # q0_full = (q0_sp / resid_sp + q0_ext_p / resid_ext_p + q0_v / resid_v) / (1 / resid_sp + 1 / resid_ext_p + 1 / resid_v)
-        # q0_full = list(q0_full)
-        # q0_full = list(q0_sp)
-        # q0_full = list(q0_ext_p)
-        q0_full = [r_pe_1d, 0., 0.]
         e1, e2, _ = orthonormal_basis_perp(init_direction)
-        
         def from_loc_to_glob(theta, phi):
             """
             Treat theta, phi like local angles around init_direction; translate
@@ -1006,7 +1003,15 @@ class Winds:
             norm_1 = rotate_vec1_around_vec2(init_direction, e1, theta)
             norm_2 = rotate_vec1_around_vec2(norm_1, init_direction, phi)
             return n_from_v(norm_2)
+
+        q0_full = [r_pe_1d, 0., 0.]
+        if orientation == 'flow':
+            _r, _theta, _phi = q0_full
+            vec_pe_solution = from_loc_to_glob(_theta, _phi) * _r
+            return vec_pe_solution
+    
         
+
         def full_resid(q):
             
             r_pe, theta, phi = q
@@ -1017,17 +1022,37 @@ class Winds:
             vec_p_d = self.vec_polar_w(t, vec_pe)
             vec_p_p = self.vec_pulsar_p(t, vec_pe)
             # n_ext = n_from_v(vec_p_w + vec_p_d)
-            n_pe = n_from_v(vec_pe)
-            n_forward_guess = n_from_v(tot_ext_at_p)
-            penalty = (1 - mydot(n_pe, n_forward_guess))
-            return (vec_p_d + vec_p_w - vec_p_p * (1. + hemisphere_penalty * penalty)
+            # n_pe = n_from_v(vec_pe)
+            # n_forward_guess = n_from_v(tot_ext_at_p)
+            # penalty = (1 - mydot(n_pe, n_forward_guess))
+            return (vec_p_d + vec_p_w - vec_p_p #* (1. + hemisphere_penalty * penalty)
                     )
         
         def full_resid_scalar(r, direction):
             vec_pe = r * direction
             return (mydot(self.vec_disk_w(t, vec_pe), direction) + 
                     mydot(self.vec_polar_w(t, vec_pe), direction) -
-                    absv(self.vec_pulsar_p(t, vec_pe)) )
+                    self.pulsar_wind_pressure(r) )
+            # n_d = n_from_v(self.u_disk_w(t, vec_pe, 'pe'))
+            # n_w = n_from_v(self.u_polar_w(t, vec_pe, 'pe'))
+            # vec_se = vec_sp + vec_pe
+            # return (self.polar_wind_pressure(absv(vec_se)) * mydot(n_w, direction)**2 +
+            #         self.decr_disk_pressure(vec_se) * mydot(n_d, direction)**2                         
+            #                                  - self.pulsar_wind_pressure(r))
+        
+        if orientation == 'projection':
+            # direction = n_from_v(rotated_vector(alpha=q0_full[2], incl=q0_full[1]))
+            # _r = brentq(full_resid_scalar, 1e-3*rsp, 0.49*rsp,
+            #             args=(init_direction, ), rtol=eps,
+            #             )
+            sol = root(full_resid_scalar, x0=r_pe_1d, args=(init_direction,),
+                      tol=eps,)
+            # sol = least_squares(full_resid_scalar, x0=r_pe_1d, args=(init_direction,),
+            #           bounds=[1e-4*rsp, 0.49999*rsp])
+            _r = sol.x[0]
+            
+            return _r * init_direction
+            
 
         
         while (np.max( np.abs( (np.array(q0_prev) - np.array(q0_full) ) / np.array(q0_full) )) > eps) and (count < 10):
@@ -1042,8 +1067,8 @@ class Winds:
             # lb = [rmin, 0., 0.]
             # rb = [rmax, pi, 2.*pi]
             
-            # lb_dir = [0., 0.]
-            # rb_dir = [pi, 2.*pi]
+            lb_dir = [0., 0.]
+            rb_dir = [pi/2., 2.*pi]
             lb = [rmin, 0., 0.]
             rb = [rmax, pi/2., 2.*pi]
             
@@ -1053,58 +1078,74 @@ class Winds:
             
             q0_prev = q0_full
             # if norm:
-            #     sol_direction = least_squares(zero_approx_resid, x0=[q0_full[1], q0_full[2]],
-            #                                   bounds=(lb_dir, rb_dir), args=(q0_full[0], ),
-            #                                   ftol=eps, 
-            #                                   # method='trf', 
-            #                                   method='dogbox', 
-                                              
-            #                                   jac=jac_zero_approx,
-            #                                   # jac='3-point',
-            #                                   )
-    
-                # q0_full = [q0_full[0], sol_direction.x[0], sol_direction.x[1]]            
-            sol_full = least_squares(fun=full_resid, x0=q0_full, bounds=(lb, rb),
-                                     jac='3-point', 
-                                     method='trf',
-                                     # tr_solver='exact',
-                                     tr_solver='lsmr',
-                                     ftol=eps, xtol=1e-3,
-                                     x_scale=(r_pe_1d, 0.1, 0.3),
-                                     # method='trf'
-                                     )
-            q0_full = sol_full.x
-            # direction = n_from_v(rotated_vector(alpha=q0_full[2], incl=q0_full[1]))
-            # _r = brentq(full_resid_scalar, 1e-4*rsp, 0.499999*rsp,
-            #             args=(direction, ), rtol=eps,
-            #             )
-            # q0_full = [_r, q0_full[1], q0_full[2]]
+            if orientation == 'direction':
+                sol_direction = least_squares(zero_approx_resid, 
+                                        x0=[q0_full[1], q0_full[2]],
+                                          bounds=(lb_dir, rb_dir), args=(q0_full[0], ),
+                                          ftol=eps, 
+                                          # method='trf', 
+                                          method='dogbox', 
+                                          jac=jac_zero_approx,
+                                          # jac='3-point',
+                                          )
+
+                q0_full = [q0_full[0], sol_direction.x[0], sol_direction.x[1]]         
+            if orientation == 'full':
+                sol_full = least_squares(fun=full_resid, x0=q0_full, bounds=(lb, rb),
+                                         jac='3-point', 
+                                         method='dogbox',
+                                         # tr_solver='exact',
+                                         tr_solver='lsmr',
+                                         ftol=eps, xtol=1e-3,
+                                         x_scale=(r_pe_1d, 0.1, 0.3),
+                                         # method='trf'
+                                         )
+                q0_full = sol_full.x
             q0_prev = q0_full
             # q0_full = sol_full.x
             count += 1
             # print(count)
             if count > 9:
                 print('a!')
-            
+        
         # vec_pe_solution = self.make_vec_(r=_r, theta=_theta, phi=_phi)
         
-        if solve:
-            sol_root = root(full_resid, q0_full, method='hybr', tol=eps)
-            q0_full = sol_root.x
+        # if solve:
+        #     sol_root = root(full_resid, q0_full, method='hybr', tol=eps)
+        #     q0_full = sol_root.x
             
         _r, _theta, _phi = q0_full
         vec_pe_solution = from_loc_to_glob(_theta, _phi) * _r
 
         # _r, _theta, _phi = q0_full
         # vec_se_solution = make_vec_se(r_se=_r, theta=_theta, phi=_phi)
-        final_scalar_res = full_resid_scalar(q0_full[0], n_from_v(vec_pe_solution))
-        p_p_final = absv(self.vec_pulsar_p(t, vec_pe_solution))
-        n_solution = n_from_v(vec_pe_solution) 
-        
-        return n_solution, vec_pe_solution, final_scalar_res / p_p_final
+        # final_scalar_res = full_resid_scalar(q0_full[0], n_from_v(vec_pe_solution))
+        # p_p_final = absv(self.vec_pulsar_p(t, vec_pe_solution))
+        # n_solution = n_from_v(vec_pe_solution) 
+        return vec_pe_solution
+        # return n_solution, vec_pe_solution, final_scalar_res / p_p_final
         
 
-    def beta_eff(self, t):
+    def vec_pe_3d(self, t, eps=1e-3, orientation='flow'): 
+        t_ = np.asarray(t)
+        if t_.ndim == 0:
+            return self._vec_pe_3d_novec(float(t), eps, orientation)
+        
+        return np.array( [
+            self._vec_pe_3d_novec(t_now, eps, orientation) for t_now in t_
+            ] )
+    
+    def dist_pe(self, t, orientation=None):
+        r_sp = self.orbit.r(t)
+        if orientation is None:
+            r_se = self.dist_se_1d(t)
+            r_pe = r_sp - r_se
+        else:
+            vec_pe = self.vec_pe_3d(t, 1e-3, orientation)
+            r_pe = absv(vec_pe)
+        return r_pe
+        
+    def beta_eff(self, t, orientation=None):
         """
         The effective momentum flux ratio of the pulsar wind to the
         external medium (polar wind + decretion disk) at the apex point.
@@ -1114,6 +1155,10 @@ class Winds:
         ----------
         t : float | np.ndarray
             Time relative to periastron [s].
+        orientation : str or None, optional
+            How to calculate the orientation of the IBS at a given time. 
+            If None (default), supposes the symmetry axis is the S-P line.
+            Else, see method `vec_pe_3d`.
 
         Returns
         -------
@@ -1122,11 +1167,10 @@ class Winds:
 
         """
         r_sp = self.orbit.r(t)
-        r_se = self.dist_se_1d(t)
-        r_pe = r_sp - r_se
-        return (r_pe / r_se)**2
+        r_pe = self.dist_pe(t, orientation)
+        return (r_pe / (r_sp - r_pe))**2
     
-    def magn_fields_apex(self, t):
+    def magn_fields_apex(self, t, orientation=None):
         """
         NS and optical star magnetic fields at the apex point.
 
@@ -1143,8 +1187,10 @@ class Winds:
             The magnetic field of the optical star at the apex point [G].
 
         """
-        r_se = self.dist_se_1d(t)
-        r_pe = self.orbit.r(t) - r_se
+        # r_se = self.dist_se_1d(t)
+        # r_pe = self.orbit.r(t) - r_se
+        r_pe = self.dist_pe(t, orientation)
+        r_se = self.orbit.r(t) - r_pe
         _b_ns_apex = self.ns_field(r_to_p = r_pe, model=self.ns_b_model,
                               B_ref = self.ns_b_ref, B_apex=self.ns_b_apex,
                               t_b_ns=self.t_forwinds,
@@ -1163,7 +1209,7 @@ class Winds:
         return _b_ns_apex, _b_opt_apex
     
     
-    def u_g_density_apex(self, t): 
+    def u_g_density_apex(self, t, orientation=None): 
         """
         The optical star photon field energy density at the apex point.
 
@@ -1178,7 +1224,9 @@ class Winds:
           The optical star photon field energy density at the apex point.
 
         """
-        r_se = self.dist_se_1d( t)
+        # r_se = self.dist_se_1d( t)
+        r_pe = self.dist_pe(t, orientation)
+        r_se = self.orbit.r(t) - r_pe
         return self.u_g_density( r_from_s = r_se,
                                  r_star = self.Ropt,
                                  T_star = self.Topt)
