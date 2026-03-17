@@ -26,7 +26,7 @@ def get_parameters(sys_name):
         Torb_here = 1236.724526*DAY; e_here = 0.874; Topt_here = 3.3e4
         Mopt = 31 * M_SOLAR; M_ns = 1.4  * M_SOLAR
         M_here = Mopt + M_ns; D_here = 2.4e3 * PARSEC; Ropt_here = 9.2 * R_SOLAR
-        nu_los = 2.3; incl_los= 22 / 180 * np.pi
+        nu_los = 2.3; incl_los= (180-22) / 180 * np.pi
         
     elif sys_name == 'rb':
         Torb_here = 0.5*DAY; e_here = 0; Topt_here = 3e3 

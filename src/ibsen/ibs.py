@@ -749,20 +749,14 @@ class IBS3D: #!!!
             self.r_se = self.winds.dist_se_1d(self.t_forbeta)
             self.symm_ax = self.winds.orbit.vector_sp(self.t_forbeta)
         else:
-            vec_pe_3d = self.winds.vec_pe_3d(self.t_forbeta, method=self.orientation)
+            vec_pe_3d = self.winds.vec_pe_3d(self.t_forbeta, orientation=self.orientation)
             r_pe = absv(vec_pe_3d)
             self.r_se = self.r_sp - r_pe
-            self.symm_ax = n_from_v(vec_pe_3d)
-            self.beta = self.winds.beta_eff(self.t_forbeta, method=self.orientation)
+            self.symm_ax = -n_from_v(vec_pe_3d)
+            self.beta = self.winds.beta_eff(self.t_forbeta, orientation=self.orientation)
         unit_los_ = rotated_vector(self.winds.orbit.nu_los, self.winds.orbit.incl_los)
         self.unit_los = unit_los_
-        
-        # _nu_tr = self.winds.orbit.true_an(self.t_forbeta)
-        # self.ibs_n = IBS_norm3D(beta=self.beta, s_max=self.s_max,
-        #     gamma_max=self.gamma_max, s_max_g=self.s_max_g, n=self.n,
-        #     n_phi=self.n_phi,
-        #     unit_los=unit_los_).rotate(phi=pi + _nu_tr, vec_ax=np.array([0, 0, 1]))
-            
+
         
         self.ibs_n = IBS_norm3D(beta=self.beta, s_max=self.s_max,
             gamma_max=self.gamma_max, s_max_g=self.s_max_g, n=self.n,
@@ -811,8 +805,8 @@ class IBS3D: #!!!
     def s_interp(self, s_, what):
         """
         Returns the interpolated value of 'what' (x, y, ...) at the coordinate 
-        s_ [cm] for the first phi-angle. This means that only one horn of the
-        3D IBS corresponding for phi=0 is taken for 'what'.
+        s_ [cm] averaged over phi-angle. This means that only the `what` is
+        averaged over phi for each 's'.
  
         Parameters
         ----------
@@ -835,7 +829,8 @@ class IBS3D: #!!!
         ##### since this is the internal function that should not be used
         ##### by an external user, we put `extrapolate` and use it VERY
         ##### cautiously!!!
-        interpolator = interp1d(self.s[0, :], data[0, ...], kind='linear', 
+        phi_avg_data = np.average(data, axis=0)
+        interpolator = interp1d(self.s[0, :], phi_avg_data, kind='linear', 
                     bounds_error=False, fill_value='extrapolate')
         return interpolator(s_)
     
@@ -993,12 +988,16 @@ class IBS3D: #!!!
     @property
     def b_ns(self):
         """Neutron star-originating magnetic field on the IBS [G]."""
-        return self.winds.ns_field_initialized(r_to_p = self.r, t=self.t_forbeta)
+        return self.winds.ns_field_initialized(r_to_p = self.r, 
+                                               t=self.t_forbeta,
+                                               orientation=self.orientation,)
     
     @property
     def b_ns_mid(self):
         """Neutron star-originating magnetic field on the IBS_mid [G]."""
-        return self.winds.ns_field_initialized(r_to_p = self.r_mid, t=self.t_forbeta)
+        return self.winds.ns_field_initialized(r_to_p = self.r_mid,
+                                               t=self.t_forbeta,
+                                               orientation=self.orientation,)
     
     @property
     def b_ns_comov(self):
@@ -1015,12 +1014,16 @@ class IBS3D: #!!!
     @property
     def b_opt(self):
         """Optical star-originating magnetic field on the IBS [G]."""
-        return self.winds.opt_field_initialized(r_to_s = self.r1, t=self.t_forbeta)
+        return self.winds.opt_field_initialized(r_to_s = self.r1, 
+                                                t=self.t_forbeta,
+                                                orientation=self.orientation,)
     
     @property
     def b_opt_mid(self):
         """Optical star-originating magnetic field on the IBS_mid [G]."""
-        return self.winds.opt_field_initialized(r_to_s = self.r1_mid, t=self.t_forbeta)
+        return self.winds.opt_field_initialized(r_to_s = self.r1_mid, 
+                                                t=self.t_forbeta,
+                                                orientation=self.orientation,)
     
     @property
     def b_opt_comov(self):

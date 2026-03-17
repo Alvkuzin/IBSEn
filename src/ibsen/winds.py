@@ -512,7 +512,9 @@ class Winds:
               distance r_from_s [erg / cm^3].
 
         """
-        factor = 2. * (1. - (1. - (r_star / r_from_s)**2)**0.5 ) # checked!
+        # factor = 2. * (1. - (1. - (r_star / r_from_s)**2)**0.5 ) # checked!
+        factor = (r_star / r_from_s)**2 # checked!
+        
         u_dens = SIGMA_BOLTZ * T_star**4 / C_LIGHT * factor # checked!
         return u_dens
     
@@ -933,13 +935,13 @@ class Winds:
             """
             d (n \dot n1) / d theta, where n = rotated_vector(phi, theta)
             """
-            return mydot(n1, rotated_vector(phi, theta+pi/2))
+            return mydot(n1, rotated_vector(phi, theta+pi/2.))
         
         def d_nn1_dph(n1, theta, phi):
             """
             d (n \dot n1) / d phi, where n = rotated_vector(phi, theta)
             """
-            return mydot(n1, rotated_vector(phi+pi/2, theta))
+            return mydot(n1, rotated_vector(phi+pi/2., theta))
         
         def jac_zero_approx(q_red, r_to_use=None):
             theta, phi = q_red
@@ -1021,34 +1023,18 @@ class Winds:
             vec_p_w = self.vec_disk_w(t, vec_pe) 
             vec_p_d = self.vec_polar_w(t, vec_pe)
             vec_p_p = self.vec_pulsar_p(t, vec_pe)
-            # n_ext = n_from_v(vec_p_w + vec_p_d)
-            # n_pe = n_from_v(vec_pe)
-            # n_forward_guess = n_from_v(tot_ext_at_p)
-            # penalty = (1 - mydot(n_pe, n_forward_guess))
-            return (vec_p_d + vec_p_w - vec_p_p #* (1. + hemisphere_penalty * penalty)
-                    )
+            return (vec_p_d + vec_p_w - vec_p_p)
         
         def full_resid_scalar(r, direction):
             vec_pe = r * direction
             return (mydot(self.vec_disk_w(t, vec_pe), direction) + 
                     mydot(self.vec_polar_w(t, vec_pe), direction) -
                     self.pulsar_wind_pressure(r) )
-            # n_d = n_from_v(self.u_disk_w(t, vec_pe, 'pe'))
-            # n_w = n_from_v(self.u_polar_w(t, vec_pe, 'pe'))
-            # vec_se = vec_sp + vec_pe
-            # return (self.polar_wind_pressure(absv(vec_se)) * mydot(n_w, direction)**2 +
-            #         self.decr_disk_pressure(vec_se) * mydot(n_d, direction)**2                         
-            #                                  - self.pulsar_wind_pressure(r))
+
         
         if orientation == 'projection':
-            # direction = n_from_v(rotated_vector(alpha=q0_full[2], incl=q0_full[1]))
-            # _r = brentq(full_resid_scalar, 1e-3*rsp, 0.49*rsp,
-            #             args=(init_direction, ), rtol=eps,
-            #             )
             sol = root(full_resid_scalar, x0=r_pe_1d, args=(init_direction,),
                       tol=eps,)
-            # sol = least_squares(full_resid_scalar, x0=r_pe_1d, args=(init_direction,),
-            #           bounds=[1e-4*rsp, 0.49999*rsp])
             _r = sol.x[0]
             
             return _r * init_direction
@@ -1059,25 +1045,15 @@ class Winds:
             rmin = 1e-3 * rsp
             # rmax = 0.49999 * rsp
             rmax = r_pe_wind*1.2
-            
-            # rmin = 0.90*r_pe_1d
-            # rmax = 1.1*r_pe_1d
-            
-            
-            # lb = [rmin, 0., 0.]
-            # rb = [rmax, pi, 2.*pi]
+
             
             lb_dir = [0., 0.]
             rb_dir = [pi/2., 2.*pi]
             lb = [rmin, 0., 0.]
             rb = [rmax, pi/2., 2.*pi]
-            
-            # lb_dir = [0., 0.]
-            # rb_dir = [pi/2., 2.*pi]
-            # print(q0_full[1], q0_full[2])
+
             
             q0_prev = q0_full
-            # if norm:
             if orientation == 'direction':
                 sol_direction = least_squares(zero_approx_resid, 
                                         x0=[q0_full[1], q0_full[2]],
@@ -1102,29 +1078,13 @@ class Winds:
                                          )
                 q0_full = sol_full.x
             q0_prev = q0_full
-            # q0_full = sol_full.x
             count += 1
-            # print(count)
             if count > 9:
                 print('a!')
-        
-        # vec_pe_solution = self.make_vec_(r=_r, theta=_theta, phi=_phi)
-        
-        # if solve:
-        #     sol_root = root(full_resid, q0_full, method='hybr', tol=eps)
-        #     q0_full = sol_root.x
-            
+
         _r, _theta, _phi = q0_full
         vec_pe_solution = from_loc_to_glob(_theta, _phi) * _r
-
-        # _r, _theta, _phi = q0_full
-        # vec_se_solution = make_vec_se(r_se=_r, theta=_theta, phi=_phi)
-        # final_scalar_res = full_resid_scalar(q0_full[0], n_from_v(vec_pe_solution))
-        # p_p_final = absv(self.vec_pulsar_p(t, vec_pe_solution))
-        # n_solution = n_from_v(vec_pe_solution) 
-        return vec_pe_solution
-        # return n_solution, vec_pe_solution, final_scalar_res / p_p_final
-        
+        return vec_pe_solution        
 
     def vec_pe_3d(self, t, eps=1e-3, orientation='flow'): 
         t_ = np.asarray(t)
@@ -1187,8 +1147,7 @@ class Winds:
             The magnetic field of the optical star at the apex point [G].
 
         """
-        # r_se = self.dist_se_1d(t)
-        # r_pe = self.orbit.r(t) - r_se
+
         r_pe = self.dist_pe(t, orientation)
         r_se = self.orbit.r(t) - r_pe
         _b_ns_apex = self.ns_field(r_to_p = r_pe, model=self.ns_b_model,
@@ -1224,13 +1183,11 @@ class Winds:
           The optical star photon field energy density at the apex point.
 
         """
-        # r_se = self.dist_se_1d( t)
         r_pe = self.dist_pe(t, orientation)
         r_se = self.orbit.r(t) - r_pe
         return self.u_g_density( r_from_s = r_se,
                                  r_star = self.Ropt,
                                  T_star = self.Topt)
-            
     
     def peek(self, ax=None,
              showtime = None,
@@ -1279,8 +1236,6 @@ class Winds:
         ############# ------ disk passage related stuff ------- ###############
 
         t1, t2 = self.times_of_disk_passage
-        # print('disk equator passage times [days]:')
-        # print(t1/DAY, t2/DAY)
         vec_disk1, vec_disk2 = self.vectors_of_disk_passage
         _r_scale = absv(vec_disk1)
         
@@ -1322,17 +1277,9 @@ class Winds:
         vec_from_s_[:, :, 0] = XX
         vec_from_s_[:, :, 1] = YY
         vec_from_s_[:, :, 2] = XX * 0
-        # pulsar_ps = np.zeros((x_forp.size, y_forp.size))
-        # xpuls, ypuls = self.orbit.x(self.t_forwinds), self.orbit.y(self.t_forwinds)
-        # vec_sp = np.array([xpuls, ypuls, 0])
-        # vec_to_p_ = vec_sp[..., :] - vec_from_s_
-        # pulsar_ps = self.pulsar_wind_pressure(absv(vec_to_p_))        
-        # pres_diff = disk_ps - pulsar_ps
 
         disk_ps = self.decr_disk_pressure(vec_from_s_) + self.polar_wind_pressure(absv(vec_from_s_))
         disk_ps = np.log10(disk_ps) 
-
-        # P_norm = (disk_ps - np.min(disk_ps)) / (np.max(disk_ps) - np.min(disk_ps))
 
         from matplotlib.colors import ListedColormap
 
@@ -1345,7 +1292,6 @@ class Winds:
         custom_cmap = ListedColormap(colors)
         disk_ps[(XX**2 + YY**2)**0.5 < self.Ropt] = np.nan
         disk_ps[disk_ps < np.nanmax(disk_ps)-4.5] = np.nan
-        # norm = Normalize(vmin=np.min(disk_ps), vmax=np.max(disk_ps))
         ax0.contourf(XX, YY, disk_ps, levels=n_levels, cmap=custom_cmap)          
         
         # ax0.contour(XX, YY, pres_diff,  levels=[0], colors='k')

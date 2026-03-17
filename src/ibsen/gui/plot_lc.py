@@ -222,6 +222,7 @@ def compute_lc(ts, bands, sys_name='psrb',
                n_ibs=13,
                ibs_ndim=2,
                n_phi=11,
+               orientation=None,
                s_max=1.,
                s_max_g=2.,
                ### electron spec parameters:
@@ -254,6 +255,7 @@ def compute_lc(ts, bands, sys_name='psrb',
                         ### -----------------------------------------------
                         gamma_max=gamma_max, s_max=s_max, n_ibs=n_ibs,
                         s_max_g=s_max_g, ibs_ndim=ibs_ndim, n_phi=n_phi,
+                        orientation=orientation,
                         ### -----------------------------------------------
                         norm_e=NORMALIZATION_INITIAL,
                         cooling=cooling, p_e=p_e, ecut=e_cut,
@@ -446,7 +448,7 @@ class LightCurveWindow(ToolWindowBase):
                                                       1.0, 18.0)
         lay_disk.addLayout(lay); _wire_slider(self.alpha_deg)
     
-        lay, self.incl_deg = self.make_linear_slider("incl_deg", 0.0, 90.0, 1.0, 30.0)
+        lay, self.incl_deg = self.make_linear_slider("incl_deg", -180.0, 180.0, 1.0, 30.0)
         lay_disk.addLayout(lay); _wire_slider(self.incl_deg)
     
         # ----- IBS parameters -----
@@ -456,6 +458,13 @@ class LightCurveWindow(ToolWindowBase):
         self.ibs_3dim.setChecked(True)
         lay_ibs.addWidget(self.ibs_3dim)
         self.ibs_3dim.stateChanged.connect(lambda _: self.schedule_update())
+        
+        lay_ibs.addWidget(QLabel("orientation"))
+        self.orientation = QComboBox()
+        self.orientation.addItems(["S-P line", "against the flow"])
+        self.orientation.setCurrentText("S-P line")
+        lay_ibs.addWidget(self.orientation)
+        self.orientation.currentIndexChanged.connect(lambda _: self.schedule_update())
         
         lay, self.gamma_max = self.make_linear_slider("gamma_max", 1.0001, 5.0, 0.01, 2.3)
         lay_ibs.addLayout(lay); _wire_slider(self.gamma_max)
@@ -950,6 +959,12 @@ class LightCurveWindow(ToolWindowBase):
         try:
 
             print("Computing LC...")
+            if self.orientation.currentText() == 'S-P line':
+                _orientation = None
+            elif self.orientation.currentText() == 'against the flow':
+                _orientation = 'flow'
+            else:
+                raise ValueError("Invalid input for `orientation`.")
             fluxes = compute_lc(ts, bands, 
                         sys_name=self.sys_name.currentText(),
                         to_parall=self.to_parall.isChecked(),
@@ -969,6 +984,7 @@ class LightCurveWindow(ToolWindowBase):
                         ibs_ndim = (3 if self.ibs_3dim.isChecked() else 2),
                         n_ibs=int(self.slider_value(self.n_ibs)),
                         n_phi=int(self.slider_value(self.n_phi)),
+                        orientation=_orientation,
                         
                         cooling=self.cooling.currentText(),
                         p_e=float(self.slider_value(self.p_e)),

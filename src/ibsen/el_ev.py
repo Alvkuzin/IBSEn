@@ -130,7 +130,7 @@ def t_adiab(dist, eta_flow):
 
 
 
-def total_loss(ee, B, Topt, Ropt, dist, eta_flow, eta_syn, eta_IC):
+def total_loss(ee, B, Topt, Ropt, dist, eta_flow, eta_syn, eta_IC, dist_ad=None):
     """
     Total losses dE/dt = eta_syn * syn_loss + eta_IC * ic_loss - E/t_ad.
     Negative! For a single electron.
@@ -154,6 +154,9 @@ def total_loss(ee, B, Topt, Ropt, dist, eta_flow, eta_syn, eta_IC):
         Proportionality coefficient for the synchrotron losses.
     eta_IC : np.ndarray
         Proportionality coefficient for the inverse Compton losses.
+    dist_ad : np.ndarray or None, optional
+        The distance to calculate the adiabatic losses from. If None (default),
+        taken equal to `dist`. 
 
     Returns
     -------
@@ -162,8 +165,10 @@ def total_loss(ee, B, Topt, Ropt, dist, eta_flow, eta_syn, eta_IC):
 
     """
     eta_flow_max = np.max(np.asarray(eta_flow))
+    if dist_ad is None:
+        dist_ad = dist
     if eta_flow_max < 1e10:
-        return eta_syn * syn_loss(ee, B) + eta_IC * ic_loss(ee, Topt, Ropt, dist) - ee / t_adiab(dist, eta_flow)
+        return eta_syn * syn_loss(ee, B) + eta_IC * ic_loss(ee, Topt, Ropt, dist) - ee / t_adiab(dist_ad, eta_flow)
     else:
         return eta_syn * syn_loss(ee, B) + eta_IC * ic_loss(ee, Topt, Ropt, dist)
     
@@ -228,16 +233,9 @@ def stat_distr_with_leak(Es, Qs, Edots, Ts, mode = 'ivp'):
 
     """
     if mode == 'ivp':
-        # spl_q = interp1d(Es, Qs)
-        # spl_edot = interp1d(Es, Edots)
-        # spl_T = interp1d(Es, Ts)
-        # q_ = lambda en: spl_q(en)
-        # edot_ = lambda en: spl_edot(en)
-        # T_ = lambda en: spl_T(en)
         q_ = lambda en: interplg_positive(en, Es, Qs)
         edot_ = lambda en: -interplg(en, Es, -Edots)
         T_ = lambda en: interplg(en, Es, Ts)
-        
         
         def ode_rhs(e_, u):
             edot_val = edot_(e_)
@@ -253,43 +251,16 @@ def stat_distr_with_leak(Es, Qs, Edots, Ts, mode = 'ivp'):
         n_numeric = u_numeric / Edots
         return n_numeric
     if mode == 'analyt':
-        # Ts = np.maximum(1e1, Ts)
-        # inv_Tf = 1 / (Ts * Edots)
-        # # First, compute ∫_∞^{e} (1 / (T * f)) de
-        # inner_int = cumulative_trapezoid(inv_Tf[::-1], Es[::-1], initial=0)[::-1]  
-        # inner_int_spl = interp1d(Es, inner_int, kind='linear')    
-        # epr = Es
-        # ee, eepr = np.meshgrid(Es, epr, indexing='ij')
-        # inner_int2d = inner_int_spl(eepr) - inner_int_spl(ee)
-        # integrand = Qs * np.exp(inner_int2d)
-        # outer_int2d = cumulative_trapezoid(integrand[::-1, ::-1], epr[::-1], initial=0, axis=1)
-        # outer_int = np.diag(outer_int2d)[::-1]
-        # n_analytic = outer_int / Edots
-        
-        # P(E) = 1 / (T(E) * Edot(E))
         _good = (Edots<0)
         Es, Ts, Qs, Edots = [ar[_good] for ar in (Es, Ts, Qs, Edots)]
         Ts = np.maximum(1e1, Ts)
         P = 1 / (Ts * Edots)
-        
-        # cumP[k] ≈ ∫_{E_min}^{E_k} P(E') dE'
         cumP = np.concatenate(([0.0], cumulative_trapezoid(P, Es)))
-        
         cumP_Emax = cumP[-1]
-        
-        # weight_Q(E) = Q(E) * exp(cumP(E) - cumP(E_max))
         weight_Q = Qs * np.exp(cumP - cumP_Emax)
-        
-        # F[k] ≈ ∫_{E_min}^{E_k} weight_Q(u) du
         F = np.concatenate(([0.0], cumulative_trapezoid(weight_Q, Es)))
-        
-        # Tail integrals S_i = ∫_{E_i}^{E_max} weight_Q(u) du
         S = F[-1] - F
-        
-        # Boundary condition at E_max: y(E_max) = n_Emax * Edot(E_max)
         y_Emax = 0# n_Emax * Edot[-1]
-        
-        # n(E) = exp(cumP(E_max) - cumP(E)) / Edot(E) * [ y(E_max) - S(E) ]
         n_analytic = np.exp(cumP_Emax - cumP) / Edots * (y_Emax - S)
 
         return n_analytic
@@ -1004,16 +975,22 @@ class ElectronsOnIBS: #!!!
 
         """
         r_sa_cm = (self.r_sp - self.ibs.x_apex)
-        _u_dim = self.ibs.s_interp(s_, 'ug')
-        _u_dimless = _u_dim / self.ibs.s_interp(0, 'ug')
+        # r_sa_cm = self.ibs.s_interp(s_, 'r1')
+        # _u_dim = self.ibs.s_interp(s_, 'ug')
+        # _u_dimless = _u_dim / self.ibs.s_interp(0, 'ug')
+        # _r_ad = self.ibs.s_interp(s_, 'r')
         return total_loss(ee = e_, 
                           B = self.ibs.s_interp(s_, 'b'), 
                           Topt = self.ibs.winds.Topt,
                           Ropt=self.ibs.winds.Ropt,
-                          dist = r_sa_cm,
+                          dist = self.ibs.s_interp(s_, 'r1'),
+                          # dist = r_sa_cm,
                           eta_flow = self.eta_a, 
                           eta_syn = self.eta_syn,
-                          eta_IC = self.eta_ic * _u_dimless)
+                          eta_IC = self.eta_ic, #* _u_dimless,
+                          # dist_ad = _r_ad,
+                          dist_ad = self.r_sp, # / ( self.ibs.beta / self.ibs.winds.f_p),
+                          )
 
     def f_inject(self, s_, e_, spat_coord='s'): 
         """

@@ -32,10 +32,8 @@ R_SOLAR = float(const.R_sun.cgs.value)
 M_SOLAR = float(const.M_sun.cgs.value)
 PARSEC = float(const.pc.cgs.value)
 
-ERG_TO_EV = 6.24E11 # 1 erg = 6.24E11 eV
 DAY = 86400.
 sed_unit = u.erg / u.s / u.cm**2
-RAD_IN_DEG = pi / 180.0
 ### !!! correct the docstring!
 docstr_lc = f""" 
 Broadband light curve builder for an intrabinary shock (IBS) system.
@@ -281,7 +279,7 @@ class LightCurve:
                  rad_prof = 'pl', r_trunk = None,
                  
                 ibs_ndim=2, s_max=1., gamma_max=3., s_max_g=4., n_ibs=31, n_phi=33,   # ibs
-                             
+                orientation=None,
                               
                 cooling='stat_mimic', to_inject_e = 'ecpl',   # el_ev
                 to_inject_theta = '3d', ecut = 1.e12, p_e = 2., norm_e = 1.e37,
@@ -370,6 +368,7 @@ class LightCurve:
         self.n_ibs = n_ibs
         self.n_phi = n_phi
         self.ibs_ndim = ibs_ndim
+        self.orientation = orientation
         ################ ---- arguments from el_ev ---- #######################
         self.cooling = cooling
         self.to_inject_e = to_inject_e
@@ -463,8 +462,8 @@ class LightCurve:
         # print('lc ', self.h_enh_times)
         winds_now = Winds(orbit=self.orbit, 
                 sys_name = self.sys_name,
-                alpha=self.alpha_deg/180*pi, 
-                incl=self.incl_deg*pi/180,
+                alpha=np.deg2rad(self.alpha_deg), 
+                incl=np.deg2rad(self.incl_deg),
                 f_d=self.f_d,
                 t_forwinds = t_,
                 p_enh = self.p_enh,
@@ -513,6 +512,7 @@ class LightCurve:
                     n_phi = self.n_phi,
                     t_to_calculate_beta_eff=t_,
                     abs_gg_filename=self.abs_gg_filename,
+                    orientation=self.orientation,
                 )
             
         r_sp_now = self.orbit.r(t=t_)
