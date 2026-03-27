@@ -31,7 +31,6 @@ PARSEC = float(const.pc.cgs.value)
 ERG_TO_EV = 6.24E11 # 1 erg = 6.24E11 eV
 DAY = 86400.
 sed_unit = u.erg / u.s / u.cm**2
-RAD_IN_DEG = pi / 180.0
 
 def syn_loss(ee, B):
     """
@@ -181,25 +180,22 @@ def stat_distr(Es, Qs, Edots):
                                                 
     Parameters
     ----------
-    Es : np.ndarray
+    Es : np.ndarray of shape (Ne, )
         A grid of electron energies.
-    Qs : np.ndarray
+    Qs : np.ndarray (..., Ne)
         The right-hand side Q calculated at a grid Es.
-    Edots : np.ndarray
+    Edots : np.ndarray (..., Ne)
         The total losses Edot calculated at a grid Es.
 
     Returns
     -------
-    np.ndarray
+    np.ndarray (..., Ne)
         The stationary electron spectrum.
 
     """
-    
-    integral_here = np.zeros(Es.size)+1
-    energies_back = Es[::-1]
-    # Q_func_array = Q_func(energies_back)
-    integral_here = -cumulative_trapezoid(Qs[::-1], energies_back, initial = 0)[::-1]
-    return 1 / np.abs(Edots) * integral_here
+
+    integral_here = -cumulative_trapezoid(Qs[..., ::-1], Es[::-1], initial = 0, axis=-1)[..., ::-1]
+    return integral_here / np.abs(Edots)
 
 
 def stat_distr_with_leak(Es, Qs, Edots, Ts, mode = 'ivp'):
@@ -350,6 +346,7 @@ def evolved_e_advection(s_, edot_func, f_inject_func,
     dNe_deds_IBS = interp_x(s_)
     # dNe_deds_IBS[dNe_deds_IBS <= 0] = np.min(dNe_deds_IBS[dNe_deds_IBS>0]) / 3.14
     return dNe_deds_IBS, e_vals
+    
 
 def evolved_e_nonstat_1zone(t_start, t_stop,  
                             q_func, edot_func, 
@@ -560,7 +557,7 @@ def evolved_e(cooling, r_SP, ss, rs, thetas, edot_func, f_inject_func,
     """
     The function previously used to calculate the electron spectrum on the IBS
     taking into account cooling, providing a single interface (and by the interface 
-    I mean this function) fot various cooling modes which are possible. But the initial
+    I mean, well, this function) for various cooling modes which are possible. But the initial
     idea was that it requires only the necessary parameters, because you don't have
     to know much about the IBS and winds actually.
 
@@ -657,13 +654,18 @@ def evolved_e(cooling, r_SP, ss, rs, thetas, edot_func, f_inject_func,
         f_inj_se = f_inject_func(smesh, emesh, *f_args)
         edots_se = edot_func(smesh, emesh, *tot_loss_args)
         dNe_de_IBS = np.zeros((ss.size, e_vals.size))
-                
-        for i_s in range(ss.size):
-            if cooling == 'stat_apex':
-                f_inj_av = np.average(f_inj_se, axis=0)# / np.max(ss)
-                dNe_de_IBS[i_s, :] = stat_distr(e_vals, f_inj_av, edots_se[0, :])
-            if cooling in ('stat_ibs', 'stat_mimic'):
-                dNe_de_IBS[i_s, :] = stat_distr(e_vals, f_inj_se[i_s, :], edots_se[i_s, :])
+        
+        if cooling == 'stat_apex':
+            f_inj_av = np.average(f_inj_se, axis=0)# / np.max(ss)
+            dNe_de_IBS = stat_distr(e_vals, f_inj_av, edots_se[0, :])[None, :]
+        if cooling in ('stat_ibs', 'stat_mimic'):
+            dNe_de_IBS = stat_distr(e_vals, f_inj_se, edots_se)                
+        # for i_s in range(ss.size):
+        #     if cooling == 'stat_apex':
+        #         f_inj_av = np.average(f_inj_se, axis=0)# / np.max(ss)
+        #         dNe_de_IBS[i_s, :] = stat_distr(e_vals, f_inj_av, edots_se[0, :])
+        #     if cooling in ('stat_ibs', 'stat_mimic'):
+        #         dNe_de_IBS[i_s, :] = stat_distr(e_vals, f_inj_se[i_s, :], edots_se[i_s, :])
 
     if cooling in ('leak_apex', 'leak_ibs', 'leak_mimic'):
         e_vals = np.logspace(np.log10(emin), np.log10(emax), 987)
@@ -895,10 +897,6 @@ class ElectronsOnIBS: #!!!
                                   'leak_apex', 'leak_ibs', 'leak_mimic',
                                  'adv')
         
-        # self.Bp_apex = Bp_apex # pulsar magn field in apex
-        # self.Bs_apex = Bs_apex # opt star magn field in apex
-        # self.B_apex = Bp_apex + Bs_apex # total magn field in apex
-        # self.u_g_apex = u_g_apex # photon energy density in apex
         
         if eta_a  is None:
             self.eta_a = 1e20
@@ -955,7 +953,7 @@ class ElectronsOnIBS: #!!!
         return C_LIGHT * (beta_from_g(_gammas) + 1e-5)
 
 
-    def edot(self, s_, e_): 
+    def edot(self, s_, e_, eta_adiab = None): 
         """
         The total energy loss function dE/dt [eV/s] for a single electron
         at the position s_ (in cm) from the apex and with energy e_ (in eV).
@@ -974,7 +972,9 @@ class ElectronsOnIBS: #!!!
             at the position s_ from the apex and with energy e_.
 
         """
-        r_sa_cm = (self.r_sp - self.ibs.x_apex)
+        if eta_adiab is None:
+            eta_adiab = self.eta_a
+        # r_sa_cm = (self.r_sp - self.ibs.x_apex)
         # r_sa_cm = self.ibs.s_interp(s_, 'r1')
         # _u_dim = self.ibs.s_interp(s_, 'ug')
         # _u_dimless = _u_dim / self.ibs.s_interp(0, 'ug')
@@ -985,7 +985,7 @@ class ElectronsOnIBS: #!!!
                           Ropt=self.ibs.winds.Ropt,
                           dist = self.ibs.s_interp(s_, 'r1'),
                           # dist = r_sa_cm,
-                          eta_flow = self.eta_a, 
+                          eta_flow = eta_adiab, 
                           eta_syn = self.eta_syn,
                           eta_IC = self.eta_ic, #* _u_dimless,
                           # dist_ad = _r_ad,
@@ -1092,7 +1092,7 @@ class ElectronsOnIBS: #!!!
     #     f_integrated = trapezoid(f_, e, axis=1)
     #     x__ = _ga*s[:, 0] / self.ibs.s_max_g / self.r_sp
     #     return f_integrated * self.r_sp / C_LIGHT * self.s_max_g/_ga * (2 * x__ + x__**2)**0.5
-    @property
+    
     def analyt_adv_Ntot_self(self):
         """
         Analytically calculated the total number of electrons
@@ -1107,16 +1107,24 @@ class ElectronsOnIBS: #!!!
             The total number of electrons in a point
               on the IBS.
 
-        """
-        s_1d_dim = np.linspace(0, np.max(self.ibs.s[self._up] ) * 1.02, 241)
+        """        
+        if self.ibs.ndim == 2:
+            ### upper horn
+            s_1d_dim = self.ibs.s[self.ibs.n : 2*self.ibs.n] 
+        if self.ibs.ndim == 3:
+            ### the arch corresponding to phi=0
+            s_1d_dim = self.ibs.s[0, :]
+        s_1d_touse = np.linspace(0, np.max(self.ibs.s_max) * 1.02, 241)
         e_vals = loggrid(self.emin_grid, self.emax_grid, 201)
-        ss_, ee_ = np.meshgrid(s_1d_dim, e_vals, indexing='ij')
+        ss_, ee_ = np.meshgrid(s_1d_touse, e_vals, indexing='ij')
         f_se = ElectronsOnIBS.f_inject(self, ss_, ee_)
-        f_s = trapz_loglog(f_se, e_vals, axis=1)
-        v_ = C_LIGHT * (beta_from_g(self.ibs.gma(s_1d_dim)) + 1e-5)
-        res_ = cumulative_trapezoid(f_s/v_, s_1d_dim, initial=0)
-        spl_ = interp1d(s_1d_dim, res_)
-        return spl_(self.ibs.s[self._up])
+        f_s = trapz_loglog(f_se, e_vals, axis=-1)
+        v_ = self.vel(s_1d_touse)
+        res_ = cumulative_trapezoid(f_s/v_, s_1d_touse, initial=0)
+        spl_ = interp1d(s_1d_touse, res_)
+        dnds = spl_(s_1d_dim)
+        return dnds
+        # return dnds * self.ibs.ds[self._up_mid]
         
     
     def analyt_adv_Ntot(self, s_1d, f_inj_integrated):
@@ -1190,8 +1198,10 @@ class ElectronsOnIBS: #!!!
         _ga = self.ibs.gamma_max - 1.
         s_max_g_dimless = self.ibs.ibs_n.s_max_g 
         _x = _ga * s / s_max_g_dimless / self.r_sp
-        res_ = s_max_g_dimless / _ga * ( (1. + _x)**2 - 1.)**0.5
-        floor_eta_a_ = 1e-2
+        x1 = 1 + _x
+        # res_ = s_max_g_dimless / _ga * ( (1. + _x)**2 - 1.)**0.5
+        res_ = s_max_g_dimless / _ga**2 *( (x1**2 - 1.)**0.5 - np.log(x1 + (x1**2 - 1.)**0.5) )
+        floor_eta_a_ = 1e-3
         res_[res_ < floor_eta_a_] = floor_eta_a_
         return res_
     
@@ -1234,11 +1244,14 @@ class ElectronsOnIBS: #!!!
             smesh, emesh = np.meshgrid(s_1d_dim, e_vals, indexing = 'ij')
             # For each s, --> stationary distribution
             if self.cooling == 'stat_mimic':
-                eta_fl_new = ElectronsOnIBS.eta_flow_mimic(self, smesh)
-                self.eta_a = self.eta_a * eta_fl_new
+                eta_fl_new = ElectronsOnIBS.eta_flow_mimic(self, smesh) * self.eta_a
+                # self.eta_a = self.eta_a * eta_fl_new
                 
             f_inj_se = ElectronsOnIBS.f_inject(self, smesh, emesh)
-            edots_se = ElectronsOnIBS.edot(self, smesh, emesh)
+            if self.cooling != 'stat_mimic':
+                edots_se = ElectronsOnIBS.edot(self, smesh, emesh)
+            else:
+                edots_se = ElectronsOnIBS.edot(self, smesh, emesh, eta_fl_new)
             dNe_deds_IBS = np.zeros((s_1d_dim.size, e_vals.size))
                     
             for i_s in range(s_1d_dim.size):
@@ -1247,6 +1260,10 @@ class ElectronsOnIBS: #!!!
                     dNe_deds_IBS[i_s, :] = stat_distr(e_vals, f_inj_av, edots_se[0, :])
                 if self.cooling in ('stat_ibs', 'stat_mimic'):
                     dNe_deds_IBS[i_s, :] = stat_distr(e_vals, f_inj_se[i_s, :], edots_se[i_s, :])
+            if self.cooling in ('stat_mimic', ):
+                ntot = trapz_loglog(dNe_deds_IBS, e_vals, axis=-1)
+                dNe_deds_IBS *= (self.analyt_adv_Ntot_self() / ntot)[:, None]
+                
 
         elif self.cooling in ('leak_apex', 'leak_ibs', 'leak_mimic'):
             e_vals = loggrid(self.emin_grid, self.emax_grid, 107)
@@ -1357,7 +1374,7 @@ class ElectronsOnIBS: #!!!
                                         e_comov, axis=-1) 
         self.ntot_comov = np.sum(self.n_i_mid_comov)
         
-    def calculate(self, to_return=False):
+    def calculate(self, to_return=False, require_lorentz=True):
         """
         Calculates the electron spectrum on the IBS.
         Sets the attributes: 
@@ -1400,7 +1417,8 @@ class ElectronsOnIBS: #!!!
         """
         self._calculate_one_arch()
         self._set_solution_onto_ibs()
-        self._calculate_comoving_e_spec()
+        if require_lorentz:
+            self._calculate_comoving_e_spec()
         self.calculated = True
         if to_return:
             return self.e_vals, self.dNe_deds_IBS

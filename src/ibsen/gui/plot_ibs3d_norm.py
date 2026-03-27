@@ -3,17 +3,12 @@ It's written mainly by ChatGPT. Sorry I'm not a coder jeez!!!!!!!!!!
 """
 import numpy as np
 from PySide6.QtWidgets import (
-    # QCheckBox, 
     QComboBox, 
-    # QHBoxLayout, 
     QLabel, 
-    # QMainWindow,
-    # QPushButton, QSlider, QVBoxLayout, QWidget
 )
 
-from ibsen.gui.base import plot_surface_quads_local, ToolWindowBase
-
-
+from ibsen.gui.base import ToolWindowBase
+from ibsen.gui.utils_gui import plot_surface_quads_local
 
 from ibsen.utils import rotated_vector
 from ibsen.ibs_norm import IBS_norm3D 

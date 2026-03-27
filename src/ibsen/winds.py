@@ -802,6 +802,14 @@ class Winds:
             self._dist_se_1d_nonvec(t_now) for t_now in t_
             ] )
     
+    def dbeta_dn(self, t, eps=1e-4):
+        """
+        calculates T_orb d(beta_eff)/dt
+        """
+        _nu = self.orbit.true_an(t)
+        t_i, t_f = self.orbit.t_from_true_an(_nu - pi*eps), self.orbit.t_from_true_an(_nu + pi*eps)
+        return  (self.beta_eff(t_f) - self.beta_eff(t_i) ) / 2. / (t_f - t_i) * self.orbit.T
+    
     def _vecs(self, t, vec, which):
         """
         If `which` == 'se', treats `vec` as s-e-vector; if 
@@ -896,6 +904,7 @@ class Winds:
         p_p = self.pulsar_wind_pressure(absv(vec_pe)) * n_from_v(vec_pe)
         return p_p
     
+    
     def make_vec_(self, r, theta, phi):
         """
         Vector vec_se is defined as such: its length is r_se, while theta
@@ -903,6 +912,8 @@ class Winds:
         system.
         """
         return r * rotated_vector(phi, theta)
+    
+    
 
     def _vec_pe_3d_novec(self, t, eps=1e-3, orientation='flow'):
         """

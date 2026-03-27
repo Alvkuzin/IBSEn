@@ -935,14 +935,14 @@ class IBS_CRW96:
             return np.nan
     
         
-    def theta1_CRW(self, theta):
+    def theta1_CRW(self, theta, use_approx=True):
         """
         Theta1 (star-to-IBS angle) as a function
           of theta in the model of Canto, Raga, Wilkin (1996).
 
         Parameters
         ----------
-        theta : float
+        theta : float or np.ndarray (only if `use_approx`==True)
             Pulsar-to-IBS angle [rad].
 
         Returns
@@ -951,13 +951,20 @@ class IBS_CRW96:
             theta1(theta) [rad].
 
         """
-        if theta == 0:
-            return 0
-        else:
+        if not use_approx:
+            if theta == 0:
+                return 0
             th1_inf = np.pi - self.theta_inf_analytical 
             to_solve2 = lambda t1: t1 / np.tan(t1) - 1. - self.beta * (theta / np.tan(theta) - 1)
             th1 = brentq(to_solve2, 1e-10, th1_inf)
             return th1
+        if use_approx:
+            _x = (1. - theta / np.tan(theta))
+            return np.sqrt(
+                7.5 * (
+                    -1. + np.sqrt(1. + 0.8 * self.beta * _x)
+                        )
+                           )
         
     def approx_IBS(self, full_output = False):
         """
@@ -982,12 +989,24 @@ class IBS_CRW96:
     
         """
         b = np.abs(np.log10(self.beta))
-        # first, find the shape in given b by interpolation
-        intpl = ds_sh.interp(abs_logbeta=b)
-        xs_, ys_, ts_, rs_, ss_, t1s_, r1s_ = (intpl.x, intpl.y, intpl.theta,
-                        intpl.r, intpl.s, intpl.theta1, intpl.r1, )
-        xs_, ys_, ts_, rs_, ss_, t1s_, r1s_ = [np.array(arr) for arr in (xs_, ys_,
-                                        ts_, rs_, ss_, t1s_, r1s_)]
+        # first, find the shape in given b by interpolationtheta1_CRW
+        if b < 0.5:
+            # _here = Path(__file__).parent          
+            # _ibs_data_file = _here / "tab_data" / "Shocks4.nc"
+            # ds_sh = xr.load_dataset(_ibs_data_file)
+            intpl = ds_sh.interp(abs_logbeta=b)
+            xs_, ys_, ts_, rs_, ss_, t1s_, r1s_ = (intpl.x, intpl.y, intpl.theta,
+                            intpl.r, intpl.s, intpl.theta1, intpl.r1, )
+            xs_, ys_, ts_, rs_, ss_, t1s_, r1s_ = [np.array(arr) for arr in (xs_, ys_,
+                                            ts_, rs_, ss_, t1s_, r1s_)]
+        else:
+            ts_ = np.linspace(0.01, self.thetainf*0.999, 301)
+            t1s_ = self.theta1_CRW(theta=ts_, use_approx=True)
+            rs_ = sin(t1s_) / sin(ts_ + t1s_)
+            xs_, ys_ = rs_ * cos(ts_), rs_ * sin(ts_)
+            r1s_ = np.sqrt(ys_**2 + (1. - xs_)**2)
+            ds = np.sqrt(np.diff(xs_)**2 + np.diff(ys_)**2)
+            ss_ = np.concatenate(([0], np.cumsum(ds)))
         
         tang = np.arctan(np.gradient(ys_, xs_, edge_order=2))
         ds_dt_ = np.gradient(ss_, ts_, edge_order=2)

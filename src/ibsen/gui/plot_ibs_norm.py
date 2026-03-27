@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from ibsen.ibs_norm import IBS_norm
-from ibsen.gui.base import GradientPlot
+from ibsen.gui.utils_gui import GradientPlot
 
                 
 def points_and_color(beta, nu_los, s_max, gamma_max, phi_rot, ibs_color):

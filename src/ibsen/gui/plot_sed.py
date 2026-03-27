@@ -15,63 +15,11 @@ from PySide6.QtWidgets import QFileDialog
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 
-
-# from ibsen.utils import fit_norm, interplg
-from ibsen.gui.base import fit_norm_here
-from ibsen import Orbit, Winds, IBS,  ElectronsOnIBS, SpectrumIBS
-from ibsen.ibs import IBS3D
-from gammapy.estimators import FluxPoints
-
+from ibsen.gui.utils_gui import fit_norm_here, read_sed_gammapy, read_sed_txt_dat
+from ibsen import Orbit, Winds, IBS,  ElectronsOnIBS, SpectrumIBS, IBS3D
+    
 NORMALIZATION_INITIAL = 1E37
 
-
-def read_sed_txt_dat(path):
-    """
-    Reads the SED called sed_{key}{suffix}.txt
-
-    returns : dict['e', 'sed', 'dsed', 'dsed_minus', 'dsed_plus',
-                     'de', 'de_minus', 'de_plus']
-    e in TeV
-    seds in erg/cm2/s
-    """
-
-    da = np.genfromtxt(path,
-                       delimiter=' ', usecols=[0, 1, 2, 3, 4, 5], 
-                       names=['e', 'sed', 'de_p', 'de_m', 'dsed_p', 'dsed_m'])
-
-   
-    e, sed, de_p, de_m, dsed_p, dsed_m = [da[key] for key in ('e', 'sed',
-                                                              'de_p', 'de_m',
-                                                'dsed_p', 'dsed_m')]
-    de = 0.5 * (de_m + de_p)
-    dsed = 0.5 * (dsed_m + dsed_p)
-    
-    res = {'e': e*1e12, 'sed': sed, 'dsed': dsed,
-              'dsed_minus': dsed_m, 'dsed_plus': dsed_p,
-        'de': de*1e12, 'de_minus': de_m*1e12, 'de_plus': de_p*1e12,}
-    return res    
-
-def get_sed_values(sed_gammapy, return_de=False):
-    """
-    From a FluxPoints gammapy object extracts e [TeV], sed [erg s-1 cm-2],
-    dsed [erg s-1 cm-2].
-        """
-    tab  = sed_gammapy.to_table(sed_type='e2dnde')
-    e, sed, dsed = tab['e_ref'].value, \
-        (tab['e2dnde'].to("erg s-1 cm-2")).value, \
-            (tab['e2dnde_err'].to("erg s-1 cm-2")).value
-    de = (tab['e_max'].value - tab['e_min'].value) / 2.0
-    if return_de:
-        return e, de, sed, dsed
-    return e, sed, dsed
-
-def read_sed_gammapy(path):
-    sed = FluxPoints.read(path)
-    e, sed, dsed = get_sed_values(sed)
-    return {'e': e*1e12, 'sed':sed, 'dsed': dsed}
-
-
-    
                 
 def sed(t=0.0, f_d=100.0, b_13=1.0, gamma_max=2.0, s_max=1.0, cooling='stat_ibs',
         p_e=2, e_cut=5e12, eta_a=1, ic_ani=False, three_dim=True,
@@ -111,6 +59,7 @@ def sed(t=0.0, f_d=100.0, b_13=1.0, gamma_max=2.0, s_max=1.0, cooling='stat_ibs'
                  emax_grid=1e14,
                  eta_a=eta_a,
                  ) 
+    els.calculate()
     spec = SpectrumIBS(els=els, mechanisms=['s', 'i'], method=method,
                        lorentz_boost=lorentz_boost, abs_gg=abs_gg, sys_name='psrb',
                        ic_ani=ic_ani, abs_photoel=abs_photoel, nh_tbabs=nh_tbabs)

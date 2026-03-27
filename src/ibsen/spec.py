@@ -352,17 +352,18 @@ class SpectrumIBS: #!!!
             u_2horns = self._ibs.ug_mid_comov
             temp_2horns = self._ibs.T_opt_eff_mid_comov
             scat_ang_2horns = self._ibs.scattering_angle_mid_comov
-            e_vals = self.els.e_vals
-            dne_de_mid = self.els.dNe_de_mid
-            ne_i_mid = self.els.n_i_mid
+            e_vals = self.els.e_vals_comov
+            dne_de_mid = self.els.dNe_de_mid_comov
+            ne_i_mid = self.els.n_i_mid_comov
+
         else:
             b_2horns = self._ibs.b_mid
             u_2horns = self._ibs.ug_mid
             temp_2horns = self._ibs.T_opt_eff_mid
             scat_ang_2horns = self._ibs.scattering_angle_mid
-            e_vals = self.els.e_vals_comov
-            dne_de_mid = self.els.dNe_de_mid_comov
-            ne_i_mid = self.els.n_i_mid_comov
+            e_vals = self.els.e_vals
+            dne_de_mid = self.els.dNe_de_mid
+            ne_i_mid = self.els.n_i_mid
             
         self.b = b_2horns
         self.u = u_2horns

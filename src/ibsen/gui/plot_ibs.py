@@ -4,10 +4,8 @@ It's written mainly by ChatGPT. Sorry I'm not a coder jeez!!!!!!!!!!
 import numpy as np
 
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget,
-    QHBoxLayout, QVBoxLayout,
-    QSplitter, QLabel, QSlider,
-    QComboBox, QPushButton, QCheckBox,
+     QLabel, 
+    QComboBox, 
 )
 
 from matplotlib.colors import Normalize

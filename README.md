@@ -46,25 +46,25 @@ python test_ibsen.py
 You should get the output of
 
 ```bash
-PSR B1259-63 periastron dist [au] =  0.9057236987554738
+PSR B1259-63 periastron dist [au] =  0.8623138966114536
 ----- at t=20 days after periastron -----
-effective beta =  0.04263905625747101
-IBS opening angle =  2.4449529220680466
-tot number of e on IBS =  1.104151119684722e+40
-from spec, flux 0.3-10 keV =  4.631816914470713e-12
-from spec, flux 0.4-10 TeV =  5.015513335384847e-13
-from LC, flux 0.3-10 keV =  4.631816914470713e-12
-from LC, flux 0.4-10 TeV =  5.015513335384847e-13
+effective beta =  0.035321971059500246
+IBS opening angle =  2.4833832541305156
+tot number of e on IBS =  1.0439148046257853e+40
+from spec, flux 0.3-10 keV =  7.20099314048531e-12
+from spec, flux 0.4-10 TeV =  9.53108928163936e-13
+from LC, flux 0.3-10 keV =  7.20099314048531e-12
+from LC, flux 0.4-10 TeV =  9.53108928163936e-13
 
 ```
 
 
 ## Usage
-There is a very poor attempt at the graphical interface: run it with
+There is a poor attempt at the graphical interface: run it with
 ```bash
 ibsen
 ```
-You can explore how the IBS, SEDs, and light curves change for different parameters there, as well as display some data together with a model, and perform a simple normalization fitting. 
+You can explore how the IBS, SEDs, and light curves change for different parameters there, as well as display some data together with a model, and perform a simple normalization fitting to SEDs / LCs. 
 
 Mainly, though, the package is meant to be ran as a part of a python script.
 

@@ -279,7 +279,7 @@ class LightCurve:
                  rad_prof = 'pl', r_trunk = None,
                  
                 ibs_ndim=2, s_max=1., gamma_max=3., s_max_g=4., n_ibs=31, n_phi=33,   # ibs
-                orientation=None,
+                orientation=None, coef_quench=0.0,
                               
                 cooling='stat_mimic', to_inject_e = 'ecpl',   # el_ev
                 to_inject_theta = '3d', ecut = 1.e12, p_e = 2., norm_e = 1.e37,
@@ -369,6 +369,7 @@ class LightCurve:
         self.n_phi = n_phi
         self.ibs_ndim = ibs_ndim
         self.orientation = orientation
+        self.coef_quench = coef_quench
         ################ ---- arguments from el_ev ---- #######################
         self.cooling = cooling
         self.to_inject_e = to_inject_e
@@ -502,6 +503,7 @@ class LightCurve:
                     n=self.n_ibs, 
                     t_to_calculate_beta_eff=t_,
                     abs_gg_filename=self.abs_gg_filename,
+                    coef_quench=self.coef_quench,
                 )
         if self.ibs_ndim == 3:
             ibs_now = IBS3D(winds=winds_now, 
@@ -513,6 +515,8 @@ class LightCurve:
                     t_to_calculate_beta_eff=t_,
                     abs_gg_filename=self.abs_gg_filename,
                     orientation=self.orientation,
+                    
+                    coef_quench=self.coef_quench,
                 )
             
         r_sp_now = self.orbit.r(t=t_)
@@ -539,7 +543,7 @@ class LightCurve:
                             where_cut_theta = self.where_cut_theta,
                             ) 
 
-        e_vals_now, dNe_de_IBS_now = els_now.calculate(to_return=True)
+        e_vals_now, dNe_de_IBS_now = els_now.calculate(to_return=True, require_lorentz=self.lorentz_boost)
         spec_now = SpectrumIBS(els=els_now,
                                 delta_power = self.delta_power,
                                 lorentz_boost = self.lorentz_boost,

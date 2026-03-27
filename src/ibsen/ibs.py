@@ -17,6 +17,9 @@ DAY = 86400
 SIGMA_BOLTZ = float(const.sigma_sb.cgs.value)
 M_E = float(const.m_e.cgs.value)
 
+def gamma_test(g0, par, coef):
+    return 1. + (g0-1.) / (1. + coef * np.abs(par)**0.5) 
+
 PEEK_KEYS = ('doppler', 'scattering', 'scattering_comoving',
                   'gg_tau', 'gg_abs', 'b_ns', 'b_ns_comov', 
                   'b_opt', 'b_opt_comov', 'b', 'b_comov', 
@@ -155,13 +158,14 @@ ibs_docstring = f"""
 class IBS: #!!!
     __doc__ = ibs_docstring
     def __init__(self, t_to_calculate_beta_eff, s_max=1.0, gamma_max=3.0, s_max_g=4.0, n=31, 
-                 winds = None, 
+                 winds = None, coef_quench=0.0,
                  abs_gg_filename = None,
                  include_incl_in_los=False):
         self.t_forbeta = t_to_calculate_beta_eff
         self.gamma_max = gamma_max
         self.s_max = s_max
         self.s_max_g = s_max_g
+        self.coef_quench = coef_quench
         self.n = n
         self.winds = winds
         self.ug_apex = winds.u_g_density_apex(t=t_to_calculate_beta_eff)
@@ -179,6 +183,7 @@ class IBS: #!!!
         """General calculation of everything"""
         self.calculate_normalized_ibs()
         self.rescale_to_position()
+        self.rescale_gamma()
     
     def calculate_normalized_ibs(self):
         """calculate the effective beta from Winds at time t_forbeta and 
@@ -195,9 +200,10 @@ class IBS: #!!!
             unit_los_ = rotated_vector(alpha=self.winds.orbit.nu_los, incl=self.winds.orbit.incl_los)
         self.unit_los = unit_los_
         _nu_tr = self.winds.orbit.true_an(self.t_forbeta)
-
+        # par = self.winds.dbeta_dn(self.t_forbeta)
         self.ibs_n = IBS_norm(beta=self.beta, s_max=self.s_max,
-                        gamma_max=self.gamma_max, s_max_g=self.s_max_g, n=self.n,
+                        gamma_max=self.gamma_max,#gamma_test(g0=self.gamma_max,  par=par, coef=self.coef_quench), 
+                        s_max_g=self.s_max_g, n=self.n,
                     unit_los=unit_los_).rotate(pi + _nu_tr)
         
     def rescale_to_position(self):
@@ -246,6 +252,17 @@ class IBS: #!!!
         self.scatter_angle_apex = vector_angle(self.winds.orbit.vector_sp(self.t_forbeta),
                                                self.unit_los)
         
+    def rescale_gamma(self):
+        r_pIBS = np.array([np.array([_x, _y, 0.]) for _x, _y in zip(self.x, self.y)])
+        r_sp = self.winds.orbit.vector_sp(self.t_forbeta)
+        r_sIBS = r_pIBS + r_sp[None, :]
+        pdisk = self.winds.decr_disk_pressure(r_sIBS)
+        ppolar = self.winds.polar_wind_pressure(absv(r_sIBS))
+        ppulsar = self.winds.pulsar_wind_pressure(absv(r_pIBS))
+        dispers_out = np.std((pdisk + ppolar) / ppulsar )
+        self.ibs_n.gamma_max = gamma_test(self.gamma_max, dispers_out, self.coef_quench)
+        
+        
     
     def s_interp(self, s_, what):
         """
@@ -277,15 +294,18 @@ class IBS: #!!!
                     bounds_error=False, fill_value='extrapolate')
         return interpolator(s_)
     
-    # @property
-    # def g(self):
-    #     """Bulk Lorentz factor along the IBS."""
-    #     return IBS.gma(self, s = self.s)
+    def gma(self, s):
+        return self.ibs_n.gma(s / self.r_sp)
     
-    # @property
-    # def g_mid(self):
-    #     """Bulk Lorentz factor along the IBS-mid"""
-    #     return IBS.gma(self, s = self.s_mid)
+    @property
+    def g(self):
+        """Bulk Lorentz factor along the IBS."""
+        return self.gma(s = self.s)
+    
+    @property
+    def g_mid(self):
+        """Bulk Lorentz factor along the IBS-mid"""
+        return self.gma(s = self.s_mid)
     
     
     def gg_abs(self, e_phot, analyt=False, what_return='abs'):
@@ -525,7 +545,7 @@ class IBS: #!!!
     def T_opt_eff_mid_comov(self):
         """Optical star effective temperature on the IBS_mid in the comoving frame [K]."""
         return lor_trans_Teff_iso(Teff_iso = self.T_opt_eff_mid, gamma=self.g_mid)
-        
+
     
     peek_docs = f"""
     Quick look at the IBS in the orbital plane.
@@ -716,7 +736,7 @@ class IBS3D: #!!!
     """
     def __init__(self, t_to_calculate_beta_eff, s_max=1.0, gamma_max=3.0, s_max_g=4.0,
                  n=31, n_phi=33, orientation = None,
-                 winds = None, 
+                 winds = None, coef_quench=0.0,
                  abs_gg_filename = None):
         self.t_forbeta = t_to_calculate_beta_eff
         self.gamma_max = gamma_max
@@ -726,7 +746,7 @@ class IBS3D: #!!!
         self.n_phi = n_phi
         self.winds = winds
         self.orientation = orientation
-        
+        self.coef_quench = coef_quench
         self.ug_apex = winds.u_g_density_apex(t=t_to_calculate_beta_eff)
         b_ns_apex, b_opt_apex = winds.magn_fields_apex(t=t_to_calculate_beta_eff)
         self.b_ns_apex, self.b_opt_apex = b_ns_apex, b_opt_apex
@@ -757,9 +777,10 @@ class IBS3D: #!!!
         unit_los_ = rotated_vector(self.winds.orbit.nu_los, self.winds.orbit.incl_los)
         self.unit_los = unit_los_
 
-        
+        par = self.winds.dbeta_dn(self.t_forbeta)
         self.ibs_n = IBS_norm3D(beta=self.beta, s_max=self.s_max,
-            gamma_max=self.gamma_max, s_max_g=self.s_max_g, n=self.n,
+            gamma_max=gamma_test(g0=self.gamma_max,  par=par, coef=self.coef_quench),
+            s_max_g=self.s_max_g, n=self.n,
             n_phi=self.n_phi,
             unit_los=unit_los_).rotate_to_ax(new_axis=self.symm_ax)
         
@@ -802,6 +823,17 @@ class IBS3D: #!!!
                                                self.unit_los)
         
     
+    def rescale_gamma(self):
+        # r_pIBS = np.array([np.array([_x, _y, 0.]) for _x, _y in zip(self.x, self.y)])
+        # r_pIBS = 
+        # r_sp = self.winds.orbit.vector_sp(self.t_forbeta)
+        # r_sIBS = r_pIBS + r_sp[None, :]
+        pdisk = self.winds.decr_disk_pressure(self.r1_vec)
+        ppolar = self.winds.polar_wind_pressure(absv(self.r1_vec))
+        ppulsar = self.winds.pulsar_wind_pressure(absv(self.r_vec))
+        dispers_out = np.std((pdisk + ppolar) / ppulsar )
+        self.ibs_n.gamma_max = gamma_test(self.gamma_max, dispers_out, self.coef_quench)
+    
     def s_interp(self, s_, what):
         """
         Returns the interpolated value of 'what' (x, y, ...) at the coordinate 
@@ -834,6 +866,18 @@ class IBS3D: #!!!
                     bounds_error=False, fill_value='extrapolate')
         return interpolator(s_)
     
+    def gma(self, s):
+        return self.ibs_n.gma(s / self.r_sp)
+    
+    @property
+    def g(self):
+        """Bulk Lorentz factor along the IBS."""
+        return self.gma(s = self.s)
+    
+    @property
+    def g_mid(self):
+        """Bulk Lorentz factor along the IBS-mid"""
+        return self.gma(s = self.s_mid)
     
     def gg_abs(self, e_phot, analyt=False, what_return='abs'):
         """ gamma-gamma absorbtion coefficient (as e^-tau) in every point of
@@ -1078,7 +1122,24 @@ class IBS3D: #!!!
     def T_opt_eff_mid_comov(self):
         """Optical star effective temperature on the IBS_mid in the comoving frame [K]."""
         return lor_trans_Teff_iso(Teff_iso = self.T_opt_eff_mid, gamma=self.g_mid)
-        
+    
+    
+    @property
+    def disk_pressure(self):
+        """Decretion disk pressure calculated on the IBS."""
+        return self.winds.decr_disk_pressure(vec_r_from_s = self.r1_vec)
+    
+    
+    @property
+    def polar_pressure(self):
+        """Polar wind pressure calculated on the IBS."""
+        return self.winds.polar_wind_pressure(r_from_s = absv(self.r1_vec))
+    
+    @property
+    def tot_external_pressure(self):
+        """Total external pressure (P_disk + P_polar wind) calculated on the IBS."""
+        return self.disk_pressure + self.polar_pressure
+      
     
     peek_docs = f"""
     Quick look at the IBS in the orbital plane.
@@ -1105,6 +1166,10 @@ class IBS3D: #!!!
     E_for_gg : float, optional
         At which energy [eV] to calculate the gamma-gamma absorbtion, if ibs_color
         is 'gg_tau' or 'gg_abs'. Default 1e12
+    scale : str, optional
+        Scale for displaying the color-coded parameter. If 'lin' or 'linear',
+        (default), the parameter itself is displayed. If 'log', its log10 is
+        shown.
 
     Raises
     ------
@@ -1120,7 +1185,8 @@ class IBS3D: #!!!
              ibs_color='k', to_label=True,
              edgecolor='k', linewidth=0.1,
              alpha=0.5, colorbar=True,
-             showtime=None, E_for_gg=1e12):
+             showtime=None, E_for_gg=1e12,
+             scale='linear'):
         import matplotlib.colors as mcolors
         import matplotlib.pyplot as plt
 
@@ -1155,6 +1221,13 @@ class IBS3D: #!!!
             raise ValueError(f"""ibs_color={ibs_color} is invalid; it should be
                              \neither one of the IBS3D class attributes, or a 
                              \nvalid matplotlib color.""")
+        
+        if scale in ('lin', 'linear'):
+            pass
+        elif scale == 'log':
+            color_param = np.log10(color_param)
+        else:
+            raise ValueError("'scale' can be 'linear' or 'log'.")
 
 
         # if show_winds:

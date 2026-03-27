@@ -4,10 +4,6 @@ It's written mainly by ChatGPT. Sorry I'm not a coder jeez!!!!!!!!!!
 from __future__ import annotations
 
 import numpy as np
-from astropy.table import Table
-from astropy.io import ascii
-
-from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
@@ -17,194 +13,14 @@ from PySide6.QtWidgets import (
     QTableWidgetItem, QFileDialog, QMessageBox, QToolBox
 )
 
-from ibsen.gui.base import fit_norm_here, ToolWindowBase
-from ibsen import LightCurve
+from ibsen.gui.base import ToolWindowBase
+from ibsen import LightCurve, Orbit
 from ibsen.get_obs_data import known_names
+from ibsen.gui.utils_gui import read_lightcurve, fit_norm_here
 
 NORMALIZATION_INITIAL = 1E37
 DAY = 86400.
 
-
-def read_fits_write_txt(fits_name, txt_name, to_save=True,
-                        x_axis_offset=0, to_return=False,
-                        flux_type='flux', **plot_kwargs):
-    """
-    Reads the fits file obtaned by 
-    lightcurve.write(fits_name, sed_type=<'flux' OR 'eflux'>)
-    and exctracts the data: t+-dt, flux+- df.
-    You can provide x_axis_offset to subtract from time.
-    
-        - if to_save: saves the data into text file txt_name.txt
-        - if to_plot: plots the data. Use **plot_kwargs
-        - `flux_type` species which format of the flux is in the .fits file:
-            -- 'flux' [1 / s / cm2], default, OR
-            -- 'eflux' [TeV / s / cm2] (the physical flux) which will be transformed 
-                into [erg / s / cm2].
-        - if to_return: returns a dict of np.arrays 
-        {"t", "flux", "t_mjd", "dt", "df_p", "df_m"}
-
-    """
-
-
-    # read FLUXPOINTS table
-    tbl = Table.read(fits_name, hdu="FLUXPOINTS")
-
-    # columns: time vs flux (works whether or not they have units)
-    time_min = getattr(tbl["time_min"], "value", tbl["time_min"])
-    time_max = getattr(tbl["time_max"], "value", tbl["time_max"])
-    time_mjd = 0.5 * (time_min + time_max)
-    time = time_mjd - x_axis_offset
-    dt = 0.5 * (time_max-time_min)
-    
-    if flux_type == 'flux':
-        flux = np.squeeze(np.asarray(getattr(tbl["flux"], "value", tbl["flux"])))
-        try:
-            dfp = np.squeeze(np.asarray(getattr(tbl["flux_errp"], "value", tbl["flux_errp"])))
-            dfm = np.squeeze(np.asarray(getattr(tbl["flux_errn"], "value", tbl["flux_errn"])))
-        except:
-            dfp = np.squeeze(np.asarray(getattr(tbl["flux_err"], "value", tbl["flux_err"])))
-            dfm = np.squeeze(np.asarray(getattr(tbl["flux_err"], "value", tbl["flux_err"])))
-            
-    elif flux_type == 'eflux':
-        flux = np.squeeze(np.asarray(getattr(tbl["eflux"], "value", tbl["eflux"])))
-        try:
-            dfp = np.squeeze(np.asarray(getattr(tbl["eflux_errp"], "value", tbl["eflux_errp"])))
-            dfm = np.squeeze(np.asarray(getattr(tbl["eflux_errn"], "value", tbl["eflux_errn"])))
-        except:
-            dfp = np.squeeze(np.asarray(getattr(tbl["flux_err"], "value", tbl["flux_err"])))
-            dfm = np.squeeze(np.asarray(getattr(tbl["flux_err"], "value", tbl["flux_err"])))
-        ### manually transform TeV/s/cm2 --> erg/s/cm2
-        flux, dfp, dfm = [ar_ * 1.6 for ar_ in (flux, dfp, dfm)]
-    else: raise ValueError('flux_type can be only `flux` or `eflux`')
-
-    if to_save:
-        data_ = np.array([time, flux, time_mjd, dt, dfp, dfm]).T
-        header_ = "t flux t_mjd dt df_p df_m"
-        np.savetxt(txt_name+'.txt', data_, header=header_, delimiter=' ',
-                   fmt='%s')
-        np.savetxt(txt_name+'.dat', data_, header=header_, delimiter=' ',
-                   fmt='%s')
-        
-
-        
-    if to_return:
-        return {"t": time, "flux":flux, "t_mjd":time_mjd, "dt":dt, 
-                "df_p":dfp, "df_m": dfm}
-    
-def read_lightcurve_columns(
-    path: str,
-    *,
-    # candidate names are checked case-insensitively; underscores/spaces ignored
-    t_names=("t", "time", "mjd", "jd", "bjd", "tbjd"),
-    dt_names=("dt", "deltat", "time_err", "timeerr", "sigma_t", "sigmat", "err_t"),
-    f_names=("f", "flux", "flx", "rate", "counts", "count_rate"),
-    df_names=("df", "dflux", "flux_err", "fluxerr", "sigma_f", "sigmaflux", 
-              "err_f", "eflux", "df_p", "flux_errp", "eflux_errp"),
-        ):
-    """
-    Read an ASCII table (with optional '#' commented header) and extract columns for:
-      - t (time)
-      - dt (time uncertainty) [optional -> NaNs if missing]
-      - f (flux)
-      - df (flux uncertainty) [optional -> NaNs if missing]
-
-    Returns:
-        t, dt, f, df, meta
-    where meta includes:
-        - 'table': the astropy Table
-        - 'colmap': mapping of {'t': name|None, 'dt':..., 'f':..., 'df':...}
-    """
-    # Astropy can usually guess the format/delimiter; comment="#" handles typical headers.
-    tbl: Table = ascii.read(
-        path,
-        guess=True,
-        comment="#",
-        fast_reader=True,
-    )
-
-    if len(tbl.colnames) == 0:
-        raise ValueError("No columns detected. Is the file empty or not a table?")
-
-    # Normalization helper for robust matching
-    def norm(s: str) -> str:
-        s = s.strip().lower()
-        s = s.replace(" ", "").replace("_", "").replace("-", "")
-        return s
-
-    colnames = list(tbl.colnames)
-    norm_map = {name: norm(name) for name in colnames}
-
-    def find_col(candidates) -> str | None:
-        cand_norm = {norm(c) for c in candidates}
-        # exact normalized match first
-        for name, nn in norm_map.items():
-            if nn in cand_norm:
-                return name
-        # looser: contains candidate token (e.g. "flux" in "raw_flux")
-        for name, nn in norm_map.items():
-            for c in cand_norm:
-                if c and (c in nn):
-                    return name
-        return None
-
-    t_col = find_col(t_names)
-    dt_col = find_col(dt_names)
-    f_col = find_col(f_names)
-    df_col = find_col(df_names)
-
-    # helpers to convert to float numpy arrays (handle masked columns)
-    def to_float_array(colname: str) -> np.ndarray:
-        col = tbl[colname]
-        arr = np.array(col, dtype=float)
-        # If masked, fill masked entries with NaN
-        if hasattr(col, "mask"):
-            arr = np.array(col.filled(np.nan), dtype=float)
-        return arr
-
-    if t_col is None:
-        raise ValueError(f"Could not find time column. Tried names: {t_names}. Found: {colnames}")
-    if f_col is None:
-        raise ValueError(f"Could not find flux column. Tried names: {f_names}. Found: {colnames}")
-
-    # Required (or possibly missing if require_* = False)
-    t = to_float_array(t_col) if t_col is not None else np.full(len(tbl), np.nan)
-    f = to_float_array(f_col) if f_col is not None else np.full(len(tbl), np.nan)
-
-    # Optional -> NaNs
-    dt = to_float_array(dt_col) if dt_col is not None else np.full(len(tbl), np.nan)
-    df = to_float_array(df_col) if df_col is not None else np.full(len(tbl), np.nan)
-
-    meta = {
-        "table": tbl,
-        "colmap": {"t": t_col, "dt": dt_col, "f": f_col, "df": df_col},
-        "all_columns": colnames,
-    }
-    return t, dt, f, df, meta
-        
-def read_lightcurve_special_case(path):
-    da = np.genfromtxt(path,
-                   delimiter=' ', usecols=[0, 1, 4, 5, 3], 
-                   names=['t', 'f', 'df_p', 'df_m', 'dt'])
-    t, f, df_p, df_m, dt = [da[key] for key in ('t', 'f', 'df_p', 'df_m', 'dt')]
-    df_p = np.nan_to_num(df_p)
-    df_m = np.nan_to_num(df_m)
-    df = 0.5 * (df_m + df_p)
-    return t, f, df
-
-def read_lightcurve(path):
-    ext = Path(path).suffix.lower()
-    if ext in ('.txt', '.dat', '.csv'):
-        t, dt, f, df, _ = read_lightcurve_columns(path=path)
-    elif ext == '.fits':
-        res = read_fits_write_txt(fits_name = path, txt_name=None, plot_kwargs=None,
-                                  to_save=False, x_axis_offset=0, to_return=True,
-                                  flux_type='eflux')
-        t, dt, f, df = [res[keyw] for keyw in ("t", "dt", "flux", "df_p")]
-    else:
-        raise ValueError("The format of the file not recognized.")
-    _sort = np.argsort(t)
-    t, dt, f, df = [ar[_sort] for ar in (t, dt, f, df)]
-    return t, dt, f, df
 
 def compute_lc(ts, bands, sys_name='psrb',
                ### stars params:
@@ -212,6 +28,7 @@ def compute_lc(ts, bands, sys_name='psrb',
                b_opt_13=1, 
                ### disk params:
                f_d=100, 
+               f_p=0.1,
                delta=0.01,
                np_disk=3,
                height_exp=0.5,
@@ -225,11 +42,15 @@ def compute_lc(ts, bands, sys_name='psrb',
                orientation=None,
                s_max=1.,
                s_max_g=2.,
+               coef_quench=1.0,
                ### electron spec parameters:
                cooling='stat_mimic',
-               p_e=2,
+               p_e=2.,
                e_cut=1e13,
-               eta_a=1,
+               eta_a=1.,
+               eta_syn=1.,
+               eta_ic=1.,
+               
                emin=1e10,
                emax=1e14,
                ### spectrum params
@@ -243,7 +64,7 @@ def compute_lc(ts, bands, sys_name='psrb',
                to_parall=True,
                ):
     lc_ = LightCurve(times=ts, bands=bands, 
-                     to_parall=to_parall, n_cores=10,
+                     to_parall=to_parall, n_cores=8,
                         sys_name=sys_name, 
                         ### -----------------------------------------------
                         ns_b_ref=b_ns_13, ns_r_ref=1e13,
@@ -251,15 +72,16 @@ def compute_lc(ts, bands, sys_name='psrb',
                         ### -----------------------------------------------
                         f_d=f_d, delta=delta, np_disk=np_disk,
                         height_exp=height_exp, alpha_deg=alpha_deg,
-                        incl_deg=incl_deg,
+                        incl_deg=incl_deg, f_p=f_p,
                         ### -----------------------------------------------
                         gamma_max=gamma_max, s_max=s_max, n_ibs=n_ibs,
                         s_max_g=s_max_g, ibs_ndim=ibs_ndim, n_phi=n_phi,
-                        orientation=orientation,
+                        orientation=orientation, coef_quench=coef_quench,
                         ### -----------------------------------------------
                         norm_e=NORMALIZATION_INITIAL,
                         cooling=cooling, p_e=p_e, ecut=e_cut,
                         eta_a=eta_a, emin=emin, emax=emax,
+                        eta_ic=eta_ic, eta_syn=eta_syn,
                         ### -----------------------------------------------
                         method=method, mechanisms=["syn", "ic"],
                         delta_power=delta_pow, lorentz_boost=lorentz_boost,
@@ -356,7 +178,7 @@ class LightCurveWindow(ToolWindowBase):
         lay, self.tmax_days = self.make_linear_slider("t_max [days]", -200.0, 200.0, 1.0, 110.0)
         self.controls_layout.insertLayout(insert_at, lay); insert_at += 1
     
-        lay, self.nt = self.make_linear_slider("N(t)", 10.0, 400.0, 1.0, 150.0)
+        lay, self.nt = self.make_linear_slider("N(t)", 10.0, 400.0, 1.0, 90)
         self.controls_layout.insertLayout(insert_at, lay); insert_at += 1
     
         # ---------- Bands table ----------
@@ -434,8 +256,11 @@ class LightCurveWindow(ToolWindowBase):
     
         lay, self.f_d = self.make_log10_slider("f_d", 1.0, 10000.0, 0.001, 470.0)
         lay_disk.addLayout(lay); _wire_slider(self.f_d)
-    
-        lay, self.delta = self.make_log10_slider("delta", 1e-4, 3e-1, 0.001, 0.023)
+        
+        lay, self.f_p = self.make_log10_slider("f_p", 0.001, 0.5, 0.001, 0.1)
+        lay_disk.addLayout(lay); _wire_slider(self.f_p)
+        
+        lay, self.delta = self.make_log10_slider("delta", 1e-4, 3e-1, 0.001, 0.026)
         lay_disk.addLayout(lay); _wire_slider(self.delta)
     
         lay, self.np_disk = self.make_linear_slider("np_disk", 1.0, 6.0, 0.1, 3.0)
@@ -448,7 +273,7 @@ class LightCurveWindow(ToolWindowBase):
                                                       1.0, 18.0)
         lay_disk.addLayout(lay); _wire_slider(self.alpha_deg)
     
-        lay, self.incl_deg = self.make_linear_slider("incl_deg", -180.0, 180.0, 1.0, 30.0)
+        lay, self.incl_deg = self.make_linear_slider("incl_deg", -180.0, 180.0, 1.0, -45.0)
         lay_disk.addLayout(lay); _wire_slider(self.incl_deg)
     
         # ----- IBS parameters -----
@@ -462,11 +287,11 @@ class LightCurveWindow(ToolWindowBase):
         lay_ibs.addWidget(QLabel("orientation"))
         self.orientation = QComboBox()
         self.orientation.addItems(["S-P line", "against the flow"])
-        self.orientation.setCurrentText("S-P line")
+        self.orientation.setCurrentText("against the flow")
         lay_ibs.addWidget(self.orientation)
         self.orientation.currentIndexChanged.connect(lambda _: self.schedule_update())
         
-        lay, self.gamma_max = self.make_linear_slider("gamma_max", 1.0001, 5.0, 0.01, 2.3)
+        lay, self.gamma_max = self.make_linear_slider("gamma_max", 1.0001, 5.0, 0.003, 1.3)
         lay_ibs.addLayout(lay); _wire_slider(self.gamma_max)
     
         lay, self.s_max = self.make_linear_slider("s_max", 0.5, 4.0, 0.01, 1.0)
@@ -475,11 +300,14 @@ class LightCurveWindow(ToolWindowBase):
         lay, self.s_max_g = self.make_linear_slider("s_max_g", 0.5, 4.0, 0.01, 1.0)
         lay_ibs.addLayout(lay); _wire_slider(self.s_max_g)
         
+        lay, self.coef_quench = self.make_linear_slider("coef_quench", 0, 10.0, 0.001, 0.0)
+        lay_ibs.addLayout(lay); _wire_slider(self.coef_quench)
+        
         
         lay, self.n_ibs = self.make_linear_slider("n_ibs", 5, 40, 1, 15)
         lay_ibs.addLayout(lay); _wire_slider(self.n_ibs)
         
-        lay, self.n_phi = self.make_linear_slider("n_phi", 2, 40, 1, 13)
+        lay, self.n_phi = self.make_linear_slider("n_phi", 2, 40, 1, 29)
         lay_ibs.addLayout(lay); _wire_slider(self.n_phi)
         
         
@@ -495,7 +323,7 @@ class LightCurveWindow(ToolWindowBase):
             "leak_apex", "leak_ibs", "leak_mimic",
             "adv"
         ])
-        self.cooling.setCurrentText("stat_ibs")
+        self.cooling.setCurrentText("stat_mimic")
         lay_espec.addWidget(self.cooling)
         self.cooling.currentIndexChanged.connect(lambda _: self.schedule_update())
     
@@ -505,9 +333,15 @@ class LightCurveWindow(ToolWindowBase):
         lay, self.e_cut = self.make_log10_slider("e_cut [eV]", 1e11, 1e14, 0.05, 7e12)
         lay_espec.addLayout(lay); _wire_slider(self.e_cut)
     
-        lay, self.eta_a = self.make_log10_slider("eta_a", 0.01, 100.0, 0.02, 0.03)
+        lay, self.eta_a = self.make_log10_slider("eta_a", 0.01, 100.0, 0.001, 0.03)
         lay_espec.addLayout(lay); _wire_slider(self.eta_a)
+        
+        lay, self.eta_syn = self.make_log10_slider("eta_syn", 0.01, 100.0, 0.001, 1.0)
+        lay_espec.addLayout(lay); _wire_slider(self.eta_syn)
     
+        lay, self.eta_ic = self.make_log10_slider("eta_ic", 0.01, 100.0, 0.001, 1.0)
+        lay_espec.addLayout(lay); _wire_slider(self.eta_ic)
+        
         lay, self.emin = self.make_log10_slider("emin [eV]", 1e8, 1e11, 0.05, 1e9)
         lay_espec.addLayout(lay); _wire_slider(self.emin)
     
@@ -533,7 +367,7 @@ class LightCurveWindow(ToolWindowBase):
         self.lorentz_boost.stateChanged.connect(lambda _: self.schedule_update())
     
         self.abs_gg = QCheckBox("abs_gg")
-        self.abs_gg.setChecked(False)
+        self.abs_gg.setChecked(True)
         lay_spec.addWidget(self.abs_gg)
         self.abs_gg.stateChanged.connect(lambda _: self.schedule_update())
     
@@ -548,7 +382,7 @@ class LightCurveWindow(ToolWindowBase):
         self.ic_ani.stateChanged.connect(lambda _: self.schedule_update())
     
         # nh_tbabs: linear-ish; keep reasonable range
-        lay, self.nh_tbabs = self.make_linear_slider("nh_tbabs", 0.0, 5.0, 0.05, 0.8)
+        lay, self.nh_tbabs = self.make_linear_slider("nh_tbabs", 0.0, 5.0, 0.01, 0.8)
         lay_spec.addLayout(lay); _wire_slider(self.nh_tbabs)
     
         # Start with the first page open
@@ -952,8 +786,10 @@ class LightCurveWindow(ToolWindowBase):
             if self.status_lbl is not None:
                 self.status_lbl.setText("Error")
             return
-
-        ts = np.linspace(tmin, tmax, n)
+        _orb = Orbit(self.sys_name.currentText())
+        nu_min, nu_max = _orb.true_an(tmin), _orb.true_an(tmax)
+        _nus = np.linspace(nu_min, nu_max, n)
+        ts = _orb.t_from_true_an(_nus)
         bands = [(b["emin"], b["emax"]) for b in self.bands]
 
         try:
@@ -972,6 +808,7 @@ class LightCurveWindow(ToolWindowBase):
                         b_ns_13=float(self.slider_value(self.b_ns_13)),
                         b_opt_13=float(self.slider_value(self.b_opt_13)),
                         f_d=float(self.slider_value(self.f_d)),
+                        f_p=float(self.slider_value(self.f_p)),
                         delta=float(self.slider_value(self.delta)),
                         np_disk=float(self.slider_value(self.np_disk)),
                         height_exp=float(self.slider_value(self.height_exp)),
@@ -985,11 +822,14 @@ class LightCurveWindow(ToolWindowBase):
                         n_ibs=int(self.slider_value(self.n_ibs)),
                         n_phi=int(self.slider_value(self.n_phi)),
                         orientation=_orientation,
+                        coef_quench=float(self.slider_value(self.coef_quench)),
                         
                         cooling=self.cooling.currentText(),
                         p_e=float(self.slider_value(self.p_e)),
                         e_cut=float(self.slider_value(self.e_cut)),
                         eta_a=float(self.slider_value(self.eta_a)),
+                        eta_ic=float(self.slider_value(self.eta_ic)),
+                        eta_syn=float(self.slider_value(self.eta_syn)),
                         emin=float(self.slider_value(self.emin)),
                         emax=float(self.slider_value(self.emax)),
                         
