@@ -237,7 +237,7 @@ class Orbit:
             E = brentq(func_to_solve, -1e3, 1e3)
             return E
         except:
-            print('fuck smth wrong with Ecc_novec(t)')
+            print("Something's wrong with `Ecc_novec`, maybe you multiplied by 86400 more than once?")
             return np.nan
 
     def ecc_an(self, t): 
@@ -281,6 +281,23 @@ class Orbit:
 
         """
         return self.a * (1 - self.e * cos(self.ecc_an(t)))
+    
+    def kepl_period(self, t):
+        """
+        Keplerian period at the time t, defined as 2pi/Omega_kepl
+
+        Parameters
+        ----------
+        t : np.ndarray
+            Time relative to the periastron passage [s].
+
+        Returns
+        -------
+        np.ndarray
+            T_kepl
+
+        """
+        return 2. * pi * np.sqrt(self.r(t)**3 / self.GM)
     
     def d_ecc_an(self, t):
         """

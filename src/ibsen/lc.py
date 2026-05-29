@@ -2,7 +2,6 @@
 import numpy as np
 from numpy import pi
 from scipy.interpolate import interp1d
-from scipy.integrate import trapezoid
 
 from joblib import Parallel, delayed
 import multiprocessing
@@ -144,6 +143,9 @@ full_spec : bool, optional
         Spatial weighting along IBS. Default '3d'.
     ecut : float, optional
         Cutoff energy for ECPL/SECPL (eV). Default 1e12.
+    n_e_cut : float, optional
+        The treal cutoff energy is calculated as ecut * (1 [G] / b)**n_e_cut.
+        Default 0.
     p_e : float, optional
         Injection spectral index. Default 2.0.
     norm_e : float, optional
@@ -279,10 +281,12 @@ class LightCurve:
                  rad_prof = 'pl', r_trunk = None,
                  
                 ibs_ndim=2, s_max=1., gamma_max=3., s_max_g=4., n_ibs=31, n_phi=33,   # ibs
-                orientation=None, coef_quench=0.0,
+                orientation=None, coef_quench=0.0, shield_star = 0.0,
                               
                 cooling='stat_mimic', to_inject_e = 'ecpl',   # el_ev
                 to_inject_theta = '3d', ecut = 1.e12, p_e = 2., norm_e = 1.e37,
+                beta_e = 1.0,
+                n_e_cut = 0.0,
                 eta_a = 1.,
                 eta_syn = 1., eta_ic = 1.,
                 emin = 1e9, emax = 5.1e14, to_cut_e = True, 
@@ -370,12 +374,15 @@ class LightCurve:
         self.ibs_ndim = ibs_ndim
         self.orientation = orientation
         self.coef_quench = coef_quench
+        self.shield_star = shield_star
         ################ ---- arguments from el_ev ---- #######################
         self.cooling = cooling
         self.to_inject_e = to_inject_e
         self.to_inject_theta = to_inject_theta
         self.ecut = ecut
+        self.n_e_cut = n_e_cut
         self.p_e = p_e
+        self.beta_e = beta_e
         self.norm_e = norm_e
         self.eta_a = eta_a
         self.eta_syn = eta_syn
@@ -515,8 +522,8 @@ class LightCurve:
                     t_to_calculate_beta_eff=t_,
                     abs_gg_filename=self.abs_gg_filename,
                     orientation=self.orientation,
-                    
                     coef_quench=self.coef_quench,
+                    shield_star=self.shield_star
                 )
             
         r_sp_now = self.orbit.r(t=t_)
@@ -532,7 +539,9 @@ class LightCurve:
                             to_inject_e = self.to_inject_e,
                             to_inject_theta = self.to_inject_theta,
                             ecut = self.ecut,
+                            n_e_cut=self.n_e_cut,
                             p_e=self.p_e,
+                            beta_e=self.beta_e,
                             norm_e = self.norm_e,
                             emin = self.emin,
                             emax = self.emax,
@@ -543,7 +552,8 @@ class LightCurve:
                             where_cut_theta = self.where_cut_theta,
                             ) 
 
-        e_vals_now, dNe_de_IBS_now = els_now.calculate(to_return=True, require_lorentz=self.lorentz_boost)
+        e_vals_now, dNe_de_IBS_now = els_now.calculate(to_return=True, 
+                                            require_lorentz=self.lorentz_boost)
         spec_now = SpectrumIBS(els=els_now,
                                 delta_power = self.delta_power,
                                 lorentz_boost = self.lorentz_boost,

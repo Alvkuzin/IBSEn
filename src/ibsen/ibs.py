@@ -6,7 +6,7 @@ from ibsen.winds import Winds
 from ibsen.ibs_norm import IBS_norm, IBS_norm3D
 from ibsen.utils import plot_with_gradient, \
  lor_trans_ug_iso, lor_trans_b_iso, lor_trans_Teff_iso, rotated_vector, absv, \
-     plot_surface_quads, vector_angle, n_from_v
+     plot_surface_quads, vector_angle, n_from_v, vec_between, trapz_loglog
 from ibsen.absorbtion.absorbtion import gg_analyt, gg_tab
 from ibsen.get_obs_data import known_names
 
@@ -238,8 +238,8 @@ class IBS: #!!!
         self.x_mid = x_sh_mid
         self.y_mid = y_sh_mid
         
-        for name in ("s", "s_max", "s_max_g", "r", "r1", "x_apex", "ds_dtheta",
-                     "s_m", "s_p", "s_mid", "ds", "dx", "dy"):
+        for name in ("s", "s_max_g", "r", "r1", "x_apex", "ds_dtheta",
+                     "s_m", "s_p", "s_mid", "ds", "dx", "dy", "s_max_cm"):
             setattr(self, name, _r_sp * getattr(self.ibs_n, name))
    
         
@@ -587,10 +587,11 @@ class IBS: #!!!
              ibs_color='k', to_label=True,
              showtime=None, E_for_gg=1e12):
         import matplotlib.colors as mcolors
-        import matplotlib.pyplot as plt
+        
 
         
         if ax is None:
+            import matplotlib.pyplot as plt
             fig, ax = plt.subplots(figsize=(8, 6))    
 
         if to_label:
@@ -727,6 +728,9 @@ class IBS3D: #!!!
         the direction n_pe and |r_pe|.Starts from the solution given by 'flow' 
         as an initial guess.
         
+    shield_star : float, optional
+        If not zero, the attenuation of the photon field is calculated as
+        np.exp(-shield_star * \int_{point on the IBS}^{opt star} (P_d + P_w) d(r/R0))
     abs_gg_filename : str or None, optional
         Name of the file with tabukated gg-opacity. If None (default),
         IBSEn searches for a file tabulated for winds.sys_name if it is in
@@ -736,7 +740,7 @@ class IBS3D: #!!!
     """
     def __init__(self, t_to_calculate_beta_eff, s_max=1.0, gamma_max=3.0, s_max_g=4.0,
                  n=31, n_phi=33, orientation = None,
-                 winds = None, coef_quench=0.0,
+                 winds = None, coef_quench=0.0, shield_star = 0.0,
                  abs_gg_filename = None):
         self.t_forbeta = t_to_calculate_beta_eff
         self.gamma_max = gamma_max
@@ -747,6 +751,7 @@ class IBS3D: #!!!
         self.winds = winds
         self.orientation = orientation
         self.coef_quench = coef_quench
+        self.shield_star = shield_star
         self.ug_apex = winds.u_g_density_apex(t=t_to_calculate_beta_eff)
         b_ns_apex, b_opt_apex = winds.magn_fields_apex(t=t_to_calculate_beta_eff)
         self.b_ns_apex, self.b_opt_apex = b_ns_apex, b_opt_apex
@@ -797,6 +802,7 @@ class IBS3D: #!!!
         Returns new rescaled ibs_resc:IBS
         """
         r_sp_vec = self.winds.orbit.vector_sp(self.t_forbeta)
+        self.vec_sp = r_sp_vec
         _r_sp = absv(r_sp_vec)
         ### rescale ans shift vector stuff:
         for name in ("r_vec", "r1_vec"):
@@ -812,8 +818,10 @@ class IBS3D: #!!!
                 setattr(self, name+suffix, getattr(self, "r_vec"+suffix)[..., i])
 
         ### rescale some other stuff        
-        for name in ("s", "s_max", "s_max_g", "r", "r1", "r_mid", "r1_mid",  "x_apex", "ds_dtheta",
-                     "s_m", "s_p", "s_mid", "ds", "dx", "dy"):
+        for name in ("s", "s_max_g", "r", "r1", "r_mid", "r1_mid",  "x_apex", "ds_dtheta",
+                     "s_m", "s_p", "s_mid", "ds", "dx", "dy", "s_max_cm"):
+            # if name == 's_max_cm':
+            #     print(getattr(self.ibs_n, name))
             setattr(self, name, _r_sp * getattr(self.ibs_n, name))
    
         
@@ -1000,22 +1008,68 @@ class IBS3D: #!!!
                             filename=filename, what_return=what_return)
         return gg_res
     
+    @property
+    def integrated_pressure(self):
+        """
+        An integral of external pressure over the line connecting the star's
+        surface to the IBS.
+        
+        returns : integrated p, shape of (Nphi, N)
+        """
+        param = np.geomspace(1e-3, 1., 27)
+        vecs_s_ibs = vec_between(vec_i = np.zeros((3,)), vec_f = self.r_vec, param=param)
+        ps = (self.winds.polar_wind_pressure(r_from_s=absv(vecs_s_ibs)) + 
+             self.winds.decr_disk_pressure(vec_r_from_s=vecs_s_ibs))
+        ps[absv(vecs_s_ibs) < self.winds.Ropt] = 1e-100
+        integrated_p = trapz_loglog(ps, param, axis=0)
+        return integrated_p
+    
+    @property
+    def integrated_pressure_mid(self):
+        """
+        An integral of external pressure over the line connecting the star's
+        surface to the mid-IBS.
+        
+        returns : integrated p, shape of (Nphi, N-1)
+        """
+        param = np.geomspace(1e-3, 1., 27)
+        vecs_s_ibs = vec_between(vec_i = np.zeros((3,)), vec_f = self.r_vec_mid, param=param)
+        ps = (self.winds.polar_wind_pressure(r_from_s=absv(vecs_s_ibs)) + 
+             self.winds.decr_disk_pressure(vec_r_from_s=vecs_s_ibs))
+        ps[absv(vecs_s_ibs) < self.winds.Ropt] = 1e-100
+        integrated_p = trapz_loglog(ps, param, axis=0)
+        return integrated_p
+    
+    @property
+    def soft_ph_abs(self):
+        return np.exp(- self.shield_star * self.integrated_pressure)
+    
+    @property
+    def soft_ph_abs_mid(self):
+        return np.exp(- self.shield_star * self.integrated_pressure_mid)
+    
     ###########################################################################
     @property
     def ug(self):
         """Photon field energy density on the IBS [erg/cm^3]."""
-        return self.winds.u_g_density(r_from_s = self.r1,
+        _u = self.winds.u_g_density(r_from_s = self.r1,
                                       r_star = self.winds.Ropt,
                                       T_star = self.winds.Topt,
                                       )
+        if self.shield_star == 0.:
+            return _u
+        return _u * self.soft_ph_abs
     
     @property
     def ug_mid(self):
         """Photon field energy density on the IBS_mid [erg/cm^3]."""
-        return self.winds.u_g_density(r_from_s = self.r1_mid,
+        _u = self.winds.u_g_density(r_from_s = self.r1_mid,
                                       r_star = self.winds.Ropt,
                                       T_star = self.winds.Topt,
                                       )
+        if self.shield_star == 0.:
+            return _u
+        return _u * self.soft_ph_abs_mid
     
     @property
     def ug_comov(self):
@@ -1277,6 +1331,7 @@ class IBS3D: #!!!
         ax.quiver(0, 0, 0, 1.*xlos_, 1.*ylos_, 1.*zlos_, arrow_length_ratio=0.12, linewidth=2, color='g')
         ax.legend()
         # return line_ 
+        return ax
     # peek.__doc__ = peek_docs
 
     

@@ -8,9 +8,10 @@ from scipy.interpolate import interp1d
 
 from ibsen.utils import  beta_from_g, loggrid, t_avg_func, \
     trapz_loglog, lor_trans_e_spec_iso, pl, ecpl, secpl, interplg_positive, \
-        interplg
-from ibsen.transport_solvers.transport_on_ibs_solvers import solve_for_n, \
-    nonstat_characteristic_solver
+        interplg, index_simple
+from ibsen.transport_solvers.transport_on_ibs_solvers import (
+    nonstat_characteristic_solver, solveTranspFDM)
+# from diff_pde import solve_diff_pde
 from ibsen.ibs import IBS
 
 
@@ -170,6 +171,90 @@ def total_loss(ee, B, Topt, Ropt, dist, eta_flow, eta_syn, eta_IC, dist_ad=None)
         return eta_syn * syn_loss(ee, B) + eta_IC * ic_loss(ee, Topt, Ropt, dist) - ee / t_adiab(dist_ad, eta_flow)
     else:
         return eta_syn * syn_loss(ee, B) + eta_IC * ic_loss(ee, Topt, Ropt, dist)
+
+def e_syn_ph(e_el, b, return_dim = 'eV'):
+    """
+    Synchrotron photon energy as a function of an electron energy. 
+    
+    e_el : float | np.ndarray in [eV] OR Quantity.
+    b in [G].
+    return_dim: 'eV' or 'erg' or any other str of energy. Default 'eV'.
+    
+    returns float | np ndarray in units of `return_dim`.
+    """
+    try:
+        e_el_erg = e_el.to('erg').value
+    except:
+        e_el_erg = (e_el * u.eV).to('erg').value
+    e_syn = 1.5 * E_ELECTRON * HBAR * b / M_E / C_LIGHT * (e_el_erg / MC2E)**2
+    return (e_syn * u.erg).to(return_dim).value
+    
+def e_syn_el(e_ph, b, return_dim = 'eV'):
+    """
+    Synchrotron electron energy as a function of a photon energy. 
+    
+    e_ph : float | np.ndarray in [eV] OR Quantity.
+    b in [G].
+    return_dim: 'eV' or 'erg' or any other str of energy. Default 'eV'.
+    
+    returns float | np ndarray in units of `return_dim`.
+    """
+    try:
+        e_ph_erg = e_ph.to('erg').value
+    except:
+        e_ph_erg = (e_ph * u.eV).to('erg').value
+    e_syn_el = MC2E * np.sqrt(e_ph_erg * 2./3. * M_E * C_LIGHT / E_ELECTRON / HBAR / b)
+    return (e_syn_el * u.erg).to(return_dim).value
+
+def e_ic_ph(e_el, e_soft, return_dim = 'eV', numerical_coef=4.0):
+    """
+    Inverse Compton photon energy as a function of an electron energy. 
+    Defined as e_soft * numerical_coef * (e_el / me c^2)^2.
+    
+    e_el, e_soft : float | np.ndarray in [eV] OR Quantity.
+    return_dim: 'eV' or 'erg' or any other str of energy. Default 'eV'.
+    numerical_coef : float, default 4.0
+    
+    returns float | np ndarray in units of `return_dim`.
+    """
+    try:
+        e_el_erg = e_el.to('erg').value
+    except:
+        e_el_erg = (e_el * u.eV).to('erg').value
+        
+    try:
+        e_soft_erg = e_soft.to('erg').value
+    except:
+        e_soft_erg = (e_soft * u.eV).to('erg').value
+        
+    e_ic_ph = numerical_coef * e_soft_erg * (e_el_erg / MC2E)**2
+    return (e_ic_ph * u.erg).to(return_dim).value
+
+def e_ic_el(e_ph, e_soft, return_dim = 'eV', numerical_coef=4.0):
+    """
+    Inverse Compton electron energy as a function of a photon energy. 
+    Calculated from: e_ic_ph = e_soft * numerical_coef * (e_el / me c^2)^2.
+    
+    e_ph, e_soft : float | np.ndarray in [eV] OR Quantity.
+    return_dim: 'eV' or 'erg' or any other str of energy. Default 'eV'.
+    numerical_coef : float, default 4.0
+    
+    returns float | np ndarray in units of `return_dim`.
+    """
+    try:
+        e_ph_erg = e_ph.to('erg').value
+    except:
+        e_ph_erg = (e_ph * u.eV).to('erg').value
+        
+    try:
+        e_soft_erg = e_soft.to('erg').value
+    except:
+        e_soft_erg = (e_soft * u.eV).to('erg').value
+
+    e_ic_el = MC2E * np.sqrt(e_ph_erg / numerical_coef / e_soft_erg)
+    return (e_ic_el * u.erg).to(return_dim).value
+
+        
     
 def stat_distr(Es, Qs, Edots):
     """
@@ -296,6 +381,8 @@ def evolved_e_advection(s_, edot_func, f_inject_func,
         The max of energy grid to solve the equaion on.
          Internally the equation is solved from emin_grid/10 to emax_grid*2.
            The default is 5.1e14.
+    t_runaway_func : callable with signature func(s, e) or None.
+        A runaway time: adds a term "-n/T" to the right hand side if not None.
 
     Returns
     -------
@@ -324,19 +411,14 @@ def evolved_e_advection(s_, edot_func, f_inject_func,
     f_sample = f_inject_func(ssmesh, emesh, *f_args)
     f_sample_sed = f_sample[1, :] * e_vals_sample**2
     e_where_good = np.where(f_sample_sed > np.max(f_sample_sed) / (-1e6) )
-    s_vals = np.linspace(0, np.max(s_)*1.01, Ns)
+    s_vals = np.linspace(np.max(s_)/101.0, np.max(s_)*1.01, Ns)
     e_vals = e_vals_sample[e_where_good]
-    dNe_deds = solve_for_n(v_func = vel_func, edot_func = edot_func,
-                        f_func = f_inject_func,
-                        v_args = v_args, 
-                        edot_args = tot_loss_args,
-                        f_args = f_args,
-                        s_grid = s_vals, e_grid = e_vals, 
-                        method = 'FDM_cons', 
-                        # method = 'FDM', 
-                        # bound = 'dir',
-                        bound = 'neun'
-                        )
+
+    dNe_deds = solveTranspFDM(a1= lambda _s1, _e1: vel_func(_s1, ) + 0*_e1, 
+                              a2=edot_func, 
+                              Q=f_inject_func, x_grid=s_vals, y_grid=e_vals,
+                              conserv=True)
+    
     # #### Only leave the part of the solution between emin_grid < e < emax_grid 
     ind_int = np.logical_and(e_vals <= emax_grid, e_vals >= emin_grid)
     e_vals = e_vals[ind_int]
@@ -344,7 +426,7 @@ def evolved_e_advection(s_, edot_func, f_inject_func,
     interp_x = interp1d(s_vals, dNe_deds,
                         axis=0, kind='linear', fill_value='extrapolate')
     dNe_deds_IBS = interp_x(s_)
-    # dNe_deds_IBS[dNe_deds_IBS <= 0] = np.min(dNe_deds_IBS[dNe_deds_IBS>0]) / 3.14
+
     return dNe_deds_IBS, e_vals
     
 
@@ -730,6 +812,8 @@ class ElectronsOnIBS: #!!!
         Default '3d'. (You can also restrict to |θ| < ``where_cut_theta``.)
     ecut : float, optional
         Cutoff energy for 'ecpl'/'secpl' [eV]. Default 1e12.
+    n_e_cut : floar, optional
+        Cutoff energy index: e_cut_real = ecut * (1 [G]/ b)**n_e_cut. Default 0.
     p_e : float, optional
         Injection spectral index. Default 2.0.
     norm_e : float, optional
@@ -872,6 +956,7 @@ class ElectronsOnIBS: #!!!
     def __init__(self, ibs: IBS, cooling=None, to_inject_e = 'ecpl',
                  to_inject_theta = '3d', 
                  ecut = 1.e12, p_e = 2., norm_e = 1.e37, beta_e=1,
+                 n_e_cut = 0.0,
                  eta_a = None,
                  eta_syn = 1., eta_ic = 1.,
                  emin = 1e9, emax = 5.1e14, 
@@ -910,6 +995,7 @@ class ElectronsOnIBS: #!!!
         self.to_inject_theta = to_inject_theta # injection function along theta
         self.p_e = p_e  # injection function spectral index
         self.ecut = ecut  # injection function cutoff energy
+        self.n_e_cut = n_e_cut
         self.beta_e = beta_e # index for super-exponential cutoff PL
         self.norm_e = norm_e # injection function normalization
         self.emin = emin  # minimum energy for the injection function
@@ -922,7 +1008,8 @@ class ElectronsOnIBS: #!!!
         self.where_cut_theta = where_cut_theta # see above
         
         self._check_and_set_ibs() #checks if there's right ibs and sets r_sp
-        # self._set_b_and_u_ibs() # calculates dimensionless b_ and u_ from values in apex on entire ibs
+
+        self.integral_f_deds = self._normalize_injection()
 
     def _check_and_set_ibs(self):
         """
@@ -933,8 +1020,62 @@ class ElectronsOnIBS: #!!!
             self.r_sp = self.ibs.winds.orbit.r(self.ibs.t_forbeta)
         except:
             raise ValueError(""""Your ibs:IBS should contain ibs.winds""")
+                             
+        if self.ibs.ndim == 2:
+            ### upper horn
+            s_1d_dim = self.ibs.s[self.ibs.n : 2*self.ibs.n] 
+        if self.ibs.ndim == 3:
+            ### the arch corresponding to phi=0
+            s_1d_dim = self.ibs.s[0, :]
+        self.s_1d_dim = s_1d_dim
+                             
+    def _normalize_injection(self):
+        """
+        Calculates the integral of the (non-normalized) injection function 
+        over spatial and energy coordinates. By the non-normalized inj. func.,
+        we mean a multiplication:
+            inject_over_theta(theta or s) * inject_over_e(theta or s, e)
+        
+        """
+        _theta_helper = np.linspace(0., np.pi/2., 103)
+        _e_helper = loggrid(self.emin_grid, self.emax_grid, 101)
+        _tt, _ee = np.meshgrid(_theta_helper, _e_helper, indexing='ij')
+        _f_inj_quarter = self._f_inject_nonnormalized(spat_coord = _tt, e = _ee, 
+                            type_coord='theta', force_no_spatial_cut=True)
+        _int_f_dtheta = trapezoid(_f_inj_quarter, _theta_helper, axis=0)
+        _int_d_dtheta_de = trapz_loglog(_int_f_dtheta, _e_helper)    
+        if self.ibs.ndim == 2:
+            return _int_d_dtheta_de * 4.
+        if self.ibs.ndim == 3:
+            return _int_d_dtheta_de * 2.
+        
+    def effective_e_cut(self, spat_coord, type_coord='s'):
+        """
+        The real exponential cutoff energy used in the injection spectrum.
+        Calculated as 
+            ecut * (1 [G] / B_tot)^(n_e_cut).
+        Parameters
+        ----------
+        spat_coord : float or np.ndarray of the shape (Ns,) or (Ns, ...)
+            An arclength, `s`, to the points on IBS from the apex [cm]; or the
+            angle of this archlength relative to the pulsar [rad] `theta`.
+        type_coord : str, optional
+            Which coordinate is `spat_coord`. The default is 's'.
 
-    def vel(self, s): # s --- in real units
+        Returns
+        -------
+        res : float or np.ndarray of the shape (Ns,) or (Ns, ...)
+            The cutoff energy [eV].
+
+        """
+        _b = self.ibs.s_interp(s_  = spat_coord, what = 'b')
+        if self.ibs.ndim == 3:
+            _b = np.average(_b, axis=0)
+        res = self.ecut * (1.0 / _b)**self.n_e_cut
+        return res
+        
+
+    def vel(self, s):
         """
         Velocity of a bulk motion along the shock.    
         Calculated from the bulk motion Lorentz factor.
@@ -964,6 +1105,8 @@ class ElectronsOnIBS: #!!!
             The position(s) along the IBS from the apex [cm].
         e_ : np.ndarray with the shape matching s_.
             The energy(ies) of electrons [eV].
+        eta_adiab : float or None, optional
+            The value to use as an 'adiabatic' eta. If None, self.eta_a is used.
 
         Returns
         -------
@@ -974,125 +1117,184 @@ class ElectronsOnIBS: #!!!
         """
         if eta_adiab is None:
             eta_adiab = self.eta_a
-        # r_sa_cm = (self.r_sp - self.ibs.x_apex)
-        # r_sa_cm = self.ibs.s_interp(s_, 'r1')
-        # _u_dim = self.ibs.s_interp(s_, 'ug')
-        # _u_dimless = _u_dim / self.ibs.s_interp(0, 'ug')
-        # _r_ad = self.ibs.s_interp(s_, 'r')
+        eta_ic_eff = self.eta_ic
+        if self.ibs.ndim == 3:
+            eta_ic_eff *= self.ibs.s_interp(s_, 'soft_ph_abs')  
         return total_loss(ee = e_, 
                           B = self.ibs.s_interp(s_, 'b'), 
                           Topt = self.ibs.winds.Topt,
                           Ropt=self.ibs.winds.Ropt,
                           dist = self.ibs.s_interp(s_, 'r1'),
-                          # dist = r_sa_cm,
                           eta_flow = eta_adiab, 
                           eta_syn = self.eta_syn,
-                          eta_IC = self.eta_ic, #* _u_dimless,
-                          # dist_ad = _r_ad,
-                          dist_ad = self.r_sp, # / ( self.ibs.beta / self.ibs.winds.f_p),
+                          eta_IC = eta_ic_eff,
+                          dist_ad = self.ibs.s_interp(s_, 'r'), 
+                          
                           )
-
-    def f_inject(self, s_, e_, spat_coord='s'): 
+    
+    def inject_over_theta(self, spat_coord, type_coord='s', force_no_spatial_cut=False):
         """
-        An injection function at the position s_ (in cm)
-        from the apex and with energy e_ (in eV).
-        Essentially it is (d N_injected / dt ) / de / d spatial_coord
-        where spatial_coord is eitehr theta or s.
-        The function is normalized to self.norm_e: the total number
-        of injected particles per second in the forward hemisphere
-        in one horn of the IBS is self.norm_e / 4.
+        A spatial part of the injection function which is decomposed into
+        f_inject = inject_over_theta(s or theta) * inject_over_e(s or theta, e).
+        As the total injection function is normalized later, you can put anything 
+        here: it is simply a functional dependence. Note also an ambiguity of
+        such a decomposition.
 
         Parameters
         ----------
-        s_ : np.ndarray strictly of the shape (Ns, Ne)
-            An arclength to the points on IBS from the apex [cm].
-        e_ : np.ndarray strictly of the shape (Ns, Ne)
-            Energies of electrons [eV].
-        spat_coord : string, optional
-            The spatial coordinate in which the injection function
-            is expressed. It can be either 's' or 'theta'.
-            The default is 's'.
+        spat_coord : float or np.ndarray of the shape (Ns,) or (Ns, ...)
+            An arclength `s` to the points on IBS from the apex [cm] or the
+            angle of this archlength relative to the pulsar [rad] `theta`.
+        type_coord : str, optional
+            Which coordinate is `spat_coord`. Can be either 's' or 'theta'. Note
+            that depending on `type-coord`, either d Ndot /de/ds OR d Ndot /de/dtheta
+            will be returned. The default is 's'.
+        force_no_spatial_cut : bool, optional
+            Whether to ignore the argument ElectronsOnIBS.to_cut_theta even
+            if to_cut_theta=True. Default False.
 
         Raises
         ------
         ValueError
-            If to_inject_theta or to_inject_e or spat_coord
-            are not recognized or if the shapes of s_ and e_ do not match.
+            If type_coord is not in ('s, 'theta'). 
+            If to_inject_theta is not in ('2d', '3d').
 
         Returns
         -------
-        np.ndarray of the shape (Ns, Ne)
-            The injection function at the position s_ from the apex
-            and with energy e_.
+        thetas_part : float or np.ndarray of the shape (Ns,) or (Ns, ...)
+            A spatial part of the decomposition of the injection function.
 
         """
-        if s_.shape != e_.shape:
-            raise ValueError('in f_inject, `s`-shape should be == `e`-shape')
-        thetas_here = self.ibs.s_interp(s_  = s_, what = 'theta')
+        if type_coord == 's':
+            thetas_here = self.ibs.s_interp(s_  = spat_coord, what = 'theta')
+        elif type_coord == 'theta':
+            thetas_here = spat_coord
+        else:
+            raise ValueError('`type_coord` can be only one of: {`s`, `theta`}.')
         
-        # print(thetas_here)
         if self.to_inject_theta == '2d':
-            integral_over_theta_quarter = pi/2.
-            thetas_part = np.ones(thetas_here.shape) # uniform along theta
+            thetas_part = 0.*thetas_here + 1. # uniform along theta
         elif self.to_inject_theta == '3d':
-            integral_over_theta_quarter = 1.
             thetas_part = np.abs(sin(thetas_here)) # \propto sin(th) how it should be in 3d
         else:
-            raise ValueError("I don't know this to_inject_theta. It should be 2d, 3d.")
-        
-        if self.ibs.ndim == 3:
-            thetas_part = thetas_part / self.ibs.n_phi
+            raise ValueError("I don't know this `to_inject_theta`. It should be {'2d', '3d'}.")
             
-        if self.to_cut_theta:
-            thetas_part[np.abs(thetas_here) >= self.where_cut_theta] = 0.
-           
-        if self.to_inject_e == 'ecpl':
-            e_part = ecpl(e_, ind=self.p_e, ecut=self.ecut, norm=1.)
-        elif self.to_inject_e == 'pl':
-            e_part = pl(e_, ind=self.p_e, norm=1)
+        if type_coord == 's':
+            ds_dthetas_here =  self.ibs.s_interp(s_  = spat_coord,
+                                                 what = 'ds_dtheta')
+            thetas_part /= ds_dthetas_here
+            
+        if self.to_cut_theta and not force_no_spatial_cut:
+            thetas_part[(np.abs(thetas_here) >= self.where_cut_theta)] = 0.
+        return thetas_part 
+       
+    def inject_over_e(self, spat_coord, e, type_coord='s',):
+        """
+        An energies part of the injection function which is decomposed into
+        f_inject = inject_over_theta(s or theta) * inject_over_e(s or theta, e).
+        As the total injection function is normalized later, you can put anything 
+        here: it is simply a functional dependence. Note also an ambiguity of
+        such a decomposition.
+
+        Parameters
+        ----------
+        spat_coord, type_coord : see docstrings for `inject_over_theta` or 
+            `f_inject`.
+        e : float or np.ndarray of the shape (Ne,) or (Ns, Ne)
+            Energies of electrons [eV].
+
+        Raises
+        ------
+        ValueError
+            If `to_inject_e` is not in ('pl', 'ecpl', 'secpl').
+
+        Returns
+        -------
+        e_part : TYPE
+            An energies part of the decomposition of the injection function.
+
+        """
+        if self.to_inject_e == 'pl':
+            e_part = pl(e, ind=self.p_e, norm=1)
+        elif self.to_inject_e == 'ecpl':
+            ecut_eff = self.effective_e_cut(spat_coord=spat_coord, type_coord=type_coord)
+            e_part = ecpl(e, ind=self.p_e, ecut=ecut_eff, norm=1.)
         elif self.to_inject_e == 'secpl':
-            e_part = secpl(e_, ind=self.p_e, ecut=self.ecut, norm=1.,
+            ecut_eff = self.effective_e_cut(spat_coord=spat_coord, type_coord=type_coord)
+            e_part = secpl(e, ind=self.p_e, ecut=ecut_eff, norm=1.,
                           beta_e = self.beta_e)
         else:
             raise ValueError("I don't know this to_inject_e. It should be pl or ecpl or secpl.")
                     
         if self.to_cut_e:
-            mask = (e_ < self.emin) | (e_ > self.emax)
+            mask = (e < self.emin) | (e > self.emax)
             e_part = np.where(mask, 0.0, e_part)
-        
-        integral_over_e = trapz_loglog(e_part[0, :], e_[0, :])  
+        return e_part 
+
+    def _f_inject_nonnormalized(self, spat_coord, e, type_coord='s', 
+                                force_no_spatial_cut=False): 
+        """
+        Same as the method `f_inject` (see further) but not normalized
+        for norm_e.  Purely 
+            inject_over_theta(theta or s) * inject_over_e(theta or s, e).
+
+        """
+
+        thetas_part = self.inject_over_theta(spat_coord=spat_coord, 
+                                             type_coord=type_coord,
+                            force_no_spatial_cut=force_no_spatial_cut)
+        e_part = self.inject_over_e(spat_coord=spat_coord, e=e, 
+                                        type_coord=type_coord)
         result = thetas_part * e_part 
-    
-        # now normalize the number of injected particles. I do it like this:
-        # I ensure that the total number per second: N(s) = \int n(s, E) dE 
-        # of electrons in  ONE horm in the forward hemisphere = 1/4 from norm:
-        # \int_0^{pi/2} N(s(theta)) d theta = norm / 4
-              
-        # print(integral_over_e)
-        overall_coef = self.norm_e / 4. / integral_over_e / integral_over_theta_quarter 
-        if self.ibs.ndim == 2 and self.to_inject_theta == '3d':
-            overall_coef /= 2 ## in this case 1 horn mimicks a hemisphere
-        result = result * overall_coef
-        ### what we have here is dNdot / de d theta. If we want 
-        ### dNdot / de / ds, we do additional:
-        if spat_coord == 's':
-            ds_dthetas_here =  self.ibs.s_interp(s_  = s_, what = 'ds_dtheta')
-            return result / ds_dthetas_here
-        elif spat_coord == 'theta':
-            return result
-        else:
-            raise ValueError('no such spatial coordinate option in f_inject')
+        return result
+
+    def f_inject(self, spat_coord, e, type_coord='s', force_no_spatial_cut=False): 
+        """
+        An injection function at the position  `spat_coord` (arclength s or angle theta)
+        from the apex and with energy e (in eV).
+        Essentially it is (d N_injected / dt ) / de / d X
+        where X is eitehr `theta` or `s`, specified by `type_coord`.
+        The function is normalized to self.norm_e: the total number
+        of injected particles per second in the whole 4pi steradian should be
+        = norm_e. The function is assumed
+        to be decomposed into A(X) * B(X, e). 
+        A(X) is given by `inject_over_theta`, while B(X, e) by `inject_over_e`.
+        
+        
+        Inputs support numpy broadcasting rules.
+
+        Parameters
+        ----------
+        spat_coord : float or np.ndarray of the shape (Ns,) or (Ns, Ne)
+            An arclength `s` to the points on IBS from the apex [cm] or the
+            angle of this archlength relative to the pulsar [rad] `theta`.
+        e : float or np.ndarray of the shape (Ne,) or (Ns, Ne)
+            Energies of electrons [eV].
+        type_coord : str, optional
+            Which coordinate is `spat_coord`. Can be either 's' or 'theta'. Note
+            that depending on `type-coord`, either d Ndot /de/ds OR d Ndot /de/dtheta
+            will be returned, and they have different dimensions.
+            The default is 's'.
+        force_no_spatial_cut : bool, optional
+            Whether to ignore the argument ElectronsOnIBS.to_cut_theta even
+            if to_cut_theta=True. Default False.
+
+        Returns
+        -------
+        float or np.ndarray
+            The injection function at the position spat_coord from the apex
+            and with energy e.
+
+        """
+
+        result = self._f_inject_nonnormalized(spat_coord=spat_coord, e=e,
+            type_coord=type_coord, force_no_spatial_cut=force_no_spatial_cut)
+        result *= self.norm_e / self.integral_f_deds
+        if self.ibs.ndim == 3:
+            result /= float(self.ibs.n_phi)
+        return result
 
 
-    # def analyt_adv_Ntot_tomimic(self, s, e): 
-    #     # s and e -- 2d meshgrid arrays, but the function returns 1d-array 
-    #     _ga = self.ibs.gamma_max - 1
-    #     # f_ = f_inj_func(s, e, *f_inj_args)
-    #     f_ = ElectronsOnIBS.f_inject(self, s_=s, e_=e)
-    #     f_integrated = trapezoid(f_, e, axis=1)
-    #     x__ = _ga*s[:, 0] / self.ibs.s_max_g / self.r_sp
-    #     return f_integrated * self.r_sp / C_LIGHT * self.s_max_g/_ga * (2 * x__ + x__**2)**0.5
-    
     def analyt_adv_Ntot_self(self):
         """
         Analytically calculated the total number of electrons
@@ -1108,13 +1310,7 @@ class ElectronsOnIBS: #!!!
               on the IBS.
 
         """        
-        if self.ibs.ndim == 2:
-            ### upper horn
-            s_1d_dim = self.ibs.s[self.ibs.n : 2*self.ibs.n] 
-        if self.ibs.ndim == 3:
-            ### the arch corresponding to phi=0
-            s_1d_dim = self.ibs.s[0, :]
-        s_1d_touse = np.linspace(0, np.max(self.ibs.s_max) * 1.02, 241)
+        s_1d_touse = np.linspace(0, np.max(self.ibs.s_max_cm) * 1.02, 241)
         e_vals = loggrid(self.emin_grid, self.emax_grid, 201)
         ss_, ee_ = np.meshgrid(s_1d_touse, e_vals, indexing='ij')
         f_se = ElectronsOnIBS.f_inject(self, ss_, ee_)
@@ -1122,9 +1318,8 @@ class ElectronsOnIBS: #!!!
         v_ = self.vel(s_1d_touse)
         res_ = cumulative_trapezoid(f_s/v_, s_1d_touse, initial=0)
         spl_ = interp1d(s_1d_touse, res_)
-        dnds = spl_(s_1d_dim)
+        dnds = spl_(self.s_1d_dim)
         return dnds
-        # return dnds * self.ibs.ds[self._up_mid]
         
     
     def analyt_adv_Ntot(self, s_1d, f_inj_integrated):
@@ -1178,8 +1373,8 @@ class ElectronsOnIBS: #!!!
             T_leak_mimic(s, e) [s].
 
         """
-        f_ = ElectronsOnIBS.f_inject(self, s_=s, e_=e)
-        f_integrated = trapz_loglog(f_, e, axis=1)
+        f_ = self.f_inject(spat_coord=s, e=e, type_coord='s')
+        f_integrated = trapz_loglog(f_, e, axis=-1)
         _s_1d = s[:, 0] # in cm
         Ntot = ElectronsOnIBS.analyt_adv_Ntot(self, s_1d = _s_1d,
                                               f_inj_integrated = f_integrated)
@@ -1199,13 +1394,82 @@ class ElectronsOnIBS: #!!!
         s_max_g_dimless = self.ibs.ibs_n.s_max_g 
         _x = _ga * s / s_max_g_dimless / self.r_sp
         x1 = 1 + _x
-        # res_ = s_max_g_dimless / _ga * ( (1. + _x)**2 - 1.)**0.5
         res_ = s_max_g_dimless / _ga**2 *( (x1**2 - 1.)**0.5 - np.log(x1 + (x1**2 - 1.)**0.5) )
         floor_eta_a_ = 1e-3
         res_[res_ < floor_eta_a_] = floor_eta_a_
         return res_
     
-    def _calculate_one_arch(self):        ### s [cm], e[eV]
+    def calculate_spec_stat(self, e=None, cooling_type='stat_ibs'):
+        allowed_types = ('stat_apex', 'stat_ibs', 'stat_mimic')
+        if cooling_type not in allowed_types:
+            raise ValueError(f"`cooling_type` should be one of: {allowed_types}.")
+        if e is None:
+            e = loggrid(self.emin_grid, self.emax_grid, 101)
+        smesh, emesh = np.meshgrid(self.s_1d_dim, e, indexing = 'ij')
+        if cooling_type == 'stat_mimic':
+            eta_fl_new = ElectronsOnIBS.eta_flow_mimic(self, smesh) * self.eta_a
+            
+            
+        f_inj_se = ElectronsOnIBS.f_inject(self, smesh, emesh)
+        if cooling_type != 'stat_mimic':
+            edots_se = ElectronsOnIBS.edot(self, smesh, emesh)
+        else:
+            edots_se = ElectronsOnIBS.edot(self, smesh, emesh, eta_fl_new)
+        dNe_deds_IBS = np.zeros((self.s_1d_dim.size, e.size))
+                
+        for i_s in range(self.s_1d_dim.size):
+            if cooling_type == 'stat_apex':
+                f_inj_av = trapezoid(f_inj_se, self.s_1d_dim, axis=0) / np.max(self.s_1d_dim)
+                dNe_deds_IBS[i_s, :] = stat_distr(e, f_inj_av, edots_se[0, :])
+            if cooling_type in ('stat_ibs', 'stat_mimic'):
+                dNe_deds_IBS[i_s, :] = stat_distr(e, f_inj_se[i_s, :], edots_se[i_s, :])
+        if cooling_type in ('stat_mimic', ):
+            ntot = trapz_loglog(dNe_deds_IBS, e, axis=-1)
+            dNe_deds_IBS *= (self.analyt_adv_Ntot_self() / ntot)[:, None]
+        
+        return dNe_deds_IBS, e, smesh, emesh
+    
+    def calculate_spec_leak(self, e=None, cooling_type='leak_ibs'):
+        allowed_types = ('leak_apex', 'leak_ibs', 'leak_mimic')
+        if cooling_type not in allowed_types:
+            raise ValueError(f"`cooling_type` should be one of: {allowed_types}.")
+        if e is None:
+            e = loggrid(self.emin_grid, self.emax_grid, 101)
+        smesh, emesh = np.meshgrid(self.s_1d_dim, e, indexing = 'ij')
+
+        f_inj_se = ElectronsOnIBS.f_inject(self, smesh, emesh)
+        edots_se = ElectronsOnIBS.edot(self, smesh, emesh)
+        dNe_deds_IBS = np.zeros((self.s_1d_dim.size, e.size))
+        ts_leak = ElectronsOnIBS.t_leakage(self, smesh, emesh)
+
+        for i_s in range(self.s_1d_dim.size):
+            if cooling_type == 'leak_ibs':
+                dNe_deds_IBS[i_s, :] = stat_distr_with_leak(Es = e,
+                    Qs = f_inj_se[i_s, :], Edots = edots_se[i_s, :], Ts = ts_leak[i_s, :],
+                    mode = 'analyt')
+            if cooling_type == 'leak_apex':
+                f_inj_av = trapezoid(f_inj_se, self.s_1d_dim, axis=0) / np.max(self.s_1d_dim)
+                dNe_deds_IBS[i_s, :] = stat_distr_with_leak(Es = e,
+                    Qs = f_inj_av, Edots = edots_se[0, :], Ts = ts_leak[0, :])
+            if cooling_type == 'leak_mimic':
+                dNe_deds_IBS[i_s, :] = stat_distr_with_leak(Es = e,
+                    Qs = f_inj_se[i_s, :], Edots = edots_se[i_s, :], 
+                    Ts = ts_leak[i_s, :], mode = 'analyt') 
+        return dNe_deds_IBS, e, smesh, emesh
+    
+    def calculate_spec_adv(self):
+        edot_func = lambda s_, e_: self.edot(s_, e_)
+        f_inject_func = lambda s_, e_: self.f_inject( s_, e_)
+        vel_func = lambda s_: self.vel(s_)
+        
+        dNe_deds_IBS, e_vals = evolved_e_advection(s_ = self.s_1d_dim,
+            edot_func=edot_func, f_inject_func=f_inject_func, 
+            tot_loss_args=(), f_args=(), vel_func=vel_func, v_args=(),
+            emin_grid=self.emin_grid, emax_grid=self.emax_grid,)
+        smesh, emesh = np.meshgrid(self.s_1d_dim, e_vals, indexing = 'ij')
+        return dNe_deds_IBS, e_vals, smesh, emesh
+    
+    def _calculate_one_arch(self):
         """
         Calculates the electron spectrum on the one arch of the IBS. 
         
@@ -1214,96 +1478,29 @@ class ElectronsOnIBS: #!!!
         dNe/ds/de and has unit [1 / length / energy]. To get a normal 
         dNe/de [1 / energy] in each segment of the IBS, it needs to be further
         multiplied by ds_i. Ah well, formally, it needs to be integrated. 
-        
         This is done in '_set_solution_onto_ibs'.
         
         Sets attributes: e_vals, smesh, emesh, dNe_deds_IBS_1horn.
         
         """
 
-        ### we use the symmetry of ibs: calculate dNe_de only for 1 horn
-        if self.ibs.ndim == 2:
-            ### upper horn
-            s_1d_dim = self.ibs.s[self.ibs.n : 2*self.ibs.n] 
-        if self.ibs.ndim == 3:
-            ### the arch corresponding to phi=0
-            s_1d_dim = self.ibs.s[0, :]
-        
         if self.cooling not in self.allowed_coolings:
             raise ValueError(f"""cooling should be one of these options:{self.allowed_coolings},
                              \nbut the value cooling={self.cooling} was given.""")
-
+        
         if self.cooling == 'no':
             e_vals = loggrid(self.emin_grid, self.emax_grid, 301)
-            smesh, emesh = np.meshgrid(s_1d_dim, e_vals, indexing = 'ij')
-            # For each s, --> injected distributions_dimless
+            smesh, emesh = np.meshgrid(self.s_1d_dim, e_vals, indexing = 'ij')
             dNe_deds_IBS = ElectronsOnIBS.f_inject(self, smesh, emesh)
             
         elif self.cooling in ('stat_apex', 'stat_ibs', 'stat_mimic'):
-            e_vals = loggrid(self.emin_grid, self.emax_grid, 303)
-            smesh, emesh = np.meshgrid(s_1d_dim, e_vals, indexing = 'ij')
-            # For each s, --> stationary distribution
-            if self.cooling == 'stat_mimic':
-                eta_fl_new = ElectronsOnIBS.eta_flow_mimic(self, smesh) * self.eta_a
-                # self.eta_a = self.eta_a * eta_fl_new
+            dNe_deds_IBS, e_vals, smesh, emesh = self.calculate_spec_stat(e=None, cooling_type=self.cooling)
                 
-            f_inj_se = ElectronsOnIBS.f_inject(self, smesh, emesh)
-            if self.cooling != 'stat_mimic':
-                edots_se = ElectronsOnIBS.edot(self, smesh, emesh)
-            else:
-                edots_se = ElectronsOnIBS.edot(self, smesh, emesh, eta_fl_new)
-            dNe_deds_IBS = np.zeros((s_1d_dim.size, e_vals.size))
-                    
-            for i_s in range(s_1d_dim.size):
-                if self.cooling == 'stat_apex':
-                    f_inj_av = trapezoid(f_inj_se, s_1d_dim, axis=0) / np.max(s_1d_dim)
-                    dNe_deds_IBS[i_s, :] = stat_distr(e_vals, f_inj_av, edots_se[0, :])
-                if self.cooling in ('stat_ibs', 'stat_mimic'):
-                    dNe_deds_IBS[i_s, :] = stat_distr(e_vals, f_inj_se[i_s, :], edots_se[i_s, :])
-            if self.cooling in ('stat_mimic', ):
-                ntot = trapz_loglog(dNe_deds_IBS, e_vals, axis=-1)
-                dNe_deds_IBS *= (self.analyt_adv_Ntot_self() / ntot)[:, None]
-                
-
         elif self.cooling in ('leak_apex', 'leak_ibs', 'leak_mimic'):
-            e_vals = loggrid(self.emin_grid, self.emax_grid, 107)
-            smesh, emesh = np.meshgrid(s_1d_dim, e_vals, indexing = 'ij')
-            # if self.cooling == 'stat_mimic':
-            #     eta_fl_new = ElectronsOnIBS.eta_flow_mimic(self, smesh)
-            #     self.eta_a = eta_fl_new
-    
-            f_inj_se = ElectronsOnIBS.f_inject(self, smesh, emesh)
-            edots_se = ElectronsOnIBS.edot(self, smesh, emesh)
-            dNe_deds_IBS = np.zeros((s_1d_dim.size, e_vals.size))
-            ts_leak = ElectronsOnIBS.t_leakage(self, smesh, emesh)
-            # f_inj_integr = trapezoid(f_inj_se, e_vals, axis=1)
-            # Ntot_s = analyt_adv_Ntot_tomimic(smesh, emesh, f_inj_func = f_inject_func,
-            #             f_inj_args = f_args, dorb=r_SP, s_max_g=4, Gamma=Gamma)
+            dNe_deds_IBS, e_vals, smesh, emesh = self.calculate_spec_leak(e=None, cooling_type=self.cooling)
 
-            for i_s in range(s_1d_dim.size):
-                if self.cooling == 'leak_ibs':
-                    dNe_deds_IBS[i_s, :] = stat_distr_with_leak(Es = e_vals,
-                        Qs = f_inj_se[i_s, :], Edots = edots_se[i_s, :], Ts = ts_leak[i_s, :],
-                        mode = 'analyt')
-                if self.cooling == 'leak_apex':
-                    f_inj_av = trapezoid(f_inj_se, s_1d_dim, axis=0) / np.max(s_1d_dim)
-                    dNe_deds_IBS[i_s, :] = stat_distr_with_leak(Es = e_vals,
-                        Qs = f_inj_av, Edots = edots_se[0, :], Ts = ts_leak[0, :])
-                if self.cooling == 'leak_mimic':
-                    dNe_deds_IBS[i_s, :] = stat_distr_with_leak(Es = e_vals,
-                        Qs = f_inj_se[i_s, :], Edots = edots_se[i_s, :], 
-                        Ts = ts_leak[i_s, :], mode = 'analyt') 
-            
         elif self.cooling == 'adv':
-            edot_func = lambda s_, e_: ElectronsOnIBS.edot(self, s_, e_)
-            f_inject_func = lambda s_, e_: ElectronsOnIBS.f_inject(self, s_, e_)
-            vel_func = lambda s_: ElectronsOnIBS.vel(self, s=s_)
-            
-            dNe_deds_IBS, e_vals = evolved_e_advection(s_ = s_1d_dim,
-                edot_func=edot_func, f_inject_func=f_inject_func, 
-                tot_loss_args=(), f_args=(), vel_func=vel_func, v_args=(),
-                emin_grid=self.emin_grid, emax_grid=self.emax_grid)
-            smesh, emesh = np.meshgrid(s_1d_dim, e_vals, indexing = 'ij')
+            dNe_deds_IBS, e_vals, smesh, emesh = self.calculate_spec_adv()
         else:
             raise ValueError('I don\'t know this `cooling`!')
 
@@ -1470,6 +1667,130 @@ class ElectronsOnIBS: #!!!
             return np.where(self.ibs.theta_mid < 0)[0]
         else:
             raise NotImplementedError("'low_mid'  is not defined for a 3D IBS.")
+            
+    def dne_de_tot(self, comov=True, return_e_el=True):
+        """
+        The total dNe/de, summed over the IBS. 
+
+        Parameters
+        ----------
+        comov : bool, optional
+            Whether to sum over the spectra in co-moving frames. 
+            The default is True.
+        return_e_el : bool, optional
+            Whether to return additionally the e-grid. The default is True.
+
+        Raises
+        ------
+        ValueError
+            If `comov`==True, but the spectrum was calculated only in a lab 
+            frame.
+
+        Returns
+        -------
+        np.ndarray (Ne,)
+            The total electron spectrum.
+
+        """
+        try:
+            _ = self.dNe_de_mid_comov
+        except:
+            raise ValueError("`comov=True` was required in `dne_de_tot`, but the spec was calculated only in a lab frame.")
+        if self.ibs.ndim == 2:
+            if comov:
+                _dne_de_tot = np.sum(self.dNe_de_mid_comov, axis=0)
+                e_to_use = self.e_vals_comov
+            else:
+                _dne_de_tot = np.sum(self.dNe_de_mid, axis=0)
+                e_to_use = self.e_vals
+        if self.ibs.ndim == 3:
+            if comov:
+                _dne_de_tot = np.sum(self.dNe_de_mid_comov, axis=(0, 1))
+                e_to_use = self.e_vals_comov
+            else:
+                _dne_de_tot = np.sum(self.dNe_de_mid, axis=(0, 1))
+                e_to_use = self.e_vals
+        if return_e_el:
+            return _dne_de_tot, e_to_use
+        return _dne_de_tot
+    
+    def n_e(self, e1, e2, comov=True, epow=0):
+        """
+        A number of electrons in a band [e1, e2], defined as
+        \int_e1^e2 dn/de e^epow de. In case epow=0, it is indeed a number of 
+        particles, and if epow=1 it is a total energy of electrons.
+
+        Parameters
+        ----------
+        e1 : float
+            Low electron energy [eV].
+        e2 : float
+            High electron energy [eV].
+        comov : bool, optional
+            Whether to sum over the spectra in co-moving frames. 
+            The default is True.
+        epow : float, optional
+            Which moment of dN/de to integrate. epow=0 gives the number of
+            electrons in [e1, e2]; epow=1 gives energy [erg].
+            The default is 0.
+
+        Raises
+        ------
+        ValueError
+            If the spectrum of electrons was not calculated.
+
+        Returns
+        -------
+        float
+            The number of particles [erg^epow].
+
+        """
+        if not self.calculated:
+            raise ValueError("To calculate the number of electrons, the spectrum should be calculated first.")
+        _dne_de_tot, e_to_use = self.dne_de_tot(comov=comov, return_e_el=True)
+        _mask = np.logical_and(e_to_use >= e1/1.2, e_to_use <= e2*1.2)
+        _good = _mask & np.isfinite(_dne_de_tot)
+        _dne_de_tot = (_dne_de_tot / u.eV).to("1/erg").value
+        _E = loggrid(e1, e2, n_dec = 23) # eV
+        _E_erg = (_E * u.eV).to("erg").value # erg
+        dnde_here = interplg(_E, 
+                            e_to_use[_good], 
+                            _dne_de_tot[_good],
+                            fill_value=(np.log10(_dne_de_tot[_good][0]),
+                                        np.log10(_dne_de_tot[_good][-1])),
+                            bounds_error=False,) 
+                                
+        return trapz_loglog(dnde_here * _E_erg**epow, _E_erg)  # [erg^epow]
+    
+    def index(self, e1, e2, comov=True):
+        """
+        Effective power-law index of the electron spectrum between e1 and e1.
+        The data of log(dNtot/de) VS log(e) is fitted with a linear function,
+        and a coefficient is returned.
+
+        Parameters
+        ----------
+        e1 : float
+            Low electron energy [eV].
+        e2 : float
+            High electron energy [eV].
+        comov : bool, optional
+            Whether to sum over the spectra in co-moving frames. 
+            The default is True.
+
+        Returns
+        -------
+        ind_ : float
+            The effective index for the electron population between [e1, e2].
+
+        """
+        _dne_de_tot, e_to_use = self.dne_de_tot(comov=comov, return_e_el=True)
+        _mask = np.logical_and(e_to_use >= e1/1.2, e_to_use <= e2*1.2)
+        _good = _mask & np.isfinite(_dne_de_tot)
+        ind_ = index_simple(_dne_de_tot[_good],
+                            e_to_use[_good])
+        return ind_
+            
 
     def peek(self, ax=None, 
              to_label=True,
@@ -1541,9 +1862,9 @@ class ElectronsOnIBS: #!!!
                         int(_n * 6/7)
                         ):
                 if self.ibs.ndim==2:
-                    label_s = fr"{self.cooling}, $s = {((s_mid_[self._up_mid])[i_s] / self.ibs.s_max) :.2f} s_\mathrm{{max}}$"
+                    label_s = fr"{self.cooling}, $s = {((s_mid_[self._up_mid])[i_s] / self.ibs.s_max_cm) :.2f} s_\mathrm{{max}}$"
                 if self.ibs.ndim==3:
-                    label_s = fr"{self.cooling}, $s = {(s_mid_[i_s] / self.ibs.s_max) :.2f} s_\mathrm{{max}}$"
+                    label_s = fr"{self.cooling}, $s = {(s_mid_[i_s] / self.ibs.s_max_cm) :.2f} s_\mathrm{{max}}$"
                 
                 ax[0].plot(self.e_vals, sed_e_up[i_s, :], alpha=0.3,
                            label=label_s, **kwargs)
@@ -1563,13 +1884,8 @@ class ElectronsOnIBS: #!!!
                        np.nanmax(sed_e_up * 2))
 
         ax[1].set_xlabel(r'$s$')
-        # ax[1].set_ylabel(r'$N(s)$')
         ax[1].set_title(r'$N_e(s)$')    
         
-        # smesh, emesh = np.meshgrid(self.ibs.s[self.ibs.n:2*self.ibs.n],
-        #                            self.e_vals, indexing='ij')
-        # edot_ = ElectronsOnIBS.edot(self, smesh, emesh)
-        # if 
         ax[2].plot(self.e_vals, -self.e_vals / edot_avg)
         ax[2].set_xlabel('e, eV')
         ax[2].set_title('avg t cool(e) [s]')

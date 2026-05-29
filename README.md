@@ -50,14 +50,14 @@ PSR B1259-63 periastron dist [au] =  0.8623138966114536
 ----- at t=20 days after periastron -----
 effective beta =  0.035321971059500246
 IBS opening angle =  2.4833832541305156
-tot number of e on IBS =  1.0439148046257853e+40
-from spec, flux 0.3-10 keV =  7.20099314048531e-12
-from spec, flux 0.4-10 TeV =  9.53108928163936e-13
-from LC, flux 0.3-10 keV =  7.20099314048531e-12
-from LC, flux 0.4-10 TeV =  9.53108928163936e-13
+----- using the cooling law: stat_ibs -----
+tot number of e on IBS =  7.08705617073463e+39
+from spec, flux 0.3-10 keV =  7.0616353227403065e-12
+from spec, flux 0.4-10 TeV =  1.3470105074688486e-12
+from LC, flux 0.3-10 keV =  7.0616353227403065e-12
+from LC, flux 0.4-10 TeV =  1.3470105074688486e-12
 
 ```
-
 
 ## Usage
 There is a poor attempt at the graphical interface: run it with
@@ -69,8 +69,8 @@ You can explore how the IBS, SEDs, and light curves change for different paramet
 Mainly, though, the package is meant to be ran as a part of a python script.
 
 The package consists of six main classes, you can find their description and usage examples in ``tutorials``. The general idea is this: you define
-an orbit of the binary, then the outflows ("winds") properties, then the intrabinary shock (IBS), then the electrons evolution and transport over this IBS character,
-then the photon spectrum. There is also a possibility of skipping all these steps by calculating a light curve (which may consist of one point).
+an orbit of the binary, then the outflows ("winds") properties, then the intrabinary shock (IBS), then compute the electrons evolution/transport over IBS,
+then calculate the photon spectrum. There is also a possibility of doing all these steps at once by calculating a light curve.
  
  1. ``Orbit`` (self-explanatory);
 Let's initiate an Orbit object and plot an orbit: 
@@ -84,8 +84,8 @@ orb = Orbit(T=25*DAY, e=0.7, M=30*2e33,
 t = np.linspace(-20*DAY, 70*DAY, 1000)
 plt.plot(orb.x(t), orb.y(t))
 ```
- 2. ``Winds`` in which currently all information about NS, optical star, and their winds is stored. Here you can calculate the magnetic/photon fields in the random point from stars, winds pressure, or the position of the equilibrium between pulsar and optical stars winds as a function of time;
-Initiate Winds with a decretion disk pressure 100 times stronger than the polar wind (in which sense - see tutorials) and plot the star-emission zone separation VS time.
+ 2. ``Winds`` in which currently all information about NS, optical star, and their winds are stored. Here you can calculate the magnetic/photon fields in any point, winds pressure, the position of the equilibrium between pulsar and optical stars winds as a function of time, etc.
+Initiate `Winds` with a decretion disk pressure 100 times stronger than the polar wind (see tutorials for further info) and plot the star-to-emission zone distance VS time.
 ```python
 from ibsen import Winds
 winds = Winds(orbit=orb, f_d=100, Ropt=7e11, Mopt=28*2e33, Topt=4e4, ns_b_apex=10)
@@ -96,14 +96,14 @@ plt.axvline(td1/DAY)
 plt.axvline(td2/DAY)
 ```
  3. ``IBS``: Intrabinary shock - an object with stuff about IBS geometry and the bulk motion along it;
-Initiate IBS at a time of 2 days after the periastron and take a look at it, colorcoding it with the doppler factor.
+Initiate IBS at a time of 2 days after the periastron and take a look at it, colorcoding it with the doppler factor of matter bulk motion.
 ```python
 from ibsen import IBS # or from ibsen.ibs import IBS3D 
 ibs = IBS(winds=winds, t_to_calculate_beta_eff=2*DAY)
 ibs.peek(showtime=(-3*DAY, 3*DAY), show_winds=True, ibs_color='doppler')
 ```
  4. ``ElectronsOnIBS`` describes the population of ultra-relativistic electrons on the IBS, allows to calculate stationary e-spectra in each point of IBS;
-Take a look at the electron spectrum over IBS if the apex magnetic field is 1G:
+Take a look at the electron spectrum over IBS if the apex magnetic field is 10 [G] (was specified in `Winds`):
 ```python
 from ibsen import ElectronsOnIBS
 elev = ElectronsOnIBS(ibs=ibs, cooling='stat_mimic')
@@ -111,14 +111,14 @@ elev.calculate()
 elev.peek()
 ```
  5. ``SpectrumIBS`` computes the non-thermal photon spectrum emitted by the ultra-relativistic electrons;
-Calculate the synchrotron + inverse Compton spectrum from the population of electrons we obtained above:
+Calculate the synchrotron + inverse Compton spectrum from the population of electrons we just found:
 ```python
 from ibsen.spec import SpectrumIBS
 spec = SpectrumIBS(els=elev, method='simple', mechanisms=['syn', 'ic',], distance=3e3*3e18)
 spec.calculate(e_ph = np.geomspace(3e2, 1e13, 1001))
 spec.peek()
 ```
- 6. ``LightCurve`` performs the spectrum calculation for a number of moments of time calculating the light curve.
+ 6. ``LightCurve`` performs the spectrum calculation for a number of moments of time, returning the light curve and all intermediate calculation results.
 ```python
 from ibsen import LightCurve
 t_lc = np.linspace(-3*DAY, 3*DAY, 100)
@@ -140,9 +140,9 @@ See tutorials in `tutorials` folder for the complete description of these models
 
 ### TODO
  1. When calculating IC, should we account for the seed photons coming from the disk?
- 2. Occasional problems with IC.
- 3. How to visualize winds in 3D?
- 5. If one is bored so much that one feels the need to make the graphical interface better, it'd be cool to add all gamma-ray binaies systems in the drop-down windows, as well as allow for the basic system parameters variation (such as Torb, Mopt, e...) instead of keeping them strictly fixed. Also, the default values and ranges of sliders should be system-dependent.
+ 2. How to visualize winds in 3D?
+ 3. Write fitting utils for LC/SEDs. It should take several datasets and fit to the theoretical model using the same sets of parameters except normalizations.
+ 4. If one is bored so much that one feels the need to make the graphical interface better, it'd be cool to add all gamma-ray binaies systems in the drop-down windows, as well as allow for the basic system parameters variation (such as Torb, Mopt, e...) instead of keeping them strictly fixed. Also, the default values and ranges of sliders should be system-dependent.
 
 
 ## License 

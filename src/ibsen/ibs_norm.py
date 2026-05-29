@@ -76,8 +76,6 @@ class BaseIBSNorm_2D:
         for name in ("x", "y", "s", "theta", "r", "r1", "tang", "ds_dtheta"):
             self._set_mid_attrs(name)
             
-        # self.r_vec_mid = 0.5 * (self.r_vec[:-1, :] + self.r_vec[1:, :])
-        # self.r1_vec_mid = 0.5 * (self.r1_vec[:-1, :] + self.r1_vec[1:, :])
         self.unit_r_mid = 0.5 * (self.unit_r[:-1, :] + self.unit_r[1:, :])
         self.unit_r1_mid = 0.5 * (self.unit_r1[:-1, :] + self.unit_r1[1:, :])
         self.unit_beta_mid = 0.5 * (self.unit_beta[:-1, :] + self.unit_beta[1:, :])
@@ -929,7 +927,7 @@ class IBS_CRW96:
         """
         to_solve1 = lambda tinf: tinf - np.tan(tinf) - np.pi / (1. - self.beta)
         try:
-            th_inf = brentq(to_solve1, np.pi/2 + 1e-5, np.pi - 1e-5)
+            th_inf = brentq(to_solve1, np.pi/2. + 1e-5, np.pi - 1e-5)
             return th_inf
         except:
             return np.nan
@@ -953,9 +951,9 @@ class IBS_CRW96:
         """
         if not use_approx:
             if theta == 0:
-                return 0
+                return 0.
             th1_inf = np.pi - self.theta_inf_analytical 
-            to_solve2 = lambda t1: t1 / np.tan(t1) - 1. - self.beta * (theta / np.tan(theta) - 1)
+            to_solve2 = lambda t1: t1 / np.tan(t1) - 1. - self.beta * (theta / np.tan(theta) - 1.)
             th1 = brentq(to_solve2, 1e-10, th1_inf)
             return th1
         if use_approx:
@@ -988,46 +986,51 @@ class IBS_CRW96:
             star and the pulsar = 1.
     
         """
-        b = np.abs(np.log10(self.beta))
+        b = np.abs(np.log10(self.beta)) # b goes from 0 to ~4
         # first, find the shape in given b by interpolationtheta1_CRW
-        if b < 0.5:
+        # if b < 0.5:
             # _here = Path(__file__).parent          
             # _ibs_data_file = _here / "tab_data" / "Shocks4.nc"
             # ds_sh = xr.load_dataset(_ibs_data_file)
-            intpl = ds_sh.interp(abs_logbeta=b)
-            xs_, ys_, ts_, rs_, ss_, t1s_, r1s_ = (intpl.x, intpl.y, intpl.theta,
-                            intpl.r, intpl.s, intpl.theta1, intpl.r1, )
-            xs_, ys_, ts_, rs_, ss_, t1s_, r1s_ = [np.array(arr) for arr in (xs_, ys_,
-                                            ts_, rs_, ss_, t1s_, r1s_)]
-        else:
-            ts_ = np.linspace(0.01, self.thetainf*0.999, 301)
-            t1s_ = self.theta1_CRW(theta=ts_, use_approx=True)
-            rs_ = sin(t1s_) / sin(ts_ + t1s_)
-            xs_, ys_ = rs_ * cos(ts_), rs_ * sin(ts_)
-            r1s_ = np.sqrt(ys_**2 + (1. - xs_)**2)
-            ds = np.sqrt(np.diff(xs_)**2 + np.diff(ys_)**2)
-            ss_ = np.concatenate(([0], np.cumsum(ds)))
+        intpl = ds_sh.interp(abs_logbeta=b)
+        xs_, ys_, ts_, rs_, ss_, t1s_, r1s_ = (intpl.x, intpl.y, intpl.theta,
+                        intpl.r, intpl.s, intpl.theta1, intpl.r1, )
+        xs_, ys_, ts_, rs_, ss_, t1s_, r1s_ = [np.array(arr) for arr in (xs_, ys_,
+                                        ts_, rs_, ss_, t1s_, r1s_)]
+        # else:
+        #     ts_ = np.linspace(0.01, self.thetainf*0.999, 1301)
+        #     t1s_ = self.theta1_CRW(theta=ts_, use_approx=True)
+        #     rs_ = sin(t1s_) / sin(ts_ + t1s_)
+        #     xs_, ys_ = rs_ * cos(ts_), rs_ * sin(ts_)
+        #     r1s_ = np.sqrt(ys_**2 + (1. - xs_)**2)
+        #     ds = np.sqrt(np.diff(xs_)**2 + np.diff(ys_)**2)
+        #     ss_ = np.concatenate(([0], np.cumsum(ds)))
         
         tang = np.arctan(np.gradient(ys_, xs_, edge_order=2))
         ds_dt_ = np.gradient(ss_, ts_, edge_order=2)
         r_apex_analyt = self.beta**0.5 / (self.beta**0.5 + 1)
         if isinstance(self.s_max, float) or isinstance(self.s_max, int):
-            self.s_max = float(self.s_max)
+            # self.s_max = float(self.s_max)
             # leave only the points where arclength < s_max. This may not work good
             # when the b is super big, like > 8-9, as many points will be cut from
             # the already sparse arrays
-            ok = np.where(ss_ < self.s_max)
-        if isinstance(self.s_max, str):
+            ok = np.where(ss_ < float(self.s_max))
+        elif isinstance(self.s_max, str):
             if self.s_max == 'bow':
                 # leave only the part of the shock in forward half-sphere from the 
                 # pulsar
                 ok = np.where(np.abs(ts_) <= np.pi/2)
-            if self.s_max == 'incl':
+            elif self.s_max == 'incl':
                 # leave only the parts where the angle between the flow and the line
                 # from pulsar is < 90 + 10
-                ok = np.where(ts_ + np.abs(tang) <= np.pi/2 + 10/180*np.pi)
+                ok = np.where(ts_ + np.abs(tang) <= np.deg2rad(90. + 10.))
+            else:
+                raise ValueError(f"Wrong value for the string s_max = {self.s_max}.")
+        else:
+            raise ValueError(f"Wrong type for s_max = {self.s_max}.")
         xs_, ys_, ts_, rs_, ss_, t1s_, r1s_, tang, ds_dt_ = [arr[ok] for arr in (xs_, ys_,
                                             ts_, rs_, ss_, t1s_, r1s_, tang, ds_dt_)]
+        self.s_max_cm = np.max(ss_) 
         # now we interpolate the values onto the equally-spaced grid over y with
         # na nods, since this is the best way to interpolate (not over s)
         intx, ints, intth, intr, intth1, intr1, inttan, intdsdt = (interp1d(ys_, xs_),
@@ -1035,9 +1038,11 @@ class IBS_CRW96:
                 interp1d(ys_, ts_), interp1d(ys_, rs_), interp1d(ys_, t1s_), 
                 interp1d(ys_, r1s_), interp1d(ys_, tang), interp1d(ys_, ds_dt_))    
         yplot = np.linspace(np.min(ys_)*1.001, np.max(ys_)*0.999, int(self.n))
-        xp, tp, rp, sp, t1p, r1p, tanp, ds_dtp = (intx(yplot), intth(yplot), intr(yplot),
-                                          ints(yplot),
-                intth1(yplot), intr1(yplot), inttan(yplot), intdsdt(yplot))
+        # xp, tp, rp, sp, t1p, r1p, tanp, ds_dtp = (intx(yplot), intth(yplot), intr(yplot),
+        #                                   ints(yplot),
+        #         intth1(yplot), intr1(yplot), inttan(yplot), intdsdt(yplot))
+        xp, sp, tanp, ds_dtp = (intx(yplot), ints(yplot), inttan(yplot), 
+                                intdsdt(yplot))
         yp = yplot
         
         if full_output:
@@ -1048,9 +1053,6 @@ class IBS_CRW96:
         
         if not full_output:
             return xp, yp
-    
-    def _y_circle_1horn(self, x):
-        return np.sqrt(self.radius**2 - x**2)
     
     def _set_ibs_coords(self):
         xs_needed, ys_needed, ss_needed, tangs_needed, dsdts_needed, _r_apex = self.approx_IBS(True)
@@ -1069,6 +1071,11 @@ class IBS_norm_toy(IBSToyModel, IBSGeometryOneHorn, IBS_kinematics, BaseIBSNorm_
 class IBS_norm3D(IBS_CRW96, IBSGeometryOneHorn, IBS_kinematics, BaseIBSNorm_3D):
     """
     An analog of the IBS_norm class for three dimensions. See docs for IBS_norm.
+    
+    The difference is the parameters:
+        
+    n_phi : int, optional
+        Number of sampling points along the phi-coordinate.
     """
     pass
 

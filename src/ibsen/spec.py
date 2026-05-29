@@ -8,7 +8,6 @@ from ibsen.get_obs_data import get_parameters, known_names
 from ibsen.utils import unpack_params, index
 import ibsen.absorbtion.absorbtion as absb
 from scipy.interpolate import interp1d, RegularGridInterpolator
-import matplotlib.pyplot as plt
 import naima
 from naima.models import Synchrotron, InverseCompton
 
@@ -845,7 +844,7 @@ class SpectrumIBS: #!!!
             Upper energy [eV].
         epow : float, optional
             Which moment of dN/de to integrate. epow=0 gives the number of
-            photons in [e1, e2] [s^-1]. epow=1 gives flux [erg/s].
+            photons in [e1, e2] [s^-1]; epow=1 gives flux [erg/s].
             The default is 1.
 
         Returns
@@ -988,6 +987,7 @@ class SpectrumIBS: #!!!
         """
     
         if ax is None:
+            import matplotlib.pyplot as plt
             fig, ax = plt.subplots(1, 2, figsize=(8, 4))    
 
         if self.sed is None:
@@ -1020,7 +1020,7 @@ class SpectrumIBS: #!!!
                         int(_n*1.85),
                     ):
                 ilo, ihi = int(i_s-_n/10), int(i_s+_n/10)
-                label_interval = f"{(s_plot[ilo] / self._ibs.s_max) :.2f}-{(s_plot[ihi] / self._ibs.s_max) :.2f}"
+                label_interval = f"{(s_plot[ilo] / self._ibs.s_max_cm) :.2f}-{(s_plot[ihi] / self._ibs.s_max_cm) :.2f}"
                 label_s = fr"$s = ({label_interval})~ s_\mathrm{{max}}$"
                 int_sed_here = np.sum(emiss_to_integr[ilo : ihi, :], axis=0)
                 

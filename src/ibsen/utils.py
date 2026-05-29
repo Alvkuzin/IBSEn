@@ -316,6 +316,40 @@ def n_from_v(a, eps=0.0):
     out[mask] = a[mask] / norm[mask][..., None]   # broadcast denom to (...,1)
     return out
 
+def vec_between(vec_i, vec_f, param):
+    """
+    Builds a vector on the line through `vec_i` and `vec_f` parametrized my
+    `param`.
+
+    Parameters
+    ----------
+    vec_i : np.array (..., 3) or (3,)
+        Initial direction.
+    vec_f : np.array (..., 3) or (3,)
+        Final direction.
+    param : float | np.array (Np, )
+        Parameter.
+
+    Returns
+    -------
+    np.ndarray of shape (Np, ..., 3), but
+        - if `param` is a float, then just (..., 3)
+        - if `vec_i` and `vec_f` have different shapes so that one shape is
+        (3,) and another is (..., 3), then still (Np, ..., 3). Note that other
+        configurations of `vec_i` and `vec_f` are impossible. 
+        A vector laying on a line through `vec_i` and `vec_f`.
+
+    """
+    vec_i = np.asarray(vec_i)
+    vec_f = np.asarray(vec_f)
+    param = np.asarray(param)
+
+    if param.ndim == 1:
+        max_ndim = max(vec_i.ndim, vec_f.ndim)
+        param = param[(...,) + (np.newaxis,) * max_ndim]
+    
+    return vec_i + (vec_f - vec_i) * param
+
 """ #!!!
  ------------------------------------------------------------------------------
  ----------------- #####  manipulations with arrays  ##### --------------------
@@ -663,6 +697,10 @@ def beta_from_g(g_vel):
         else:
             res = 0.0
     return res 
+
+def doppler_delta(gamma, angle):
+    _beta = beta_from_g(gamma)
+    return 1. / gamma / (1. - _beta * np.cos(angle))
 
 def lor_trans_angle(angle, gamma):
     """
@@ -1545,14 +1583,14 @@ def fit_norm(ydata, dy_data, y0_normalized, return_err=False):
     if denom <= 0:
         raise ValueError('denominator < 0 in fit_norm, cannot find normalization')
     N_best = np.sum(w * y0_normalized * ydata) / denom
-    resid = ydata - N_best * y0_normalized
-    chi2 = np.sum((resid / dy_data)**2)
-    nu = ydata.size - 1
-    s2 = chi2 / nu
-    sigma_N = np.sqrt(s2 / denom)
     if not return_err:
         return N_best, N_best * y0_normalized
     if return_err:
+        resid = ydata - N_best * y0_normalized
+        chi2 = np.sum((resid / dy_data)**2)
+        nu = ydata.size - 1
+        s2 = chi2 / nu
+        sigma_N = np.sqrt(s2 / denom)
         return N_best, N_best * y0_normalized, sigma_N
     
 

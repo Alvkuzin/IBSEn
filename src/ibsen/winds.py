@@ -8,7 +8,6 @@ from ibsen.utils import unpack_params
 from ibsen.utils import rotated_vector, mydot, mycross, n_from_v, absv, \
     enhanche_jump, angles_from_vec, vector_angle, orthonormal_basis_perp, rotate_vec1_around_vec2
 from ibsen.orbit import Orbit
-import matplotlib.pyplot as plt
 
 
 G = float(const.G.cgs.value)
@@ -624,7 +623,7 @@ class Winds:
 
         """
         radius = self.orbit.vector_sp(t)
-        return radius - Winds.vec_r_to_dp(self, t)
+        return radius - self.vec_r_to_dp(t)
     
 
     def n_DiskMatter(self, t):
@@ -642,7 +641,7 @@ class Winds:
             The unit vector of the Keplerian disk matter velocity at the point of the pulsar location.
 
         """
-        n_indisk = n_from_v(Winds.vec_r_in_sp(self, t))
+        n_indisk = n_from_v(self.vec_r_in_dp(t))
         ndisk = self.n_disk
         return mycross(ndisk, n_indisk)
     
@@ -917,7 +916,9 @@ class Winds:
 
     def _vec_pe_3d_novec(self, t, eps=1e-3, orientation='flow'):
         """
+        A vector from the pulsar to the emission zone calculated in 3d. 
         
+        t should be float [s]
         """
         if orientation not in ('flow', 'projection', 'direction', 'full'):
             raise ValueError("Invalid keyword `orientation` in Winds.vec_pe_3d.")
@@ -1098,6 +1099,11 @@ class Winds:
         return vec_pe_solution        
 
     def vec_pe_3d(self, t, eps=1e-3, orientation='flow'): 
+        """
+        A vector from the pulsar to the emission zone calculated in 3d. 
+        
+        t is a float or a 1d np.ndarray [s].
+        """
         t_ = np.asarray(t)
         if t_.ndim == 0:
             return self._vec_pe_3d_novec(float(t), eps, orientation)
@@ -1107,6 +1113,11 @@ class Winds:
             ] )
     
     def dist_pe(self, t, orientation=None):
+        """
+        An absolute value of the distance from the pulsar to the emission zone. 
+        
+        t should be float [s]
+        """
         r_sp = self.orbit.r(t)
         if orientation is None:
             r_se = self.dist_se_1d(t)
@@ -1225,6 +1236,7 @@ class Winds:
 
         """
         if ax is None:
+            import matplotlib.pyplot as plt
             if plot_rs:
                 fig, (ax0, ax1) = plt.subplots(nrows=1, ncols=2)
             else:
@@ -1312,7 +1324,7 @@ class Winds:
         #######################################################################    
         
         if plot_rs:
-            dists_se = Winds.dist_se_1d(self, _t)
+            dists_se = self.dist_se_1d( _t)
             rs = self.orbit.r(_t)
             ax1.plot(_t/DAY, dists_se, label='se', ls='--')
             ax1.plot(_t/DAY, rs, label = 'sp', ls='-')
