@@ -1,12 +1,12 @@
 # ibsen/spec.py
 import numpy as np
 from ibsen.utils import loggrid, trapz_loglog, \
-        interplg, fill_nans, fill_nans_1d, avg, index_simple
+        interplg,  avg, index_simple
         
 import astropy.units as u
 from ibsen.get_obs_data import get_parameters, known_names
 from ibsen.utils import unpack_params, index
-import ibsen.absorbtion.absorbtion as absb
+import ibsen.absorption.absorption as absb
 from scipy.interpolate import interp1d, RegularGridInterpolator
 import naima
 from naima.models import Synchrotron, InverseCompton
@@ -75,7 +75,8 @@ def value_on_ibs_with_weights(arr_xy, x, y_extended, y_eval, weights, y_scale,
     """
     if mode == 'rgi':
         # It's maybe not the best idea to use RGI here, seems like it sometimes
-        # interpolates too rough. But I haven't figured out a way to use interp1d 
+        # interpolates too rough. The other mode uses `interp1d`, but you I 
+        # think you can only use `interp1d` in a 'for' cycle.
         RGI = RegularGridInterpolator((x, y_extended), arr_xy, bounds_error=False,
                                       method = 'linear') 
         E_new_up = (y_eval[None, :] / y_scale[:, None])
@@ -370,7 +371,7 @@ class SpectrumIBS: #!!!
         self.temp_eff = temp_2horns
         self.scat_ang = scat_ang_2horns
         
-        self.Topt = self._ibs.winds.Topt
+        self.Topt = self._ibs.winds.star.Topt
         self.b_apex = self._ibs.b_apex
         self.u_apex = self._ibs.ug_apex
         self.scat_ang_apex = self._ibs.scatter_angle_apex
@@ -401,9 +402,9 @@ class SpectrumIBS: #!!!
             raise ValueError('I don\'t know this model. Try `Syn` or `IC`.' )
         return emiss_key
         
-    def _set_absorbtion(self, e_ph):
+    def _set_absorption(self, e_ph):
         """
-        Sets absorbtion coefficient e^-tau for energies `e_ph` in every point of
+        Sets absorption coefficient e^-tau for energies `e_ph` in every point of
         IBS as self.abs_tot : array of shape (s_mid.size, e_ph.size).   
 
         Parameters
@@ -747,7 +748,7 @@ class SpectrumIBS: #!!!
 
         """
         
-        self._set_absorbtion(e_ph=e_ph)
+        self._set_absorption(e_ph=e_ph)
         # -------------------------------------------------------------------------
         # for each segment of IBS, we calulate a spectrum and put it into
         # the 2-dimentional array sed_s_. The E_ph is always the same and it is 

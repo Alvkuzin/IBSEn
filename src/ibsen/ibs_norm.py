@@ -762,7 +762,7 @@ class BaseIBSNorm_3D: #!!!
         
         
 
-class IBS_kinematics:
+class IBS_kinematics: 
     """
     A mixin defining the kinematics.
     """

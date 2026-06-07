@@ -18,68 +18,10 @@ except:
     print("Impossible to import Gammapy.")
     FluxPoints = None
     
-# def fit_norm_here(x_obs, y_obs, dy_obs, x_model, y_model, norm_init,
-#                   grid_scale='log', return_err=False):
-#     """
-#     Fits the model normalizatoin: (x_model, y_model) to the observations:
-#         (x_obs, y_obs, dy_obs).
-    
-#     y_model should have been calculated with norm_init. 
-    
-#     The fit is performed over only these observational points x_obs_i which are inside
-#     the model: min(x_model) < x_obs_i < max(x_model).
-    
-#     grid_scale : str, one of: {'log', 'linear'} --- shows how to interpolate
-#     model onto x_obs. Default 'log'.
-    
-    
-#     Returns
-#     -------
-#     norm_opt : float
-#         Optimal normalization.
-#     y_model_renormalized : np.ndarray of length y_model.size
-#         Renormalized model y.
-        
-#     and, if return_err==True,
-#     dn_rel (float), relative error for N,
-#     y_low, y_high: np.arrays of size y_model.size, confidence interval boundaries.
-#     """
-    
-#     obs_ok = (np.isfinite(x_obs) & np.isfinite(y_obs) & np.isfinite(dy_obs) 
-#               & (x_obs > np.min(x_model)) & (x_obs < np.max(x_model)) )
-#     x_obs, y_obs, dy_obs = [ar[obs_ok] for ar in (x_obs, y_obs, dy_obs)]
-#     model_ok = np.isfinite(x_model) & np.isfinite(y_model)
-#     x_model, y_model = [ar[model_ok] for ar in (x_model, y_model)]
-#     y_model_normalized = y_model  / norm_init
-
-#     if grid_scale.lower() in ('linear', 'lin'):
-#         interp_ = interp1d(x=x_model, y=y_model_normalized, bounds_error="extrapolate",
-#                 fill_value=(y_model_normalized[0], y_model_normalized[-1]))
-#         y_model_normalized_in_xobs = interp_(x_obs)
-#     elif grid_scale.lower() in ('log', 'log10'):
-#         y_model_normalized_in_xobs = interplg(x_obs, x_model, 
-#                             y_model_normalized, bounds_error="extrapolate",
-#                 fill_value=(np.log10(y_model_normalized[0]), 
-#                             np.log10(y_model_normalized[-1])))
-#     else:
-#         raise ValueError("grid_scale should be one of: 'lin', 'log'")
-#     if not return_err:
-#         norm_opt, y_model_opt = fit_norm(ydata = y_obs, dy_data = dy_obs, 
-#                                          y0_normalized=y_model_normalized_in_xobs)
-#         return norm_opt, y_model * norm_opt / norm_init
-#     if return_err:
-#         norm_opt, y_model_opt, dnorm_opt = fit_norm(ydata = y_obs, dy_data = dy_obs, 
-#                                          y0_normalized=y_model_normalized_in_xobs,
-#                                          return_err=True)
-#         dn_rel = dnorm_opt / norm_opt
-#         y_model_renorm = y_model * norm_opt / norm_init
-#         y_low, y_high = y_model_renorm * (1 - dn_rel), y_model_renorm * (1 + dn_rel)
-        
-#         return norm_opt, y_model_renorm, dn_rel, y_low, y_high
-    
 def fit_norm_here( x_obs, y_obs, dy_obs,
     x_model, y_model, norm_init, 
-    grid_scale='log', return_err=False):
+    grid_scale='log', return_err=False,
+    add_const=False, c_init=None):
     """
     Fits normalization(s) of model to observation set(s).
 
@@ -112,8 +54,10 @@ def fit_norm_here( x_obs, y_obs, dy_obs,
             ar[model_ok]
             for ar in (x_model, y_model)
         ]
-
-        y_model_normalized = y_model_ok / norm_init
+        if not add_const:
+            y_model_normalized = y_model_ok / norm_init
+        else:
+            y_model_normalized = (y_model_ok - c_init) / norm_init
 
         if grid_scale.lower() in ('linear', 'lin'):
             interp_ = interp1d(
@@ -143,35 +87,62 @@ def fit_norm_here( x_obs, y_obs, dy_obs,
             raise ValueError("grid_scale should be one of: 'lin', 'log'")
 
         if not return_err:
-            norm_opt, _ = fit_norm(
+            if not add_const:
+                norm_opt, _ = fit_norm(
+                    ydata=y_obs_ok,
+                    dy_data=dy_obs_ok,
+                    y0_normalized=y_model_normalized_in_xobs,
+                )
+                y_model_renorm = y_model_normalized * norm_opt
+                return norm_opt, y_model_renorm
+            
+            norm_opt, c_opt, _ = fit_norm(
                 ydata=y_obs_ok,
                 dy_data=dy_obs_ok,
                 y0_normalized=y_model_normalized_in_xobs,
+                addit_const=add_const,
             )
-
-            y_model_renorm = y_model_ok * norm_opt / norm_init
-            return norm_opt, y_model_renorm
-
+            y_model_renorm = c_opt + norm_opt * y_model_normalized
+            return norm_opt, c_opt, y_model_renorm
         else:
-
-            norm_opt, _, dnorm_opt = fit_norm(
+            if not add_const:
+                norm_opt, _, dnorm_opt = fit_norm(
+                    ydata=y_obs_ok,
+                    dy_data=dy_obs_ok,
+                    y0_normalized=y_model_normalized_in_xobs,
+                    return_err=True,
+                )
+    
+                dn_rel = dnorm_opt / norm_opt
+                y_model_renorm = y_model_ok * norm_opt / norm_init
+                y_low = y_model_renorm * (1 - dn_rel)
+                y_high = y_model_renorm * (1 + dn_rel)
+                return (
+                    (norm_opt,),
+                    y_model_renorm,
+                    (dn_rel,),
+                    y_low,
+                    y_high,
+                )
+            norm_opt, c_opt, _, dn, dc, cov = fit_norm(
                 ydata=y_obs_ok,
                 dy_data=dy_obs_ok,
                 y0_normalized=y_model_normalized_in_xobs,
                 return_err=True,
+                addit_const=add_const,
             )
-
-            dn_rel = dnorm_opt / norm_opt
-            y_model_renorm = y_model_ok * norm_opt / norm_init
-            y_low = y_model_renorm * (1 - dn_rel)
-            y_high = y_model_renorm * (1 + dn_rel)
+            _f = y_model_normalized
+            y_model_renorm  = c_opt + norm_opt * y_model_normalized
+            dy_model = np.sqrt(dc**2 + _f**2 * dn**2 + 2. * _f * cov[0, 1])
+            y_low, y_high = y_model_renorm - dy_model, y_model_renorm + dy_model
             return (
-                norm_opt,
+                (norm_opt, c_opt,),
                 y_model_renorm,
-                dn_rel,
+                (dn, dc,),
                 y_low,
-                y_high,
-            )
+                y_high
+                )
+            
 
 
     is_multiple = isinstance(x_obs, (list, tuple))

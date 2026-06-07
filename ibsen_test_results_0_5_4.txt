@@ -1,0 +1,46 @@
+PSR B1259-63 periastron dist [au] =  0.8623138966114536
+----- at t=20 days after periastron -----
+effective beta =  0.035321971059500246
+IBS opening angle =  2.4833832541305156
+----- using the cooling law: no -----
+tot number of e on IBS =  7.53565147109733e+36
+from spec, flux 0.3-10 keV =  4.570913515733235e-14
+from spec, flux 0.4-10 TeV =  7.548656479229832e-15
+from LC, flux 0.3-10 keV =  4.570913515733235e-14
+from LC, flux 0.4-10 TeV =  7.548656479229832e-15
+----- using the cooling law: stat_apex -----
+tot number of e on IBS =  3.46287337847352e+39
+from spec, flux 0.3-10 keV =  2.950935631125948e-12
+from spec, flux 0.4-10 TeV =  5.989256615746455e-13
+from LC, flux 0.3-10 keV =  2.950935631125948e-12
+from LC, flux 0.4-10 TeV =  5.989256615746455e-13
+----- using the cooling law: stat_ibs -----
+tot number of e on IBS =  7.08705617073463e+39
+from spec, flux 0.3-10 keV =  7.0616353227403065e-12
+from spec, flux 0.4-10 TeV =  1.3470105074688486e-12
+from LC, flux 0.3-10 keV =  7.0616353227403065e-12
+from LC, flux 0.4-10 TeV =  1.3470105074688486e-12
+----- using the cooling law: stat_mimic -----
+tot number of e on IBS =  1.1565560200258883e+40
+from spec, flux 0.3-10 keV =  1.3194993297038091e-11
+from spec, flux 0.4-10 TeV =  4.0846108477381275e-12
+from LC, flux 0.3-10 keV =  1.3194993297038091e-11
+from LC, flux 0.4-10 TeV =  4.0846108477381275e-12
+----- using the cooling law: leak_ibs -----
+tot number of e on IBS =  4.8657739763168105e+39
+from spec, flux 0.3-10 keV =  6.314836497294419e-12
+from spec, flux 0.4-10 TeV =  1.2933706416683868e-12
+from LC, flux 0.3-10 keV =  6.314836497294419e-12
+from LC, flux 0.4-10 TeV =  1.2933706416683868e-12
+----- using the cooling law: leak_mimic -----
+tot number of e on IBS =  4.8657739763168105e+39
+from spec, flux 0.3-10 keV =  6.314836497294419e-12
+from spec, flux 0.4-10 TeV =  1.2933706416683868e-12
+from LC, flux 0.3-10 keV =  6.314836497294419e-12
+from LC, flux 0.4-10 TeV =  1.2933706416683868e-12
+----- using the cooling law: adv -----
+tot number of e on IBS =  7.756854876822932e+39
+from spec, flux 0.3-10 keV =  7.632604769854816e-12
+from spec, flux 0.4-10 TeV =  1.622951485619068e-12
+from LC, flux 0.3-10 keV =  7.632604769854816e-12
+from LC, flux 0.4-10 TeV =  1.622951485619068e-12

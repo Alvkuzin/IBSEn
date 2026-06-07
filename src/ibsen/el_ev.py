@@ -7,7 +7,7 @@ from scipy.integrate import trapezoid, cumulative_trapezoid, solve_ivp
 from scipy.interpolate import interp1d
 
 from ibsen.utils import  beta_from_g, loggrid, t_avg_func, \
-    trapz_loglog, lor_trans_e_spec_iso, pl, ecpl, secpl, interplg_positive, \
+    trapz_loglog, lor_trans_e_spec_iso, pl, ecpl, secpl, bkpl, interplg_positive, \
         interplg, index_simple
 from ibsen.transport_solvers.transport_on_ibs_solvers import (
     nonstat_characteristic_solver, solveTranspFDM)
@@ -666,7 +666,7 @@ def evolved_e(cooling, r_SP, ss, rs, thetas, edot_func, f_inject_func,
           of  the advection equation is obtained with the finite-difference method. 
     r_SP : float
         Binary separation [cm].
-    ss : np.array of shape (Ns,)
+    ss : np.array of shape (Ns,) or 
         An array of positions along the IBS in units of r_SP.
     rs : np.array of shape (Ns,)
         An array of distances from the pulsar to the IBS in units of r_SP.
@@ -796,7 +796,7 @@ class ElectronsOnIBS: #!!!
 
     Parameters
     ----------
-    ibs : IBS
+    ibs : IBS or IBS3D
         IBS geometry at a chosen epoch (must have ``ibs.winds`` with an
         attached ``orbit``). Used for arc-length grid, angles, gamma,
         and distances needed by losses. 
@@ -804,22 +804,27 @@ class ElectronsOnIBS: #!!!
                'leak_apex', 'leak_ibs', 'leak_mimic', 'adv'} or None, optional
         Cooling/evolution mode. If not in the set above, it falls back to
         ``'no'`` at runtime. See *Notes* for meanings. Default is None.
-    to_inject_e : {'pl', 'ecpl', 'secpl'}, optional
+    to_inject_e : {'pl', 'ecpl', 'secpl', 'bkpl'}, optional
         Energy part of the injection law: power law, exponential cutoff PL,
         or super-exponential cutoff PL. Default 'ecpl'.
     to_inject_theta : {'2d', '3d'}, optional
-        Angular weighting along the curve: uniform ('2d') or ∝ sinθ ('3d').
-        Default '3d'. (You can also restrict to |θ| < ``where_cut_theta``.)
+        Angular weighting along the curve: uniform ('2d') or ∝ sin{theta} ('3d').
+        Default '3d'. (You can also restrict to |theta| < ``where_cut_theta``.)
     ecut : float, optional
         Cutoff energy for 'ecpl'/'secpl' [eV]. Default 1e12.
+    ebr : float, optional
+        Break energy for 'bkpl' [eV]. Default 1e12.
     n_e_cut : floar, optional
         Cutoff energy index: e_cut_real = ecut * (1 [G]/ b)**n_e_cut. Default 0.
     p_e : float, optional
         Injection spectral index. Default 2.0.
+    delta_p_e : float, optional
+        Difference in spectral indexes for the 'bkpl'. Default 0.5
     norm_e : float, optional
-        Injection normalization (particles/s). The angular–energy–integrated
-        rate in the **forward hemisphere of one horn** equals ``norm_e/4``.
-        Default 1e37.
+        Injection normalization (particles/s or eV/s) .
+    epow_norm_e : float, optional
+        What moment of injection distribution to normalize:
+            \int f_inj E^epow_norm_e dE
     beta_e : float, optional
         Super-exponential index for 'secpl'. Default 1.
     eta_a : float or None, optional
@@ -841,7 +846,7 @@ class ElectronsOnIBS: #!!!
 
     Attributes
     ----------
-    ibs : IBS
+    ibs : IBS/IBS3D
         The supplied IBS snapshot; used for s-grid, theta(s), r(s), and gamma(s).
         Should contain winds and winds.orbit.
     r_sp : float
@@ -955,10 +960,11 @@ class ElectronsOnIBS: #!!!
     """
     def __init__(self, ibs: IBS, cooling=None, to_inject_e = 'ecpl',
                  to_inject_theta = '3d', 
-                 ecut = 1.e12, p_e = 2., norm_e = 1.e37, beta_e=1,
+                 ecut = 1.e12, p_e = 2., norm_e = 1.e37, epow_norm_e=0.,
+                 beta_e=1,
+                 ebr = 1.e12, delta_p_e = 0.5,
                  n_e_cut = 0.0,
-                 eta_a = None,
-                 eta_syn = 1., eta_ic = 1.,
+                 eta_a = None, eta_syn = 1., eta_ic = 1.,
                  emin = 1e9, emax = 5.1e14, 
                  emin_grid=1e8, emax_grid=5.1e14,
                  to_cut_e = True, 
@@ -966,10 +972,7 @@ class ElectronsOnIBS: #!!!
                  where_cut_theta = pi/2):
         """
         We should provide the already initialized class ibs:IBS here with 
-        winds:Winds and orbit:Orbit in it. But the logic is a little off here:
-            Probably we should fix 
-        it sometime to set magn and photon fileds and r_sp in a more general 
-        way (maybe define a class like: `B & u properties`, idk).
+        winds:Winds and orbit:Orbit in it. 
         
         But since currently ibs initialized WITH winds, we actually know the 
         time since periastron we are at: it's self.ibs.t_forbeta
@@ -994,10 +997,13 @@ class ElectronsOnIBS: #!!!
         self.to_inject_e = to_inject_e # injection function along energies
         self.to_inject_theta = to_inject_theta # injection function along theta
         self.p_e = p_e  # injection function spectral index
-        self.ecut = ecut  # injection function cutoff energy
+        self.ecut = ecut  # injection function cutoff energy for 'ecpl'/'secpl'
+        self.ebr = ebr # break energy for 'bkpl'
+        self.delta_p_e = delta_p_e # Gamma2 - Gamma1 for 'bkpl'
         self.n_e_cut = n_e_cut
         self.beta_e = beta_e # index for super-exponential cutoff PL
         self.norm_e = norm_e # injection function normalization
+        self.epow_norm_e = epow_norm_e # what moment of the distr. function to normalize
         self.emin = emin  # minimum energy for the injection function
         self.emax = emax  # maximum energy for the injection function
         self.emin_grid = emin_grid  # minimum energy for e-energy grid
@@ -1043,7 +1049,7 @@ class ElectronsOnIBS: #!!!
         _f_inj_quarter = self._f_inject_nonnormalized(spat_coord = _tt, e = _ee, 
                             type_coord='theta', force_no_spatial_cut=True)
         _int_f_dtheta = trapezoid(_f_inj_quarter, _theta_helper, axis=0)
-        _int_d_dtheta_de = trapz_loglog(_int_f_dtheta, _e_helper)    
+        _int_d_dtheta_de = trapz_loglog(_int_f_dtheta * _e_helper**self.epow_norm_e, _e_helper)    
         if self.ibs.ndim == 2:
             return _int_d_dtheta_de * 4.
         if self.ibs.ndim == 3:
@@ -1122,8 +1128,8 @@ class ElectronsOnIBS: #!!!
             eta_ic_eff *= self.ibs.s_interp(s_, 'soft_ph_abs')  
         return total_loss(ee = e_, 
                           B = self.ibs.s_interp(s_, 'b'), 
-                          Topt = self.ibs.winds.Topt,
-                          Ropt=self.ibs.winds.Ropt,
+                          Topt = self.ibs.winds.star.Topt,
+                          Ropt=self.ibs.winds.star.Ropt,
                           dist = self.ibs.s_interp(s_, 'r1'),
                           eta_flow = eta_adiab, 
                           eta_syn = self.eta_syn,
@@ -1206,7 +1212,7 @@ class ElectronsOnIBS: #!!!
         Raises
         ------
         ValueError
-            If `to_inject_e` is not in ('pl', 'ecpl', 'secpl').
+            If `to_inject_e` is not in ('pl', 'ecpl', 'secpl', 'bkpl').
 
         Returns
         -------
@@ -1223,6 +1229,9 @@ class ElectronsOnIBS: #!!!
             ecut_eff = self.effective_e_cut(spat_coord=spat_coord, type_coord=type_coord)
             e_part = secpl(e, ind=self.p_e, ecut=ecut_eff, norm=1.,
                           beta_e = self.beta_e)
+        elif self.to_inject_e == 'bkpl':
+            e_part = bkpl(e, g1 = self.p_e, g2 = self.p_e + self.delta_p_e,
+                          ebr=self.ebr, norm=1.)
         else:
             raise ValueError("I don't know this to_inject_e. It should be pl or ecpl or secpl.")
                     
@@ -2033,11 +2042,16 @@ class NonstatElectronEvol: #!!!
     def __init__(self, winds, t_start, t_stop, n_t=105, 
                      
     to_inject_e = 'ecpl',   # el_ev
-    to_inject_theta = '3d', ecut = 1.e12, p_e = 2., norm_e = 1.e37,
-    eta_a = 1.,
-    eta_syn = 1., eta_ic = 1.,
-    emin = 1e9, emax = 5.1e14, to_cut_e = True, 
-    emin_grid=3e8, emax_grid=6e14, coef_down=10,
+                 ecut = 1.e12, p_e = 2., norm_e = 1.e37, epow_norm_e=0.,
+                 beta_e=1,
+                 ebr = 1.e12, delta_p_e = 0.5,
+                 n_e_cut = 0.0,
+                 eta_a = None, eta_syn = 1., eta_ic = 1.,
+                 emin = 1e9, emax = 5.1e14, 
+                 emin_grid=1e8, emax_grid=5.1e14,
+                 to_cut_e = True, 
+    
+   coef_down=10,
      n_dec_e=35, 
 
      init_distr='stat', 
@@ -2060,9 +2074,13 @@ class NonstatElectronEvol: #!!!
         self.eta_ic = eta_ic # to scale inverse compton losses
         
         self.to_inject_e = to_inject_e # injection function along energies
-        self.to_inject_theta = to_inject_theta # injection function along theta
         self.p_e = p_e  # injection function spectral index
         self.ecut = ecut  # injection function cutoff energy
+        self.epow_norm_e = epow_norm_e
+        self.beta_e = beta_e
+        self.ebr = ebr
+        self.delta_p_e = delta_p_e
+        self.n_e_cut = n_e_cut
         self.norm_e = norm_e # injection function normalization
         self.emin = emin  # minimum energy for the injection function
         self.emax = emax  # maximum energy for the injection function
@@ -2082,6 +2100,16 @@ class NonstatElectronEvol: #!!!
         self.dt_min = dt_min
         self.dt_max = dt_max
         self.dt_first = dt_first
+        self.integral_f_deds = self._normalize_injection()
+        
+    def _normalize_injection(self):
+        """
+        Calculates the integral of the (non-normalized) injection function. 
+        """
+        _e_helper = loggrid(self.emin_grid, self.emax_grid, 101)
+        _f_inj_quarter = self.inject_over_e(e = _e_helper)
+        _int_d_dtheta_de = trapz_loglog(_f_inj_quarter * _e_helper**self.epow_norm_e, _e_helper)    
+        return _int_d_dtheta_de
 
     
     def edot_apex(self, e_, t_): 
@@ -2101,66 +2129,79 @@ class NonstatElectronEvol: #!!!
             Edot(e_, t).
 
         """
-        r_sa = self.winds.dist_se_1d(t_)
-        B_p_apex, B_s_apex = self.winds.magn_fields_apex(t_)
+        r_sa = self.winds.dist_se_1d(t=t_)
+        B_p_apex, B_s_apex = self.winds.magn_fields_apex(t=t_)
         return total_loss(ee = e_, 
                           B = B_p_apex + B_s_apex, 
-                          Topt = self.winds.Topt,
-                          Ropt=self.winds.Ropt,
+                          Topt = self.winds.star.Topt,
+                          Ropt=self.winds.star.Ropt,
                           dist = r_sa, 
                           eta_flow = self.eta_a, 
                           eta_syn = self.eta_syn,
                           eta_IC = self.eta_ic)
 
-    def f_inject(self, e_, t_): 
+    def inject_over_e(self, e):
         """
-        Injection function at the emission zone dNe/dtde [1/s/eV].
 
         Parameters
         ----------
-        e_ : np.ndarray
-            e-energy [eV].
-        t_ : float
-            time [s]. Currently not used, but can be.
+        e : float or np.ndarray of the shape (Ne,) or (Ns, Ne)
+            Energies of electrons [eV].
 
         Raises
         ------
         ValueError
-            If to_inject_e is not recognized.
+            If `to_inject_e` is not in ('pl', 'ecpl', 'secpl', 'bkpl').
 
         Returns
         -------
-        np.ndarray
-            f_inject(e_, t_) [1/s/eV].
+        e_part : TYPE
+            An energies part of the decomposition of the injection function.
+
+        """
+        if self.to_inject_e == 'pl':
+            e_part = pl(e, ind=self.p_e, norm=1)
+        elif self.to_inject_e == 'ecpl':
+            # ecut_eff = self.effective_e_cut(spat_coord=spat_coord, type_coord=type_coord)
+            e_part = ecpl(e, ind=self.p_e, ecut=self.ecut, norm=1.)
+        elif self.to_inject_e == 'secpl':
+            # ecut_eff = self.effective_e_cut(spat_coord=spat_coord, type_coord=type_coord)
+            e_part = secpl(e, ind=self.p_e, ecut=self.ecut, norm=1.,
+                          beta_e = self.beta_e)
+        elif self.to_inject_e == 'bkpl':
+            e_part = bkpl(e, g1 = self.p_e, g2 = self.p_e + self.delta_p_e,
+                          ebr=self.ebr, norm=1.)
+        else:
+            raise ValueError("I don't know this to_inject_e. It should be pl or ecpl or secpl.")
+                    
+        if self.to_cut_e:
+            mask = (e < self.emin) | (e > self.emax)
+            e_part = np.where(mask, 0.0, e_part)
+        return e_part 
+
+    def f_inject(self, e, t): 
+        """
+        An injection with energy e (in eV).
+        Essentially it is (d N_injected / dt ) / de. 
+        The function is normalized to self.norm_e: the total number
+        of injected particles per second in the whole 4pi steradian should be
+        = norm_e.
+        
+        Parameters
+        ----------
+        e : float or np.ndarray of the shape (Ne,) 
+            Energies of electrons [eV].
+
+        Returns
+        -------
+        float or np.ndarray
+            The injection function and with energy e.
 
         """
 
-        if self.to_inject_e == 'ecpl':
-            e_part = ecpl(e_, ind=self.p_e, ecut=self.ecut, norm=1.)
-        elif self.to_inject_e == 'pl':
-            e_part = pl(e_, ind=self.p_e, norm=1)
-        else:
-            raise ValueError("I don't know this to_inject_theta. It should be pl or ecpl.")
-            
-            
-        ### if we assume that the `emission zone` is the forward hemisphere,
-        ### then the NUMBER of injected e don't change with time. 
-        ### We can include the t-dependence if we fugure out how to do so
-        ### in a meaningful way.
-        ### The density dNtot/ds changes, of course.
-        
-        result = e_part * self.norm_e 
-        
-        if self.to_cut_e:
-            mask = (e_ < self.emin) | (e_ > self.emax)
-            result = np.where(mask, 0.0, result)
-        
-        # now normalize the number of injected particles. I do it like this:
-        # I ensure that the total number per second: N(s) = \int n(s, E) dE 
-        # of electrons is half the Normalization
-        N_total = trapz_loglog(result, e_)
-        overall_coef = self.norm_e / 2 / N_total
-        return result * overall_coef
+        result = self.inject_over_e(e=e)
+        result *= self.norm_e / self.integral_f_deds
+        return result
     
     def stat_distr_at_time(self, t_, e_=None):
         """
@@ -2182,8 +2223,8 @@ class NonstatElectronEvol: #!!!
         if e_ is None:
             e_ = self.e_grid
         return stat_distr(Es = e_,  
-                    Qs = NonstatElectronEvol.f_inject(self, e_, t_),
-                    Edots = NonstatElectronEvol.edot_apex(self, e_, t_)
+                    Qs = self.f_inject(e_, t_),
+                    Edots = self.edot_apex(e_, t_)
                              )
 
     def calculate(self, to_return=False):
@@ -2217,8 +2258,8 @@ class NonstatElectronEvol: #!!!
             The electron spectrum dNe/de at times ts [1/eV].
 
         """
-        _edot_func = lambda e_, t_: NonstatElectronEvol.edot_apex(self, e_, t_)
-        _q_func = lambda e_, t_:  NonstatElectronEvol.f_inject(self, e_, t_)
+        _edot_func = lambda e_, t_: self.edot_apex(e_, t_)
+        _q_func = lambda e_, t_:  self.f_inject(e_, t_)
         
         
         ts, e_bins, dNe_des, edots_avg, q_avg = \
@@ -2241,6 +2282,7 @@ class NonstatElectronEvol: #!!!
         self.e_edg = loggrid(x1 = self.emin_grid, 
                                   x2 = self.emax_grid, 
                                   n_dec = int(self.n_dec_e))
+        self.e_bins = e_bins
         self.dNe_des = dNe_des
         self.ts = ts
         self.edots_avg = edots_avg
@@ -2250,7 +2292,7 @@ class NonstatElectronEvol: #!!!
         
         nstat = []
         for t_ in ts:
-            nstat.append(NonstatElectronEvol.stat_distr_at_time(self, t_=t_,
+            nstat.append(self.stat_distr_at_time(t_=t_,
                                                                 e_=e_bins))
         nstat=np.array(nstat)
         self.nstat=nstat

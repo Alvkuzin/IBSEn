@@ -30,7 +30,7 @@ pip install -r requirements.txt
 This project requires:
  - Python 3 (please install yourself),
  - [Naima](https://naima.readthedocs.io/en/latest/installation.html),
- - And some standard scientific libraries. Install them, including Naima, with:
+ - And some standard scientific and graphic libraries. Install them, including Naima, with:
 
 ```bash
 pip install -r requirements.txt
@@ -39,25 +39,12 @@ pip install -r requirements.txt
 **Note on Naima.** If you have both Naima and numpy installed and they are not in conflict, you are good to go. It is a good idea to create a separate environment for IBSEn where the numpy<2 and  Naima will be installed.
 
 
-Scripts now are mainly not suited for running from the command line... And I don't have proper tests yet, so to find out if the installation works, try running a very basic python script that simply initializes a lot of classes with more or less default parameters:
+Scripts now are mainly not suited for running from the command line... And I don't have proper tests yet, so to find out if the installation works, try running a very basic python script that simply initializes a lot of classes with more or less default parameters and stores the output in a file:
 ```bash
-python test_ibsen.py
-```
-You should get the output of
-
-```bash
-PSR B1259-63 periastron dist [au] =  0.8623138966114536
------ at t=20 days after periastron -----
-effective beta =  0.035321971059500246
-IBS opening angle =  2.4833832541305156
------ using the cooling law: stat_ibs -----
-tot number of e on IBS =  7.08705617073463e+39
-from spec, flux 0.3-10 keV =  7.0616353227403065e-12
-from spec, flux 0.4-10 TeV =  1.3470105074688486e-12
-from LC, flux 0.3-10 keV =  7.0616353227403065e-12
-from LC, flux 0.4-10 TeV =  1.3470105074688486e-12
+python test_ibsen.py --testall True > ibsen_test_out.txt
 
 ```
+Compare the output with the file `ibsen_test_results_0_5_4.txt`
 
 ## Usage
 There is a poor attempt at the graphical interface: run it with
@@ -87,18 +74,20 @@ plt.plot(orb.x(t), orb.y(t))
  2. ``Winds`` in which currently all information about NS, optical star, and their winds are stored. Here you can calculate the magnetic/photon fields in any point, winds pressure, the position of the equilibrium between pulsar and optical stars winds as a function of time, etc.
 Initiate `Winds` with a decretion disk pressure 100 times stronger than the polar wind (see tutorials for further info) and plot the star-to-emission zone distance VS time.
 ```python
-from ibsen import Winds
-winds = Winds(orbit=orb, f_d=100, Ropt=7e11, Mopt=28*2e33, Topt=4e4, ns_b_apex=10)
+from ibsen import Pulsar, OpticalStar, Winds
+star = OpticalStar(f_d=100, Ropt=7e11, Mopt=28*2e33, Topt=4e4)
+pulsar = Pulsar(b_ref=10, r_b_ref=star.Ropt, r_p_ref=star.Ropt)
+winds = Winds(orbit=orb, star=star, pulsar=pulsar)
 t1 = np.linspace(-3*DAY, 3*DAY, 1000)
 plt.plot(t1/DAY, winds.dist_se_1d(t1))
 td1, td2 = winds.times_of_disk_passage
 plt.axvline(td1/DAY)
 plt.axvline(td2/DAY)
 ```
- 3. ``IBS``: Intrabinary shock - an object with stuff about IBS geometry and the bulk motion along it;
+ 3. ``IBS/IBS3D``: Intrabinary shock - an object with stuff about IBS geometry and the bulk motion along it;
 Initiate IBS at a time of 2 days after the periastron and take a look at it, colorcoding it with the doppler factor of matter bulk motion.
 ```python
-from ibsen import IBS # or from ibsen.ibs import IBS3D 
+from ibsen import IBS
 ibs = IBS(winds=winds, t_to_calculate_beta_eff=2*DAY)
 ibs.peek(showtime=(-3*DAY, 3*DAY), show_winds=True, ibs_color='doppler')
 ```
@@ -113,7 +102,7 @@ elev.peek()
  5. ``SpectrumIBS`` computes the non-thermal photon spectrum emitted by the ultra-relativistic electrons;
 Calculate the synchrotron + inverse Compton spectrum from the population of electrons we just found:
 ```python
-from ibsen.spec import SpectrumIBS
+from ibsen import SpectrumIBS
 spec = SpectrumIBS(els=elev, method='simple', mechanisms=['syn', 'ic',], distance=3e3*3e18)
 spec.calculate(e_ph = np.geomspace(3e2, 1e13, 1001))
 spec.peek()
@@ -130,7 +119,7 @@ lc = LightCurve(times = t_lc,
                 distance=3e3*3e18,
                 bands = ([300, 1e4], ), cooling='stat_mimic',
                 f_d=100, 
-                ns_b_ref=10, ns_r_ref=ibs.x_apex, # so that the field in the apex (at t = 2 days) = 1
+                puls_b_ref=10, puls_r_ref=star.Ropt, 
                 method='simple', mechanisms=['syn', 'ic'])
 lc.calculate()
 lc.peek()
@@ -139,10 +128,11 @@ See tutorials in `tutorials` folder for the complete description of these models
 
 
 ### TODO
- 1. When calculating IC, should we account for the seed photons coming from the disk?
+ 1. When calculating IC, should we account for the seed photons coming from the disk? 
  2. How to visualize winds in 3D?
  3. Write fitting utils for LC/SEDs. It should take several datasets and fit to the theoretical model using the same sets of parameters except normalizations.
  4. If one is bored so much that one feels the need to make the graphical interface better, it'd be cool to add all gamma-ray binaies systems in the drop-down windows, as well as allow for the basic system parameters variation (such as Torb, Mopt, e...) instead of keeping them strictly fixed. Also, the default values and ranges of sliders should be system-dependent.
+ 5. Do something with occasional NaNs in IC spectrum.
 
 
 ## License 

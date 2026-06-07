@@ -8,12 +8,12 @@ from ibsen.utils import loggrid
 import numpy as np
 import argparse
 
-from ibsen import Orbit, Winds, IBS, IBS3D, ElectronsOnIBS, SpectrumIBS, LightCurve
+from ibsen import Orbit, Winds, OpticalStar, Pulsar, IBS, IBS3D, ElectronsOnIBS, SpectrumIBS, LightCurve
 
 DAY = 86400
 t = 20 * DAY
 f_d = 100
-ns_b_ref = 1.0
+puls_b_ref = 1.0
 abs_gg = True
 
 
@@ -24,7 +24,11 @@ def test_func(method='simple', ibs_ndim=2, coolings=('stat_ibs',)):
     
     print('----- at t=20 days after periastron -----')
     
-    winds = Winds(orbit=orbit, sys_name='psrb', f_d=f_d, ns_b_ref=ns_b_ref, ns_r_ref=1e13)
+    star = OpticalStar(sys_name='psrb', f_d=f_d)
+    
+    pulsar = Pulsar(b_ref=puls_b_ref, r_b_ref=1e13, r_p_ref=star.Ropt)
+    
+    winds = Winds(orbit=orbit, star=star, pulsar=pulsar)
     print('effective beta = ', winds.beta_eff(t=t))
     
     
@@ -55,7 +59,7 @@ def test_func(method='simple', ibs_ndim=2, coolings=('stat_ibs',)):
                         cooling=cooling,
                         f_d=f_d,  eta_a=1, 
                         abs_photoel=True,
-                        ns_b_ref=ns_b_ref, ns_r_ref=1e13, abs_gg=abs_gg,
+                        puls_b_ref=puls_b_ref, puls_r_ref=1e13, abs_gg=abs_gg,
                         ibs_ndim=ibs_ndim,
                         method=method, mechanisms=['syn', 'ic'])
         lc.calculate()

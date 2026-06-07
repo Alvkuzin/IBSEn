@@ -1192,7 +1192,7 @@ def trapz_loglog(y, x, axis=-1, intervals=False):
 
 def wrap_grid(x, frac=0.10, num_points=1000, single_num_points=15):
     """
-    Creates a grid of points around the range of x, with a 10% margin
+    Creates a grid of points around the range of x, with a `frac` margin
     on both sides. If the range is degenerate (xmin == xmax), it will
     create a grid points evenly spaced between xmin*(1 - frac) and xmax*(1 + frac).
 
@@ -1556,9 +1556,75 @@ def linear_slope(x, y):
     return ((_n * np.sum(x*y) - np.sum(x) * np.sum(y)) 
             / (_n * np.sum(x**2) - np.sum(x)**2))
         
-def fit_norm(ydata, dy_data, y0_normalized, return_err=False):
+def _fit_norm_only_multi(ydata, dy_data, y0_normalized, return_err=False):
     """
-    Analytically finds N, assuming y \propto N, (so N is a normalization), 
+    Fits a multiplicative coefficient N: 
+        y_obs = N * y0_normalized
+    """
+    w = 1.0 / dy_data**2
+    denom = np.sum(w * y0_normalized * y0_normalized)
+    if denom <= 0:
+        raise ValueError('denominator < 0 in fit_norm, cannot find normalization')
+    N_best = np.sum(w * y0_normalized * ydata) / denom
+    if not return_err:
+        return N_best, N_best * y0_normalized
+    resid = ydata - N_best * y0_normalized
+    chi2 = np.sum((resid / dy_data)**2)
+    nu = ydata.size - 1
+    s2 = chi2 / nu
+    sigma_N = np.sqrt(s2 / denom)
+    return N_best, N_best * y0_normalized, sigma_N
+    
+def _fit_norm_addit_and_multi(ydata, dy_data, y0_normalized, return_err=False):
+    """
+    Fits a multiplicative coefficient N and an additive const C: 
+        y_obs = C + N * y0_normalized
+    """
+    f = y0_normalized
+    w = 1.0 / dy_data**2
+
+    S0 = np.sum(w)
+    Sf = np.sum(w * f)
+    Sff = np.sum(w * f * f)
+    
+    Sy = np.sum(w * ydata)
+    Syf = np.sum(w * ydata * f)
+    
+    D = S0 * Sff - Sf**2
+    
+    if D <= 0:
+        D = np.nan
+        # raise ValueError(
+        #     'degenerate system in fit_norm(addit_const=True)'
+        # )
+    
+    C_best = (Sy * Sff - Sf * Syf) / D
+    N_best = (S0 * Syf - Sf * Sy) / D
+    
+    model_best = C_best + N_best * f
+    
+    if not return_err:
+        return N_best, C_best, model_best
+    
+    resid = ydata - model_best
+    chi2 = np.sum((resid / dy_data)**2)
+    nu = ydata.size - 2
+    s2 = chi2 / nu
+    
+    # covariance matrix = s2 (X^T W X)^(-1)
+    sigma_C = np.sqrt(s2 * Sff / D)
+    sigma_N = np.sqrt(s2 * S0 / D)
+    cov = s2 / D * np.array([
+            [Sff, -Sf],
+            [-Sf,  S0]
+            ])
+    
+    return N_best, C_best, model_best, sigma_N, sigma_C, cov
+
+def fit_norm(ydata, dy_data, y0_normalized, return_err=False, addit_const=False):
+    """
+    Analytically finds N and C assuming 
+            y = C + N * y0_normalized, 
     given data: ydata, dydata,
     and one model y0 calculated with N0 (y0_normalized = y0/N0)
 
@@ -1571,27 +1637,31 @@ def fit_norm(ydata, dy_data, y0_normalized, return_err=False):
     y0_normalized : np.ndarray
         Model calculated with N0, in the same points where ydata was measured,
         divided by this N0
+    return_err : bool, optional
+        Whether to estimate errors for parameters. Default False
+    addit_const : bool, optional
+        Whether to add an additive constant C. If False, C === 0. Default False
 
     Returns 
     -------
-    float p, np.ndarray y_opt:
-        Optimal normalizaion and re-normalized y0
+    if not addit_const:
+        if return_err:
+            n_best, y_renorm, dn_best
+        else:
+            n_best, y_renorm
+    if addit_const:
+        if return_err:
+            n_best, c_best, y_renorm, dn_best, dc_best
+        else:
+            n_best, c_best, y_renorm
+            
+    Here optimized normalizaion and addit constant n_best/c_best and their
+    errors dn_best/dc_best are floats; re-normalized y_renorm is a np.ndarray
 
     """
-    w = 1.0 / dy_data**2
-    denom = np.sum(w * y0_normalized * y0_normalized)
-    if denom <= 0:
-        raise ValueError('denominator < 0 in fit_norm, cannot find normalization')
-    N_best = np.sum(w * y0_normalized * ydata) / denom
-    if not return_err:
-        return N_best, N_best * y0_normalized
-    if return_err:
-        resid = ydata - N_best * y0_normalized
-        chi2 = np.sum((resid / dy_data)**2)
-        nu = ydata.size - 1
-        s2 = chi2 / nu
-        sigma_N = np.sqrt(s2 / denom)
-        return N_best, N_best * y0_normalized, sigma_N
+    if addit_const:
+        return _fit_norm_addit_and_multi(ydata, dy_data, y0_normalized, return_err)
+    return _fit_norm_only_multi(ydata, dy_data, y0_normalized, return_err)
     
 
 def index_simple(dnde, e):

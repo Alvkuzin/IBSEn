@@ -1,6 +1,6 @@
 [project]
 name = "ibsen"
-version = "0.5.3"
+version = "0.5.4"
 description = "IBS emission of a pulsar+OB-star binary"
 authors = [{name = "Lesha"}]
 dependencies = ["numpy", "scipy", "astropy"]
@@ -19,14 +19,14 @@ build-backend = "setuptools.build_meta"
 
 [project.scripts]
 ibsen = "ibsen.gui.app:main"
-deconstruct-ibsen = "ibsen.cli.dec:main"
+deconstruct-ibsen = "ibsen.gui.dec:main"
 
 [project.optional-dependencies]
 gui = ["pyside6"]
 
 [tool.setuptools.package-data]
 "ibsen" = ["tab_data/*.nc",
-           "absorbtion/absorb_tab/*.txt",
-           "absorbtion/absorb_tab/*.nc"]
+           "absorption/absorp_tab/*.txt",
+           "absorption/absorp_tab/*.nc"]
 
 

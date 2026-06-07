@@ -23,9 +23,9 @@ sigma_t = 8/3 * pi * (E_ELECTRON**2 / MC2E)**2
 DAY = 86400.
 
 _here = Path(__file__).parent          
-_tabdata = _here / "absorb_tab" 
+_tabdata = _here / "absorp_tab" 
 
-### ----------------- For photoelectric absorbtion ------------------------ ###
+### ----------------- For photoelectric absorption ------------------------ ###
 file_phel = _tabdata / 'sgm_tbabs_new.txt'
 da_phel = np.genfromtxt(file_phel, skip_header=1, delimiter = ', ')
 _e, _sgm = da_phel[:, 0], 10**da_phel[:, 1]
@@ -33,7 +33,7 @@ per_ = np.argsort(_e)
 _e, _sgm = _e[per_], _sgm[per_]
 spl_phel = interp1d(np.log10(_e), np.log10(_sgm), 'linear')
 
-### ----------------- For gg-absorbtion PSR B1259-63 ----------------------- ###
+### ----------------- For gg-absorption PSR B1259-63 ----------------------- ###
 name_gg_psrb = _tabdata / "gg_abs_psrb.nc"
 ds_gg_psrb = xr.open_dataset(name_gg_psrb)
 ds_gg_psrb = ds_gg_psrb.rename({'__xarray_dataarray_variable__': 'data'})
@@ -68,7 +68,7 @@ def sigma_gg(e_star, e_g, mu):
 
 def abs_photoel(E, Nh): 
     """    
-    Photoelectric absorbtion TBabs: https://arxiv.org/pdf/astro-ph/0008425
+    Photoelectric absorption TBabs: https://arxiv.org/pdf/astro-ph/0008425
     Parameters
     ----------
     E : np.ndarray or float
@@ -78,7 +78,7 @@ def abs_photoel(E, Nh):
 
     Returns
     -------
-    Dimentionless multiplicative absorbtion coef = exp(-tau):  0 < coef < 1.
+    Dimentionless multiplicative absorption coef = exp(-tau):  0 < coef < 1.
 
     """
 
@@ -95,20 +95,20 @@ def abs_photoel(E, Nh):
         a_low = np.zeros(E_low.size)
         a_good = np.exp(-sgm_sm * Nh * 1e22)
         a_high = np.zeros(E_high.size) + 1
-        absorb = np.concatenate((a_low, a_good, a_high))
+        absorp = np.concatenate((a_low, a_good, a_high))
     else:
         if E_kev < e_min:
-            absorb = 0
+            absorp = 0
         elif E_kev > e_max:
-            absorb = 1
+            absorp = 1
         else:
             sgm_sm = 10**spl_phel(np.log10(E_good)) * 1e6 * 1e-24 # in cm^2
-            absorb = np.exp(-sgm_sm * Nh * 1e22)
-    return absorb
+            absorp = np.exp(-sgm_sm * Nh * 1e22)
+    return absorp
 
 def f_helper(mu0, d0):
     """
-    Phase-dependent helper for a Suchch & van Soelen analytical gg-absorbtion
+    Phase-dependent helper for a Suchch & van Soelen analytical gg-absorption
     """
     sqrt_ = np.sqrt(1-mu0**2)
     return 1/d0 * (
@@ -117,7 +117,7 @@ def f_helper(mu0, d0):
 
 def phi_helper(eg, R_star, T_star):
     """
-    Phase-independent helper for a Suchch & van Soelen analytical gg-absorbtion
+    Phase-independent helper for a Suchch & van Soelen analytical gg-absorption
     """
     overall_coef = 64*pi / 3 / (H_PLANCK * C_LIGHT)**3 * sigma_t * R_star**2
     exp_ = np.exp(-2 * MC2E / eg / K_BOLTZ / T_star)
@@ -128,7 +128,7 @@ def phi_helper(eg, R_star, T_star):
 
 def gg_analyt(eg, x, y, R_star, T_star, nu_los, incl_los):
     """
-    Gamma-gamma absorbtion coefficient (e^-tau) on the seed photon field  of 
+    Gamma-gamma absorption coefficient (e^-tau) on the seed photon field  of 
     the star.
 
     Parameters
@@ -156,7 +156,7 @@ def gg_analyt(eg, x, y, R_star, T_star, nu_los, incl_los):
     Returns
     -------
     np.ndarray (Ne, )
-        Coeffifient e^tau <1 for the gamma-gamma absorbtion.
+        Coeffifient e^tau <1 for the gamma-gamma absorption.
         
     Notes:
         There is a pseuso-vectorization for the x- and y-coordinates. It works 

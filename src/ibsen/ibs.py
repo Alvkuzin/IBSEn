@@ -7,7 +7,7 @@ from ibsen.ibs_norm import IBS_norm, IBS_norm3D
 from ibsen.utils import plot_with_gradient, \
  lor_trans_ug_iso, lor_trans_b_iso, lor_trans_Teff_iso, rotated_vector, absv, \
      plot_surface_quads, vector_angle, n_from_v, vec_between, trapz_loglog
-from ibsen.absorbtion.absorbtion import gg_analyt, gg_tab
+from ibsen.absorption.absorption import gg_analyt, gg_tab
 from ibsen.get_obs_data import known_names
 
 from astropy import constants as const
@@ -256,9 +256,9 @@ class IBS: #!!!
         r_pIBS = np.array([np.array([_x, _y, 0.]) for _x, _y in zip(self.x, self.y)])
         r_sp = self.winds.orbit.vector_sp(self.t_forbeta)
         r_sIBS = r_pIBS + r_sp[None, :]
-        pdisk = self.winds.decr_disk_pressure(r_sIBS)
-        ppolar = self.winds.polar_wind_pressure(absv(r_sIBS))
-        ppulsar = self.winds.pulsar_wind_pressure(absv(r_pIBS))
+        pdisk = self.winds.star.decr_disk_pressure(r_sIBS)
+        ppolar = self.winds.star.polar_wind_pressure(absv(r_sIBS))
+        ppulsar = self.winds.pulsar.wind_pressure(absv(r_pIBS))
         dispers_out = np.std((pdisk + ppolar) / ppulsar )
         self.ibs_n.gamma_max = gamma_test(self.gamma_max, dispers_out, self.coef_quench)
         
@@ -309,7 +309,7 @@ class IBS: #!!!
     
     
     def gg_abs(self, e_phot, analyt=False, what_return='abs'):
-        """ gamma-gamma absorbtion coefficient (as e^-tau) in every point of
+        """ gamma-gamma absorption coefficient (as e^-tau) in every point of
         the IBS. The absortion is supposed to be on a photon field of a central
         star which is represented by a BB.
         
@@ -335,7 +335,7 @@ class IBS: #!!!
         if analyt:
             gg_res = np.array([gg_analyt(eg = e_phot / 5.11e5,
                          x = self.x[i], y = self.y[i],
-                         R_star=self.winds.Ropt, T_star = self.winds.Topt,
+                         R_star=self.winds.star.Ropt, T_star = self.winds.star.Topt,
                          nu_los=self.winds.orbit.nu_los,
                          incl_los=self.winds.orbit.incl_los)
                            for i in range(self.x.size)])
@@ -347,7 +347,7 @@ class IBS: #!!!
     
     
     def gg_abs_mid(self, e_phot, analyt=False, what_return='abs'):
-        """ gamma-gamma absorbtion coefficient (as e^-tau) in every mid point of
+        """ gamma-gamma absorption coefficient (as e^-tau) in every mid point of
         the IBS. The absortion is supposed to be on a photon field of a central
         star which is represented by a BB.
         
@@ -360,9 +360,9 @@ class IBS: #!!!
             
         filename : str or path or None, optional
             Path to the file with tabulated opacities. File should be inside
-            the absorbtion/absorb_tab folder. Can be one of the known names,
+            the absorption/absorp_tab folder. Can be one of the known names,
             then resolves to the file tabulated for it. If None, tries to 
-            read the absorbtion for a `sys_name` provided for `winds` arg.
+            read the absorption for a `sys_name` provided for `winds` arg.
             
         what_return: str {'abs' or 'tau'}
             What to return: e^-tau or tau. Default 'abs'.
@@ -379,7 +379,7 @@ class IBS: #!!!
         if analyt:
             gg_res = np.array([gg_analyt(eg = e_phot / 5.11e5,
                          x = self.x_mid[i], y = self.y_mid[i],
-                         R_star=self.winds.Ropt, T_star = self.winds.Topt,
+                         R_star=self.winds.star.Ropt, T_star = self.winds.star.Topt,
                          nu_los=self.winds.orbit.nu_los,
                          incl_los=self.winds.orbit.incl_los)
                            for i in range(self.x_mid.size)])
@@ -390,7 +390,7 @@ class IBS: #!!!
         return gg_res
     
     def gg_abs_apex(self, e_phot, analyt=False, what_return='abs'):
-        """ gamma-gamma absorbtion coefficient (as e^-tau) in the IBS apex.
+        """ gamma-gamma absorption coefficient (as e^-tau) in the IBS apex.
         
         e_phot : np.ndarray
             [eV] - energy of the VHE photon.
@@ -401,9 +401,9 @@ class IBS: #!!!
             
         filename : str or path or None, optional
             Path to the file with tabulated opacities. File should be inside
-            the absorbtion/absorb_tab folder. Can be one of the known names,
+            the absorption/absorp_tab folder. Can be one of the known names,
             then resolves to the file tabulated for it. If None, tries to 
-            read the absorbtion for a `sys_name` provided for `winds` arg.
+            read the absorption for a `sys_name` provided for `winds` arg.
             
         what_return: str {'abs' or 'tau'}
             What to return: e^-tau or tau. Default 'abs'.
@@ -421,7 +421,7 @@ class IBS: #!!!
         if analyt:
             gg_res = gg_analyt(eg = e_phot / 5.11e5,
                          x = self.x_apex, y = self.y_apex,
-                         R_star=self.winds.Ropt, T_star = self.winds.Topt,
+                         R_star=self.winds.star.Ropt, T_star = self.winds.star.Topt,
                          nu_los=self.winds.orbit.nu_los,
                          incl_los=self.winds.orbit.incl_los)
         else:
@@ -435,18 +435,12 @@ class IBS: #!!!
     @property
     def ug(self):
         """Photon field energy density on the IBS [erg/cm^3]."""
-        return self.winds.u_g_density(r_from_s = self.r1,
-                                      r_star = self.winds.Ropt,
-                                      T_star = self.winds.Topt,
-                                      )
+        return self.winds.star.u_g_density(r_from_s = self.r1)
     
     @property
     def ug_mid(self):
         """Photon field energy density on the IBS_mid [erg/cm^3]."""
-        return self.winds.u_g_density(r_from_s = self.r1_mid,
-                                      r_star = self.winds.Ropt,
-                                      T_star = self.winds.Topt,
-                                      )
+        return self.winds.star.u_g_density(r_from_s = self.r1_mid)
     
     @property
     def ug_comov(self):
@@ -461,36 +455,36 @@ class IBS: #!!!
         
     ###########################################################################
     @property
-    def b_ns(self):
+    def b_pulsar(self):
         """Neutron star-originating magnetic field on the IBS [G]."""
-        return self.winds.ns_field_initialized(r_to_p = self.r, t=self.t_forbeta)
+        return self.winds.pulsar.b(r_to_p = self.r)
     
     @property
-    def b_ns_mid(self):
+    def b_pulsar_mid(self):
         """Neutron star-originating magnetic field on the IBS_mid [G]."""
-        return self.winds.ns_field_initialized(r_to_p = self.r_mid, t=self.t_forbeta)
+        return self.winds.pulsar.b(r_to_p = self.r_mid)
     
     @property
-    def b_ns_comov(self):
+    def b_pulsar_comov(self):
         """Neutron star-originating magnetic field on the IBS in the comoving frame [G]."""
-        return lor_trans_b_iso(B_iso=self.b_ns, gamma=self.g)
+        return lor_trans_b_iso(B_iso=self.b_pulsar, gamma=self.g)
     
     @property
-    def b_ns_mid_comov(self):
+    def b_pulsar_mid_comov(self):
         """Neutron star-originating magnetic field on the IBS_mid in the comoving frame [G]."""
-        return lor_trans_b_iso(B_iso=self.b_ns_mid, gamma=self.g_mid)
+        return lor_trans_b_iso(B_iso=self.b_pulsar_mid, gamma=self.g_mid)
     
     
     ###########################################################################
     @property
     def b_opt(self):
         """Optical star-originating magnetic field on the IBS [G]."""
-        return self.winds.opt_field_initialized(r_to_s = self.r1, t=self.t_forbeta)
+        return self.winds.star.b(r_to_s = self.r1)
     
     @property
     def b_opt_mid(self):
         """Optical star-originating magnetic field on the IBS_mid [G]."""
-        return self.winds.opt_field_initialized(r_to_s = self.r1_mid, t=self.t_forbeta)
+        return self.winds.star.b(r_to_s = self.r1_mid,)
     
     @property
     def b_opt_comov(self):
@@ -506,35 +500,35 @@ class IBS: #!!!
     @property
     def b(self):
         """Total magnetic field on the IBS [G]."""
-        return self.b_ns + self.b_opt
+        return self.b_pulsar + self.b_opt
     
     @property
     def b_mid(self):
         """Total magnetic field on the IBS_mid [G]."""
-        return self.b_ns_mid + self.b_opt_mid
+        return self.b_pulsar_mid + self.b_opt_mid
     
     @property
     def b_comov(self):
         """Total magnetic field on the IBS in the comoving frame [G]."""
-        return self.b_ns_comov + self.b_opt_comov
+        return self.b_pulsar_comov + self.b_opt_comov
     
     @property
     def b_mid_comov(self):
         """Total magnetic field on the IBS_mid in the comoving frame [G]."""
-        return self.b_ns_mid_comov + self.b_opt_mid_comov
+        return self.b_pulsar_mid_comov + self.b_opt_mid_comov
     
     ###########################################################################
     @property
     def T_opt_eff(self):
         """Optical star effective temperature on the IBS [K]. 
         Simply the star temperature everywhere."""
-        return self.winds.Topt * np.ones(self.r.size)
+        return self.winds.star.Topt * np.ones(self.r.size)
     
     @property
     def T_opt_eff_mid(self):
         """Optical star effective temperature on the IBS_mid [K]. 
         Simply the star temperature everywhere."""
-        return self.winds.Topt * np.ones(self.r_mid.size)
+        return self.winds.star.Topt * np.ones(self.r_mid.size)
     
     @property
     def T_opt_eff_comov(self):
@@ -570,7 +564,7 @@ class IBS: #!!!
         For orbit displaying (see orbit.peek()). 
         The default is None.
     E_for_gg : float, optional
-        At which energy [eV] to calculate the gamma-gamma absorbtion, if ibs_color
+        At which energy [eV] to calculate the gamma-gamma absorption, if ibs_color
         is 'gg_tau' or 'gg_abs'. Default 1e12
 
     Raises
@@ -768,15 +762,16 @@ class IBS3D: #!!!
         """calculate the effective beta from Winds at time t_forbeta and 
             initialize the normalized IBS with this beta.
         """
-        self.r_sp = self.winds.orbit.r(self.t_forbeta)
+        vec_sp = self.winds.orbit.vector_sp(t = self.t_forbeta)
+        self.r_sp = absv(vec_sp)
         if self.orientation is None:
             self.beta = self.winds.beta_eff(self.t_forbeta)
             self.r_se = self.winds.dist_se_1d(self.t_forbeta)
             self.symm_ax = self.winds.orbit.vector_sp(self.t_forbeta)
         else:
-            vec_pe_3d = self.winds.vec_pe_3d(self.t_forbeta, orientation=self.orientation)
-            r_pe = absv(vec_pe_3d)
-            self.r_se = self.r_sp - r_pe
+            vec_pe_3d = self.winds.vec_pe_3d(self.t_forbeta) # !!!
+            # r_pe = absv(vec_pe_3d)
+            self.r_se = absv(vec_pe_3d + vec_sp)
             self.symm_ax = -n_from_v(vec_pe_3d)
             self.beta = self.winds.beta_eff(self.t_forbeta, orientation=self.orientation)
         unit_los_ = rotated_vector(self.winds.orbit.nu_los, self.winds.orbit.incl_los)
@@ -832,13 +827,9 @@ class IBS3D: #!!!
         
     
     def rescale_gamma(self):
-        # r_pIBS = np.array([np.array([_x, _y, 0.]) for _x, _y in zip(self.x, self.y)])
-        # r_pIBS = 
-        # r_sp = self.winds.orbit.vector_sp(self.t_forbeta)
-        # r_sIBS = r_pIBS + r_sp[None, :]
-        pdisk = self.winds.decr_disk_pressure(self.r1_vec)
-        ppolar = self.winds.polar_wind_pressure(absv(self.r1_vec))
-        ppulsar = self.winds.pulsar_wind_pressure(absv(self.r_vec))
+        pdisk = self.winds.star.decr_disk_pressure(self.r1_vec)
+        ppolar = self.winds.star.polar_wind_pressure(absv(self.r1_vec))
+        ppulsar = self.winds.pulsar.wind_pressure(absv(self.r_vec))
         dispers_out = np.std((pdisk + ppolar) / ppulsar )
         self.ibs_n.gamma_max = gamma_test(self.gamma_max, dispers_out, self.coef_quench)
     
@@ -888,9 +879,9 @@ class IBS3D: #!!!
         return self.gma(s = self.s_mid)
     
     def gg_abs(self, e_phot, analyt=False, what_return='abs'):
-        """ gamma-gamma absorbtion coefficient (as e^-tau) in every point of
+        """ gamma-gamma absorption coefficient (as e^-tau) in every point of
         the IBS. The absortion is supposed to be on a photon field of a central
-        star which is represented by a BB. Since the gg-absorbtion is tabulated 
+        star which is represented by a BB. Since the gg-absorption is tabulated 
         only in an orbital plane, we use this simplified approach: we take the 
         IBS arch for phi=0; project it onto an orbital plane; calculate the
         corresponding gg-abs coefs, and set these coefs to all IBS archs.
@@ -917,7 +908,7 @@ class IBS3D: #!!!
         if analyt:
             gg_res_1horn = np.array([gg_analyt(eg = e_phot / 5.11e5,
                          x = _x, y = _y,
-                         R_star=self.winds.Ropt, T_star = self.winds.Topt,
+                         R_star=self.winds.star.Ropt, T_star = self.winds.star.Topt,
                          nu_los=self.winds.orbit.nu_los,
                          incl_los=self.winds.orbit.incl_los)
                            for _x, _y in zip(self.x[0, :], self.y[0, :])])
@@ -930,7 +921,7 @@ class IBS3D: #!!!
     
     
     def gg_abs_mid(self, e_phot, analyt=False, what_return='abs'):
-        """ gamma-gamma absorbtion coefficient (as e^-tau) in every mid point of
+        """ gamma-gamma absorption coefficient (as e^-tau) in every mid point of
         the IBS. The absortion is supposed to be on a photon field of a central
         star which is represented by a BB.
         
@@ -956,7 +947,7 @@ class IBS3D: #!!!
         if analyt:
             gg_res_1horn = np.array([gg_analyt(eg = e_phot / 5.11e5,
                          x = _x, y = _y,
-                         R_star=self.winds.Ropt, T_star = self.winds.Topt,
+                         R_star=self.winds.star.Ropt, T_star = self.winds.star.Topt,
                          nu_los=self.winds.orbit.nu_los,
                          incl_los=self.winds.orbit.incl_los)
                            for _x, _y in zip(self.x_mid[0, :], self.y_mid[0, :])])
@@ -968,7 +959,7 @@ class IBS3D: #!!!
         return gg_res
     
     def gg_abs_apex(self, e_phot, analyt=False, what_return='abs'):
-        """ gamma-gamma absorbtion coefficient (as e^-tau) in the IBS apex.
+        """ gamma-gamma absorption coefficient (as e^-tau) in the IBS apex.
         
         e_phot : np.ndarray
             [eV] - energy of the VHE photon.
@@ -979,9 +970,9 @@ class IBS3D: #!!!
             
         filename : str or path or None, optional
             Path to the file with tabulated opacities. File should be inside
-            the absorbtion/absorb_tab folder. Can be one of the known names,
+            the absorption/absorp_tab folder. Can be one of the known names,
             then resolves to the file tabulated for it. If None, tries to 
-            read the absorbtion for a `sys_name` provided for `winds` arg.
+            read the absorption for a `sys_name` provided for `winds` arg.
             
         what_return: str {'abs' or 'tau'}
             What to return: e^-tau or tau. Default 'abs'.
@@ -999,7 +990,7 @@ class IBS3D: #!!!
         if analyt:
             gg_res = gg_analyt(eg = e_phot / 5.11e5,
                          x = self.x_apex, y = self.y_apex,
-                         R_star=self.winds.Ropt, T_star = self.winds.Topt,
+                         R_star=self.winds.star.Ropt, T_star = self.winds.star.Topt,
                          nu_los=self.winds.orrbit.nu_los,
                          incl_los=self.winds.orbit.incl_los)
         else:
@@ -1018,9 +1009,9 @@ class IBS3D: #!!!
         """
         param = np.geomspace(1e-3, 1., 27)
         vecs_s_ibs = vec_between(vec_i = np.zeros((3,)), vec_f = self.r_vec, param=param)
-        ps = (self.winds.polar_wind_pressure(r_from_s=absv(vecs_s_ibs)) + 
-             self.winds.decr_disk_pressure(vec_r_from_s=vecs_s_ibs))
-        ps[absv(vecs_s_ibs) < self.winds.Ropt] = 1e-100
+        ps = (self.winds.star.polar_wind_pressure(r_from_s=absv(vecs_s_ibs)) + 
+             self.winds.star.decr_disk_pressure(vec_r_from_s=vecs_s_ibs))
+        ps[absv(vecs_s_ibs) < self.winds.star.Ropt] = 1e-100
         integrated_p = trapz_loglog(ps, param, axis=0)
         return integrated_p
     
@@ -1034,9 +1025,9 @@ class IBS3D: #!!!
         """
         param = np.geomspace(1e-3, 1., 27)
         vecs_s_ibs = vec_between(vec_i = np.zeros((3,)), vec_f = self.r_vec_mid, param=param)
-        ps = (self.winds.polar_wind_pressure(r_from_s=absv(vecs_s_ibs)) + 
-             self.winds.decr_disk_pressure(vec_r_from_s=vecs_s_ibs))
-        ps[absv(vecs_s_ibs) < self.winds.Ropt] = 1e-100
+        ps = (self.winds.star.polar_wind_pressure(r_from_s=absv(vecs_s_ibs)) + 
+             self.winds.star.decr_disk_pressure(vec_r_from_s=vecs_s_ibs))
+        ps[absv(vecs_s_ibs) < self.winds.star.Ropt] = 1e-100
         integrated_p = trapz_loglog(ps, param, axis=0)
         return integrated_p
     
@@ -1052,10 +1043,7 @@ class IBS3D: #!!!
     @property
     def ug(self):
         """Photon field energy density on the IBS [erg/cm^3]."""
-        _u = self.winds.u_g_density(r_from_s = self.r1,
-                                      r_star = self.winds.Ropt,
-                                      T_star = self.winds.Topt,
-                                      )
+        _u = self.winds.star.u_g_density(r_from_s = self.r1)
         if self.shield_star == 0.:
             return _u
         return _u * self.soft_ph_abs
@@ -1063,10 +1051,7 @@ class IBS3D: #!!!
     @property
     def ug_mid(self):
         """Photon field energy density on the IBS_mid [erg/cm^3]."""
-        _u = self.winds.u_g_density(r_from_s = self.r1_mid,
-                                      r_star = self.winds.Ropt,
-                                      T_star = self.winds.Topt,
-                                      )
+        _u = self.winds.star.u_g_density(r_from_s = self.r1_mid)
         if self.shield_star == 0.:
             return _u
         return _u * self.soft_ph_abs_mid
@@ -1084,44 +1069,36 @@ class IBS3D: #!!!
         
     ###########################################################################
     @property
-    def b_ns(self):
+    def b_pulsar(self):
         """Neutron star-originating magnetic field on the IBS [G]."""
-        return self.winds.ns_field_initialized(r_to_p = self.r, 
-                                               t=self.t_forbeta,
-                                               orientation=self.orientation,)
+        return self.winds.pulsar.b(r_to_p = self.r)
     
     @property
-    def b_ns_mid(self):
+    def b_pulsar_mid(self):
         """Neutron star-originating magnetic field on the IBS_mid [G]."""
-        return self.winds.ns_field_initialized(r_to_p = self.r_mid,
-                                               t=self.t_forbeta,
-                                               orientation=self.orientation,)
+        return self.winds.pulsar.b(r_to_p = self.r_mid)
     
     @property
-    def b_ns_comov(self):
+    def b_pulsar_comov(self):
         """Neutron star-originating magnetic field on the IBS in the comoving frame [G]."""
-        return lor_trans_b_iso(B_iso=self.b_ns, gamma=self.g)
+        return lor_trans_b_iso(B_iso=self.b_pulsar, gamma=self.g)
     
     @property
-    def b_ns_mid_comov(self):
+    def b_pulsar_mid_comov(self):
         """Neutron star-originating magnetic field on the IBS_mid in the comoving frame [G]."""
-        return lor_trans_b_iso(B_iso=self.b_ns_mid, gamma=self.g_mid)
+        return lor_trans_b_iso(B_iso=self.b_pulsar_mid, gamma=self.g_mid)
     
     
     ###########################################################################
     @property
     def b_opt(self):
         """Optical star-originating magnetic field on the IBS [G]."""
-        return self.winds.opt_field_initialized(r_to_s = self.r1, 
-                                                t=self.t_forbeta,
-                                                orientation=self.orientation,)
+        return self.winds.star.b(r_to_s = self.r1)
     
     @property
     def b_opt_mid(self):
         """Optical star-originating magnetic field on the IBS_mid [G]."""
-        return self.winds.opt_field_initialized(r_to_s = self.r1_mid, 
-                                                t=self.t_forbeta,
-                                                orientation=self.orientation,)
+        return self.winds.star.b(r_to_s = self.r1_mid)
     
     @property
     def b_opt_comov(self):
@@ -1137,35 +1114,35 @@ class IBS3D: #!!!
     @property
     def b(self):
         """Total magnetic field on the IBS [G]."""
-        return self.b_ns + self.b_opt
+        return self.b_pulsar + self.b_opt
     
     @property
     def b_mid(self):
         """Total magnetic field on the IBS_mid [G]."""
-        return self.b_ns_mid + self.b_opt_mid
+        return self.b_pulsar_mid + self.b_opt_mid
     
     @property
     def b_comov(self):
         """Total magnetic field on the IBS in the comoving frame [G]."""
-        return self.b_ns_comov + self.b_opt_comov
+        return self.b_pulsar_comov + self.b_opt_comov
     
     @property
     def b_mid_comov(self):
         """Total magnetic field on the IBS_mid in the comoving frame [G]."""
-        return self.b_ns_mid_comov + self.b_opt_mid_comov
+        return self.b_pulsar_mid_comov + self.b_opt_mid_comov
     
     ###########################################################################
     @property
     def T_opt_eff(self):
         """Optical star effective temperature on the IBS [K]. 
         Simply the star temperature everywhere."""
-        return self.winds.Topt * np.ones(self.r.shape)
+        return self.winds.star.Topt * np.ones(self.r.shape)
     
     @property
     def T_opt_eff_mid(self):
         """Optical star effective temperature on the IBS_mid [K]. 
         Simply the star temperature everywhere."""
-        return self.winds.Topt * np.ones(self.r_mid.shape)
+        return self.winds.star.Topt * np.ones(self.r_mid.shape)
     
     @property
     def T_opt_eff_comov(self):
@@ -1181,13 +1158,13 @@ class IBS3D: #!!!
     @property
     def disk_pressure(self):
         """Decretion disk pressure calculated on the IBS."""
-        return self.winds.decr_disk_pressure(vec_r_from_s = self.r1_vec)
+        return self.winds.star.decr_disk_pressure(vec_r_from_s = self.r1_vec)
     
     
     @property
     def polar_pressure(self):
         """Polar wind pressure calculated on the IBS."""
-        return self.winds.polar_wind_pressure(r_from_s = absv(self.r1_vec))
+        return self.winds.star.polar_wind_pressure(r_from_s = absv(self.r1_vec))
     
     @property
     def tot_external_pressure(self):
@@ -1218,7 +1195,7 @@ class IBS3D: #!!!
         For orbit displaying (see orbit.peek()). 
         The default is None.
     E_for_gg : float, optional
-        At which energy [eV] to calculate the gamma-gamma absorbtion, if ibs_color
+        At which energy [eV] to calculate the gamma-gamma absorption, if ibs_color
         is 'gg_tau' or 'gg_abs'. Default 1e12
     scale : str, optional
         Scale for displaying the color-coded parameter. If 'lin' or 'linear',
@@ -1332,7 +1309,6 @@ class IBS3D: #!!!
         ax.legend()
         # return line_ 
         return ax
-    # peek.__doc__ = peek_docs
 
     
     def __getattr__(self, name):

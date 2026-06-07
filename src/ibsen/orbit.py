@@ -25,8 +25,7 @@ orbit_docstring = """
     Parameters
     ----------
     sys_name : %s, or None, optional
-        If provided, load default orbital parameters via
-        ``ibsen.get_obs_data.get_parameters(sys_name)``; explicit arguments
+        If provided, load default orbital parameters; explicit arguments
         below override those defaults. 
         If None, all parameters must be contained in `sys_params` dictionary or
         given explicitly.
@@ -99,16 +98,24 @@ orbit_docstring = """
         Mean motion at time(s) `t`.
     ecc_an(t)
         Eccentric anomaly at time(s) `t`.
+    decc_an(t)
+        Time derivative of the eccentric anomaly at time(s) `t`.
     r(t)
         Separation at time(s) `t`.
     true_an(t)
         True anomaly at time(s) `t`.
+    kepl_period(t)
+        Keplerian period at time(s) `t`.
     t_from_true_an(nu)
         Time(s) since periastron for given true anomaly(ies) `nu`.
     x(t), y(t), z(t)
         Coordinates at time(s) `t`.
+    dx(t), dy(t), dz(t)
+        Velocity components at time(s) `t`.
     vector_sp(t)
         3D position vector at time(s) `t`.
+    vector_v(t)
+        3D velocity vector at time(s) `t`.
     peek(ax=None, showtime=None, times_pos=(), color='k', xplot='time')
         Quick look at the orbit.
     

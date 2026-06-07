@@ -16,20 +16,24 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 
 from ibsen.gui.utils_gui import fit_norm_here, read_sed_gammapy, read_sed_txt_dat
-from ibsen import Orbit, Winds, IBS,  ElectronsOnIBS, SpectrumIBS, IBS3D
+from ibsen import (Orbit, Winds, IBS,  ElectronsOnIBS, SpectrumIBS, IBS3D,
+                   OpticalStar, Pulsar)
     
 NORMALIZATION_INITIAL = 1E37
 
                 
 def sed(t=0.0, f_d=100.0, b_13=1.0, gamma_max=2.0, s_max=1.0, cooling='stat_ibs',
-        p_e=2, e_cut=5e12, eta_a=1, ic_ani=False, three_dim=True,
+        p_e=2, e_cut=5e12, beta_e=1.0, eta_a=1, ic_ani=False, three_dim=True,
             abs_gg=False, method='simple', lorentz_boost=True,
             abs_photoel=False, nh_tbabs=0.8):
     orb = Orbit(sys_name = 'psrb')
-    winds = Winds(orbit=orb, sys_name = 'psrb', alpha=18/180*pi, incl=30*pi/180,
-              f_d=f_d, f_p=0.1, delta=0.01, np_disk=3, rad_prof='pl', r_trunk=None,
-             height_exp=0.25,  t_forwinds=t,
-             ns_b_ref=b_13, ns_r_ref=1e13)
+    star = OpticalStar(sys_name = 'psrb', alpha_disk_deg=18., incl_disk_deg=30.,
+              f_d=f_d, delta=0.01, np_disk=3, rad_prof='pl', r_trunk=None,
+             height_exp=0.25, 
+             b_ref=0., r_b_ref=1e13)
+    pulsar = Pulsar( f_p=0.1, r_p_ref=star.Ropt,
+             b_ref=b_13, r_b_ref=1e13)
+    winds = Winds(orbit=orb, star=star, pulsar=pulsar)
     if not three_dim:
         ibs = IBS(winds = winds,    
           t_to_calculate_beta_eff=t, 
@@ -50,10 +54,12 @@ def sed(t=0.0, f_d=100.0, b_13=1.0, gamma_max=2.0, s_max=1.0, cooling='stat_ibs'
           abs_gg_filename = None, # with tabulated gg-opacities; optional
           )
     els = ElectronsOnIBS(ibs=ibs, 
+                         to_inject_e='secpl',
                         norm_e = NORMALIZATION_INITIAL,
                  cooling=cooling, 
                  p_e=p_e,
                  ecut = e_cut,  
+                 beta_e=beta_e,
                  emax = 5e13, 
                  emin_grid=3e8,
                  emax_grid=1e14,
@@ -67,10 +73,6 @@ def sed(t=0.0, f_d=100.0, b_13=1.0, gamma_max=2.0, s_max=1.0, cooling='stat_ibs'
     spec.calculate(e_ph=E)
     return spec.e_ph, spec.sed_sy, spec.sed_ic
 
-
-# =========================
-# GUI
-# =========================
 
 class SEDWindow(QMainWindow):
     def __init__(self):
@@ -91,7 +93,6 @@ class SEDWindow(QMainWindow):
         self.fig = Figure()
         self.canvas = FigureCanvas(self.fig)
         self.ax = self.fig.add_subplot(111)
-        # self.obs_artists = []   # list of "artist groups" so we can remove later
         self.obs_data = []  # list of dicts: {"name": str, "x":..., "y":..., "dy":..., "artists":[...]}
 
         self._setup_menu()
@@ -143,37 +144,36 @@ class SEDWindow(QMainWindow):
         self.three_dim.setChecked(True)
         controls.addWidget(self.three_dim)
         
-        # gamma_max linear 1..4
         self.gm_layout, self.gamma_max = self._make_slider_linear(
             name="gamma_max", min_val=1.0, max_val=4.0, step=0.01, initial=2.0
         )
         controls.addLayout(self.gm_layout)
 
-        # s_max linear 0.5..4
         self.sm_layout, self.s_max = self._make_slider_linear(
             name="s_max", min_val=0.5, max_val=4.0, step=0.01, initial=1.0
         )
         controls.addLayout(self.sm_layout)
 
-        # p_e linear 1..3
         self.pe_layout, self.p_e = self._make_slider_linear(
             name="p_e", min_val=1.0, max_val=3.0, step=0.01, initial=2.0
         )
         controls.addLayout(self.pe_layout)
 
-        # e_cut log 1e11..1e14
         self.ec_layout, self.e_cut = self._make_slider_log10(
             name="e_cut [eV]", min_val=1e11, max_val=1e14, step_log10=0.01, initial=5e12
         )
         controls.addLayout(self.ec_layout)
+        
+        self.beta_e_layout, self.beta_e = self._make_slider_linear(
+            name="beta_e", min_val=0.0, max_val=4.0, step=0.01, initial=1.0
+        )
+        controls.addLayout(self.beta_e_layout)
 
-        # eta_a log 0.1..10
         self.eta_layout, self.eta_a = self._make_slider_log10(
             name="eta_a", min_val=0.1, max_val=10.0, step_log10=0.01, initial=1.0
         )
         controls.addLayout(self.eta_layout)
         
-        # nH linear 0.2...3.0
         self.nh_layout, self.nh = self._make_slider_linear(
             name="nH", min_val=0.2, max_val=3.0, step=0.01, initial=0.8
         )
@@ -214,7 +214,7 @@ class SEDWindow(QMainWindow):
         self.lorentz_boost_cb.setChecked(True)
         
         self.photoel_abs_cb = QCheckBox("Photoel. absorbtion")
-        self.photoel_abs_cb.setChecked(False)
+        self.photoel_abs_cb.setChecked(True)
         
         checkbox_1_row.addWidget(self.ic_ani_cb)
         checkbox_1_row.addWidget(self.abs_gg_cb)
@@ -465,7 +465,8 @@ class SEDWindow(QMainWindow):
     def _connect_signals(self):
         # all sliders
         sliders = [self.t_days, self.f_d, self.b_13, self.gamma_max,
-                   self.s_max, self.p_e, self.e_cut, self.eta_a, self.nh]
+                   self.s_max, self.p_e, self.e_cut, self.beta_e,
+                   self.eta_a, self.nh]
 
         def on_any_change(slider=None):
             if slider is not None:
@@ -499,7 +500,7 @@ class SEDWindow(QMainWindow):
 
     def reset_controls(self):
         for s in [self.t_days, self.f_d, self.gamma_max, self.s_max,
-                  self.p_e, self.nh]:
+                  self.p_e, self.nh, self.beta_e]:
             # linear_step sliders
             if s._mode == "linear_step":
                 s.setValue(int(round((s._initial - s._min) / s._step)))
@@ -544,6 +545,7 @@ class SEDWindow(QMainWindow):
                 cooling=self.cooling.currentText(),
                 p_e=self._slider_value(self.p_e),
                 e_cut=self._slider_value(self.e_cut),
+                beta_e=self._slider_value(self.beta_e),
                 eta_a=self._slider_value(self.eta_a),
                 ic_ani=self.ic_ani_cb.isChecked(),
                 three_dim=self.three_dim.isChecked(),
@@ -569,7 +571,7 @@ class SEDWindow(QMainWindow):
                 # find the dataset by name
                 ds = next((d for d in self.obs_data if d["name"] == name), None)
                 if ds is not None:
-                    optimal_norm_e, sed_tot, dn, sed_tot_low, sed_tot_high = fit_norm_here(
+                    (optimal_norm_e,), sed_tot, (dn,), sed_tot_low, sed_tot_high = fit_norm_here(
                         x_obs=ds["x"], 
                         y_obs=ds["y"], dy_obs=ds["dy"], x_model=E,
                         y_model=sed_tot, norm_init=NORMALIZATION_INITIAL,
@@ -614,12 +616,9 @@ class SEDWindow(QMainWindow):
 
 
 def main():
-
-    # app = QApplication(sys.argv)
     w = SEDWindow()
     w.resize(1200, 700)
     w.show()
-    # sys.exit(app.exec())
 
 
 if __name__ == "__main__":

@@ -11,28 +11,35 @@ import imageio.v2 as imageio
 
 from ibsen.get_obs_data import get_parameters, known_names
 from ibsen.utils import unpack_params, loggrid, fill_nans, trapz_loglog
-from ibsen import Orbit, Winds, IBS, SpectrumIBS, ElectronsOnIBS
-from ibsen.ibs import IBS3D
+from ibsen import (Orbit, Winds, IBS, IBS3D, SpectrumIBS,
+                   ElectronsOnIBS, OpticalStar, Pulsar)
 
 from astropy import constants as const
 import astropy.units as u
 
-G = float(const.G.cgs.value)
-K_BOLTZ = float(const.k_B.cgs.value)
-HBAR = float(const.hbar.cgs.value)
-C_LIGHT = float(const.c.cgs.value)
-SIGMA_BOLTZ = float(const.sigma_sb.cgs.value)
-M_E = float(const.m_e.cgs.value)
-E_ELECTRON = 4.803204e-10
-MC2E = M_E * C_LIGHT**2
-R_ELECTRON = E_ELECTRON**2 / MC2E
-
-R_SOLAR = float(const.R_sun.cgs.value)
 M_SOLAR = float(const.M_sun.cgs.value)
-PARSEC = float(const.pc.cgs.value)
 
 DAY = 86400.
 sed_unit = u.erg / u.s / u.cm**2
+
+def _t_to_nu(orbit, times):
+    """
+    Recalculates inputs for p(or h)_enh_times to p(or h)_enh_true_an, keeping
+    keywords 't1' and 't2'.
+    
+    orbit : Orbit
+        class `Orbit`. Only the method `Orbit.true_an(t)` is used.
+    times : list
+        List of the type [float, 't1', 't2', [float, float], ['t_i', 't_j'],...]
+    """
+    if isinstance(times, list):
+        return [_t_to_nu(orbit, item) for item in times]
+
+    if times in ('t1', 't2'):
+        return times
+
+    return orbit.true_an(times)
+
 ### !!! correct the docstring!
 docstr_lc = f""" 
 Broadband light curve builder for an intrabinary shock (IBS) system.
@@ -85,14 +92,12 @@ full_spec : bool, optional
         angle (rad), LoS inclination (rad).
 
 
-# Winds (external media & fields)
+# Star / Pulsar / Winds (external media & fields)
     Ropt, Topt, Mopt : float, optional
         Optical star radius (cm), temperature (K), and mass (g).
-    M_ns : float, optional
-        Neutron-star mass (g). Default ``1.4*M_SOLAR``.
     f_p : float, optional
         Pulsar-wind pressure normalization. Default 0.1.
-    alpha_deg, incl_deg : float, optional
+    alpha_disk_deg, incl_disk_deg : float, optional
         Disk orientation angles in degrees (see :class:`Winds`). Defaults 0 and 30.
     f_d : float, optional
         Disk pressure normalization. Default 10.
@@ -114,10 +119,14 @@ full_spec : bool, optional
         Disk radial profile (power law or broken power law). Default 'pl'.
     r_trunk : float or None, optional
         Disk truncation radius (cm) for broken-profile models.
-    ns_b_model, ns_b_ref, ns_r_ref, ns_L_spindown, ns_sigma_magn
-        Pulsar magnetic-field model and parameters (see :class:`Winds`).
+    hyst, k_time, alpha_interaction : bool or float, optional
+        For the stand-off point calculation with hysteresis, see docs for 
+        `Winds`.
+    puls_b_model, puls_b_ref, puls_r_ref, puls_L_spindown, puls_sigma_magn
+        Pulsar magnetic-field model and parameters (see :class:`Pulsar`).
     opt_b_model, opt_b_ref, opt_r_ref
         Stellar magnetic-field model and parameters.
+    
 
 # IBS geometry
     ibs_ndim : int, 2 or 3
@@ -137,19 +146,26 @@ full_spec : bool, optional
     cooling : {'no','stat_apex','stat_ibs','stat_mimic',
                'leak_apex','leak_ibs','leak_mimic','adv'}, optional
         Cooling/evolution mode for :class:`ElectronsOnIBS`. Default 'stat_mimic'.
-    to_inject_e : {'pl','ecpl','secpl'}, optional
+    to_inject_e : {'pl','ecpl','secpl', 'bkpl'}, optional
         Injection law in energy. Default 'ecpl'.
     to_inject_theta : {'2d','3d'}, optional
         Spatial weighting along IBS. Default '3d'.
     ecut : float, optional
         Cutoff energy for ECPL/SECPL (eV). Default 1e12.
+    ebr : float, optional
+        Break energy for BKPL (eV). Default 1e12.    
     n_e_cut : float, optional
         The treal cutoff energy is calculated as ecut * (1 [G] / b)**n_e_cut.
         Default 0.
     p_e : float, optional
         Injection spectral index. Default 2.0.
+    delta_p_e : float, optional
+        Difference in spectral indexes for the 'bkpl'. Default 0.5    
     norm_e : float, optional
         Injection normalization (s-1). Default 1e37.
+    epow_norm_e : float, optional
+        What moment of injection distribution to normalize:
+            \int f_inj E^epow_norm_e dE
     eta_a, eta_syn, eta_ic : float, optional
         Multipliers for adiabatic, synchrotron, and IC terms. Defaults 1, 1, 1.
     emin, emax : float, optional
@@ -178,7 +194,7 @@ full_spec : bool, optional
     abs_gg : bool, optional
         Apply gamma_gamma absorption along LoS (system-dependent). Default False.
     abs_gg_filename: str or None, optional
-        Name of the file with tabulated gamma-gamma absorbtion. If None,
+        Name of the file with tabulated gamma-gamma absorption. If None,
         (default), IBSEn tries to find a tabulated
         gg-abs file if `sys_name` is a known system.
     nh_tbabs : float, optional
@@ -205,8 +221,6 @@ r_ses : ndarray, shape (Nt,)
     Star→apex distance r_se(t) [cm].
 B_p_apexs, B_opt_apexs : ndarray, shape (Nt,)
     Pulsar/stellar magnetic fields at the apex [G].
-winds_classes : list of Winds 
-    Winds objects at each time.
 ibs_classes : list of IBS
     IBS objects at each time.
 els_classes : list of ElectronsOnIBS
@@ -235,33 +249,32 @@ indexes : ndarray, shape (Nt, Ni)
 Methods
 -------
 set_orbit()
-    Build and assign the :class:`Orbit` object from inputs/defaults.
-set_winds()
-    Build and assign the :class:`Winds` object tied to the orbit.
+    Build and assign the :class:`Orbit` object from inputs/defaults, as well as
+    class:`OpticalStar`, class:`Pulsar`, and class:`Winds`.
 calculate_at_time(t)
     Compute IBS, electrons, spectrum, and derived quantities at one time;
     returns a tuple of all per-epoch results.
 calculate()
     Loop over all times (optionally in parallel), fill attributes listed above.
+sed(t), sed_s(t), s(t), sed_e_tot(t), flux(t, which), index(t, which), emiss(t), 
+    r_se(t), r_sp(t), r_pe(t), b_p_apex(t), b_p_apex(t) :
+    Methods for obtaining some of the quantities by interpolation.
 peek(ax=None, **kwargs)
     Quick-look plot with four panels: band fluxes, photon indices, SED at
     three representative times, and emissivity along the IBS.
 
 Notes
 -----
-* When ``full_spec=False``, the SED energy grid is assembled from all bands
-  expanded to [e/1.2, e*1.2] and concatenated; this accelerates LC runs focused
-  on specific bands.
 * Parallel execution uses ``joblib.Parallel`` with up to ``cpu_count()-5``
   workers (minimum 1).
 
 """
 
-class LightCurve:
+class LightCurve: # !!!
     __doc__ = docstr_lc
     def __init__(self,
-                 
-                 times, bands = ( [3e2, 1e4], ), bands_ind = ( [3e3, 1e4], ),
+                 times, 
+                 bands = ( [3e2, 1e4], ), bands_ind = ( [3e3, 1e4], ),
                  epows=None,
                     to_parall=False, # lc itself
                     n_cores=None,
@@ -272,20 +285,22 @@ class LightCurve:
                  Ropt=None, Topt=None, Mopt=None,  distance = None,
                  allow_missing=False,
                  
-                 M_ns = 1.4*M_SOLAR, f_p = 0.1, 
-                 alpha_deg=0, incl_deg=30.,   
+                 M_puls = 1.4*M_SOLAR, f_p = 0.1, 
+                 alpha_disk_deg=0, incl_disk_deg=30.,   
                  f_d=10., np_disk = 3., delta=0.01, 
                  p_enh = [1, ], p_enh_times = [0, ], 
                  h_enh = [1, ], h_enh_times = [0, ],
                  height_exp = 0.5,
                  rad_prof = 'pl', r_trunk = None,
                  
+                 hyst=False,  k_time=1.0, alpha_interaction=0.0,
+                 
                 ibs_ndim=2, s_max=1., gamma_max=3., s_max_g=4., n_ibs=31, n_phi=33,   # ibs
                 orientation=None, coef_quench=0.0, shield_star = 0.0,
                               
                 cooling='stat_mimic', to_inject_e = 'ecpl',   # el_ev
                 to_inject_theta = '3d', ecut = 1.e12, p_e = 2., norm_e = 1.e37,
-                beta_e = 1.0,
+                beta_e = 1.0, ebr=1.e12, epow_norm_e=0., delta_p_e=0.5,
                 n_e_cut = 0.0,
                 eta_a = 1.,
                 eta_syn = 1., eta_ic = 1.,
@@ -294,8 +309,8 @@ class LightCurve:
                 to_cut_theta =  False, 
                 where_cut_theta = pi/2,
 
-                ns_b_model = 'linear', ns_b_ref = 1, ns_r_ref = 1e13,
-                ns_L_spindown = None, ns_sigma_magn = None,
+                puls_b_model = 'linear', puls_b_ref = 1, puls_r_ref = 1e13,
+                puls_L_spindown = None, puls_sigma_magn = None,
                 opt_b_model = 'linear', opt_b_ref = 0, opt_r_ref = 1e12,
                              
                              
@@ -341,11 +356,11 @@ class LightCurve:
         self.Topt = Topt_
         self.Mopt = Mopt_
         self.distance = distance_
-        self.M_ns = M_ns
+        self.M_puls = M_puls
         ################ ---- arguments from winds ---- #######################
         self.f_p = f_p
-        self.alpha_deg = alpha_deg
-        self.incl_deg = incl_deg
+        self.alpha_disk_deg = alpha_disk_deg
+        self.incl_disk_deg = incl_disk_deg
         self.f_d = f_d
         self.p_enh = p_enh
         self.p_enh_times = p_enh_times
@@ -356,12 +371,16 @@ class LightCurve:
         self.height_exp = height_exp
         self.rad_prof = rad_prof
         self.r_trunk = r_trunk
+        
+        self.hyst = hyst
+        self.k_time = k_time
+        self.alpha_interaction = alpha_interaction
         ####### --------- also from winds, about magn fields --------- ########
-        self.ns_b_model = ns_b_model
-        self.ns_b_ref = ns_b_ref
-        self.ns_r_ref = ns_r_ref
-        self.ns_L_spindown = ns_L_spindown
-        self.ns_sigma_magn = ns_sigma_magn
+        self.puls_b_model = puls_b_model
+        self.puls_b_ref = puls_b_ref
+        self.puls_r_ref = puls_r_ref
+        self.puls_L_spindown = puls_L_spindown
+        self.puls_sigma_magn = puls_sigma_magn
         self.opt_b_model = opt_b_model
         self.opt_b_ref = opt_b_ref
         self.opt_r_ref = opt_r_ref
@@ -380,6 +399,9 @@ class LightCurve:
         self.to_inject_e = to_inject_e
         self.to_inject_theta = to_inject_theta
         self.ecut = ecut
+        self.ebr = ebr
+        self.delta_p_e = delta_p_e
+        self.epow_norm_e = epow_norm_e
         self.n_e_cut = n_e_cut
         self.p_e = p_e
         self.beta_e = beta_e
@@ -432,6 +454,52 @@ class LightCurve:
                         n=1001)
             
             self.orbit = orb
+        self.true_an = orb.true_an(t = self.t)
+            
+        star = OpticalStar(sys_name = self.sys_name,
+                        alpha_disk_deg=self.alpha_disk_deg, 
+                        incl_disk_deg=self.incl_disk_deg,
+                        f_d=self.f_d,
+                        p_enh = self.p_enh,
+                        p_enh_true_an = _t_to_nu(orbit=orb, times=self.p_enh_times), 
+                        h_enh = self.h_enh,
+                        h_enh_true_an = _t_to_nu(orbit=orb, times=self.h_enh_times), 
+                        delta=self.delta,
+                        np_disk=self.np_disk,
+                        rad_prof=self.rad_prof,
+                        height_exp=self.height_exp,
+                        r_trunk=self.r_trunk,
+
+                        Ropt = self.Ropt,
+                        Topt=self.Topt, 
+                        Mopt=self.Mopt,
+                        
+                        b_model= self.opt_b_model,
+                        b_ref = self.opt_b_ref,
+                        r_b_ref = self.opt_r_ref,
+                        )
+        self.star = star
+        
+        pulsar = Pulsar(f_p=self.f_p,
+                        r_p_ref=star.Ropt,
+                        b_model=self.puls_b_model,
+                        b_ref=self.puls_b_ref,
+                        r_b_ref=self.puls_r_ref,
+                        L_spindown=self.puls_L_spindown,
+                        sigma_magn=self.puls_sigma_magn,
+                        )
+        
+        self.pulsar = pulsar
+        
+        winds = Winds(orbit = orb, 
+                      star=star, 
+                      pulsar=pulsar,
+                      hyst=self.hyst, 
+                      # t_precalculate=wrap_grid(x=self.t, frac=0.03, num_points=self.t.size+2),
+                      k_time=self.k_time, 
+                      alpha_interaction=self.alpha_interaction)
+        self.winds = winds
+        
 
     def calculate_at_time(self, t_):
         """
@@ -452,7 +520,6 @@ class LightCurve:
                   r_se (float): distance from the star to the apex of IBS [cm], \\
                   Bp_apex (float): magnetic field at the apex of IBS due to pulsar [G], \\
                   Bopt_apex (float): magnetic field at the apex of IBS due to star [G], \\
-                  winds (Winds object): the Winds object at time t, \\
                   ibs (IBS object): the IBS object at time t, \\
                   els (ElectronsOnIBS object): the ElectronsOnIBS object at time t, \\
                   dNe_de_IBS (2d np.array): electron distribution on IBS [1/s/cm/eV], \\
@@ -467,43 +534,9 @@ class LightCurve:
                   )
 
         """
-        # print('lc ', self.h_enh_times)
-        winds_now = Winds(orbit=self.orbit, 
-                sys_name = self.sys_name,
-                alpha=np.deg2rad(self.alpha_deg), 
-                incl=np.deg2rad(self.incl_deg),
-                f_d=self.f_d,
-                t_forwinds = t_,
-                p_enh = self.p_enh,
-                p_enh_times = self.p_enh_times,
-                h_enh = self.h_enh,
-                h_enh_times = self.h_enh_times,
-                f_p=self.f_p, 
-                delta=self.delta,
-                np_disk=self.np_disk,
-                rad_prof=self.rad_prof,
-                height_exp=self.height_exp,
-                r_trunk=self.r_trunk,
-
-                Ropt = self.Ropt,
-                Topt=self.Topt, 
-                Mopt=self.Mopt,
-
-                ### no options ns_b_apex/opt_b_apex here, cause wtf would that mean??
-                ns_b_model = self.ns_b_model,
-                ns_b_ref = self.ns_b_ref,
-                ns_r_ref = self.ns_r_ref,
-                ns_L_spindown = self.ns_L_spindown,
-                ns_sigma_magn = self.ns_sigma_magn,
-                
-                opt_b_model = self.opt_b_model,
-                opt_b_ref = self.opt_b_ref,
-                opt_r_ref = self.opt_r_ref,
-                allow_missing=self.allow_missing,
-                )
         
         if self.ibs_ndim == 2:
-            ibs_now = IBS(winds=winds_now, 
+            ibs_now = IBS(winds=self.winds, 
                     gamma_max=self.gamma_max, 
                     s_max=self.s_max, 
                     s_max_g=self.s_max_g, 
@@ -513,7 +546,7 @@ class LightCurve:
                     coef_quench=self.coef_quench,
                 )
         if self.ibs_ndim == 3:
-            ibs_now = IBS3D(winds=winds_now, 
+            ibs_now = IBS3D(winds=self.winds, 
                     gamma_max=self.gamma_max, 
                     s_max=self.s_max, 
                     s_max_g=self.s_max_g, 
@@ -527,9 +560,9 @@ class LightCurve:
                 )
             
         r_sp_now = self.orbit.r(t=t_)
-        r_se_now = winds_now.dist_se_1d(t=t_)
+        r_se_now = self.winds.dist_se_1d(t=t_)
         r_pe_now = r_sp_now - r_se_now
-        Bp_apex_now, Bopt_apex_now = winds_now.magn_fields_apex(t_)
+        Bp_apex_now, Bopt_apex_now = self.winds.magn_fields_apex(t_)
 
         els_now = ElectronsOnIBS(ibs = ibs_now,
                             cooling=self.cooling,
@@ -539,6 +572,9 @@ class LightCurve:
                             to_inject_e = self.to_inject_e,
                             to_inject_theta = self.to_inject_theta,
                             ecut = self.ecut,
+                            ebr=self.ebr,
+                            delta_p_e=self.delta_p_e,
+                            epow_norm_e=self.epow_norm_e,
                             n_e_cut=self.n_e_cut,
                             p_e=self.p_e,
                             beta_e=self.beta_e,
@@ -586,7 +622,7 @@ class LightCurve:
         fluxes_now = spec_now.fluxes(bands=self.bands, epows=self.epows)
         indexes_now = spec_now.indexes(bands=self.bands_ind)
         return (r_sp_now, r_pe_now, r_se_now, Bp_apex_now, Bopt_apex_now,
-                winds_now, ibs_now, els_now, 
+                ibs_now, els_now, 
                 dNe_de_IBS_now, e_vals_now, spec_now,
                 E_ph_now, sed_tot_now, sed_s_now, fluxes_now, indexes_now, 
                 emissiv_now,
@@ -603,7 +639,6 @@ class LightCurve:
         self.r_pes (np.array of size of self.t): distance from the star to the IBS apex [cm], \\
         self.B_p_apexs (np.array of size of self.t): pulsar magn field the IBS apex [cm], \\
         self.B_opt_apexs (np.array of size of self.t): star magn field the IBS apex [cm], \\
-        self.winds_classes (list of Winds objects of size of self.t): Winds objects at every time, \\        
         self.ibs_classes (list of IBS objects of size of self.t): IBS objects at every time, \\
         self.els_classes (list of ElectronsOnIBS objects of size of self.t): 
                             ElectronsOnIBS objects at every time, \\
@@ -630,7 +665,6 @@ class LightCurve:
         B_p_apexs = np.zeros(self.t.size)
         B_opt_apexs = np.zeros(self.t.size)
         
-        winds_classes = []
         ibs_classes = []
         els_classes = []
         spec_classes = []
@@ -644,7 +678,7 @@ class LightCurve:
         if not self.to_parall:
             for i_t, t_ in enumerate(self.t):
                 (r_sp_now, r_pe_now, r_se_now, Bp_apex_now, Bopt_apex_now,
-                    winds_now, ibs_now, els_now, dNe_de_IBS_now, e_vals_now, spec_now,
+                    ibs_now, els_now, dNe_de_IBS_now, e_vals_now, spec_now,
                     E_ph_now, sed_tot_now, sed_s_now, fluxes_now, indexes_now, 
                     emissiv_now,
                     ) = self.calculate_at_time(t_)
@@ -655,7 +689,6 @@ class LightCurve:
                 B_p_apexs[i_t] = Bp_apex_now
                 B_opt_apexs[i_t] = Bopt_apex_now 
                 ###################################
-                winds_classes.append(winds_now)
                 els_classes.append(els_now)
                 ibs_classes.append(ibs_now)
                 dNe_des.append(dNe_de_IBS_now)
@@ -673,13 +706,13 @@ class LightCurve:
         if self.to_parall:
             def func_to_parall(i_t):
                 (r_sp_now, r_pe_now, r_se_now, Bp_apex_now, Bopt_apex_now,
-                    winds_now, ibs_now, els_now, dNe_de_IBS_now, e_vals_now, spec_now,
+                    ibs_now, els_now, dNe_de_IBS_now, e_vals_now, spec_now,
                     E_ph_now, sed_tot_now, sed_s_now, fluxes_now, indexes_now, 
                     emissiv_now,
                     ) = self.calculate_at_time(self.t[i_t])
                 
                 return (r_sp_now, r_pe_now, r_se_now, Bp_apex_now, Bopt_apex_now,
-                    winds_now, ibs_now, els_now, dNe_de_IBS_now, e_vals_now, spec_now,
+                    ibs_now, els_now, dNe_de_IBS_now, e_vals_now, spec_now,
                     E_ph_now, sed_tot_now, sed_s_now, fluxes_now, indexes_now, 
                     emissiv_now,
                     )
@@ -693,14 +726,13 @@ class LightCurve:
             res= Parallel(n_jobs=n_jobs)(delayed(func_to_parall)(i_t)
                                  for i_t in range(0, len(self.t)))
 
-            r_sps, r_pes, r_ses, B_p_apexs, B_opt_apexs, winds_classes, ibs_classes, els_classes, \
+            r_sps, r_pes, r_ses, B_p_apexs, B_opt_apexs, ibs_classes, els_classes, \
             dNe_des, e_es, spec_classes, e_phots, seds, seds_s, \
             fluxes, indexes, emiss_s = zip(*res)
 
             r_sps, r_pes, r_ses, B_p_apexs, B_opt_apexs, fluxes, indexes, dNe_des, e_es = [np.array(ar) 
                 for ar in (r_sps, r_pes, r_ses, B_p_apexs, B_opt_apexs, fluxes,
                            indexes, dNe_des, e_es)]
-            winds_classes = list(winds_classes)
             ibs_classes = list(ibs_classes)
             els_classes = list(els_classes)
             spec_classes = list(spec_classes)
@@ -723,7 +755,6 @@ class LightCurve:
         self.B_p_apexs = B_p_apexs
         self.B_opt_apexs = B_opt_apexs
         
-        self.winds_classes = winds_classes
         self.ibs_classes = ibs_classes
         self.els_classes = els_classes
         self.spec_classes = spec_classes
@@ -740,8 +771,8 @@ class LightCurve:
         self.fluxes = fluxes
         self.indexes = indexes    
         
-        self.f_ds_eff = np.array([winds_.f_d for winds_ in winds_classes])
-        self.deltas_eff = np.array([winds_.delta for winds_ in winds_classes])
+        self.f_ds_eff = np.array([self.star._f_d_eff(true_an=nu) for nu in self.true_an])
+        self.deltas_eff = np.array([self.star._delta_eff(true_an=nu) for nu in self.true_an])
         self.calculated = True
     
     def sed(self, t):
@@ -1110,12 +1141,12 @@ class LightCurve:
         ax10, ax11 = ax[1]
     
         winds_static = (
-            self.winds_classes[0].p_enh == [1,]
-            and self.winds_classes[0].h_enh == [1,]
+            self.winds.star.p_enh == [1,]
+            and self.winds.star.h_enh == [1,]
         )
 
         if winds_static:
-            self.winds_classes[0].peek(
+            self.winds.peek(
                 ax=ax00,
                 showtime=(np.min(self.t), np.max(self.t)),
                 plot_rs=False
@@ -1212,7 +1243,7 @@ class LightCurve:
             else:
 
                 ax00.cla()
-                self.winds_classes[i_t].peek(
+                self.winds.peek(
                     ax=ax00,
                     showtime=(np.min(self.t), np.max(self.t)),
                     plot_rs=False

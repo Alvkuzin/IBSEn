@@ -1,6 +1,3 @@
-"""
-It's written mainly by ChatGPT. Sorry I'm not a coder jeez!!!!!!!!!! 
-"""
 from __future__ import annotations
 
 import numpy as np
@@ -24,8 +21,8 @@ DAY = 86400.
 
 def compute_lc(ts, bands, sys_name='psrb',
                ### stars params:
-               b_ns_13=1,
-               b_opt_13=1, 
+               b_puls_13=1,
+               b_opt_13=0.0, 
                ### disk params:
                f_d=100, 
                f_p=0.1,
@@ -34,6 +31,9 @@ def compute_lc(ts, bands, sys_name='psrb',
                height_exp=0.5,
                alpha_deg=18,
                incl_deg=30,
+               hyst=False,
+               k_time=0.04,
+               alpha_interaction=0.05,
                ### ibs params:
                gamma_max=2, 
                n_ibs=13,
@@ -67,12 +67,13 @@ def compute_lc(ts, bands, sys_name='psrb',
                      to_parall=to_parall, n_cores=8,
                         sys_name=sys_name, 
                         ### -----------------------------------------------
-                        ns_b_ref=b_ns_13, ns_r_ref=1e13,
+                        puls_b_ref=b_puls_13, puls_r_ref=1e13,
                         opt_b_ref=b_opt_13, opt_r_ref=1e13,
                         ### -----------------------------------------------
                         f_d=f_d, delta=delta, np_disk=np_disk,
-                        height_exp=height_exp, alpha_deg=alpha_deg,
-                        incl_deg=incl_deg, f_p=f_p,
+                        height_exp=height_exp, alpha_disk_deg=alpha_deg,
+                        incl_disk_deg=incl_deg, f_p=f_p,
+                        hyst=hyst, k_time=k_time, alpha_interaction=alpha_interaction,
                         ### -----------------------------------------------
                         gamma_max=gamma_max, s_max=s_max, n_ibs=n_ibs,
                         s_max_g=s_max_g, ibs_ndim=ibs_ndim, n_phi=n_phi,
@@ -245,8 +246,8 @@ class LightCurveWindow(ToolWindowBase):
         # ----- Stars parameters -----
         lay_stars = _page_widget("Stars parameters")
     
-        lay, self.b_ns_13 = self.make_log10_slider("b_ns_13", 0.01, 100.0, 0.003, 0.53)
-        lay_stars.addLayout(lay); _wire_slider(self.b_ns_13)
+        lay, self.b_puls_13 = self.make_log10_slider("b_puls_13", 0.01, 100.0, 0.003, 0.53)
+        lay_stars.addLayout(lay); _wire_slider(self.b_puls_13)
     
         lay, self.b_opt_13 = self.make_log10_slider("b_opt_13", 0.01, 100.0, 0.1, 0.01)
         lay_stars.addLayout(lay); _wire_slider(self.b_opt_13)
@@ -275,6 +276,18 @@ class LightCurveWindow(ToolWindowBase):
     
         lay, self.incl_deg = self.make_linear_slider("incl_deg", -180.0, 180.0, 1.0, -45.0)
         lay_disk.addLayout(lay); _wire_slider(self.incl_deg)
+        
+        self.hyst = QCheckBox("hysteresis")
+        self.hyst.setChecked(False)
+        lay_disk.addWidget(self.hyst)
+        self.hyst.stateChanged.connect(lambda _: self.schedule_update())
+        
+        lay, self.k_time = self.make_log10_slider("k_time", 1e-4, 1e1, 0.01, 0.03)
+        lay_disk.addLayout(lay); _wire_slider(self.k_time)
+        
+        lay, self.alpha_interaction = self.make_log10_slider("alpha_interaction", 1e-5, 1e1, 0.001, 0.01)
+        lay_disk.addLayout(lay); _wire_slider(self.alpha_interaction)
+        
     
         # ----- IBS parameters -----
         lay_ibs = _page_widget("IBS parameters")
@@ -588,7 +601,7 @@ class LightCurveWindow(ToolWindowBase):
         if not path:
             return
 
-        t, dt, y, dy = read_lightcurve(path)  # your function
+        t, dt, y, dy = read_lightcurve(path) 
         name = self._nice_label(path)
 
         artists = self._plot_obs(row, t, dt, y, dy, label=name)
@@ -805,7 +818,7 @@ class LightCurveWindow(ToolWindowBase):
                         sys_name=self.sys_name.currentText(),
                         to_parall=self.to_parall.isChecked(),
                         
-                        b_ns_13=float(self.slider_value(self.b_ns_13)),
+                        b_puls_13=float(self.slider_value(self.b_puls_13)),
                         b_opt_13=float(self.slider_value(self.b_opt_13)),
                         f_d=float(self.slider_value(self.f_d)),
                         f_p=float(self.slider_value(self.f_p)),
@@ -814,6 +827,9 @@ class LightCurveWindow(ToolWindowBase):
                         height_exp=float(self.slider_value(self.height_exp)),
                         alpha_deg=float(self.slider_value(self.alpha_deg)),
                         incl_deg=float(self.slider_value(self.incl_deg)),
+                        hyst=self.hyst.isChecked(),
+                        k_time=float(self.slider_value(self.k_time)),
+                        alpha_interaction=float(self.slider_value(self.alpha_interaction)),
                         
                         gamma_max=float(self.slider_value(self.gamma_max)),
                         s_max=float(self.slider_value(self.s_max)),

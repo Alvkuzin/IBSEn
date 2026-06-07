@@ -2,7 +2,7 @@ import argparse
 from astropy import constants as const
 import numpy as np
 
-from ibsen.absorbtion.absorbtion import tabulate_absgg
+from ibsen.absorption.absorption import tabulate_absgg
 from ibsen.orbit import Orbit
 
 def main():
@@ -13,7 +13,7 @@ def main():
     
     parser = argparse.ArgumentParser(
         description="""
-        Tabulate gamma-gamma absorbtion from the command line and put to a
+        Tabulate gamma-gamma absorption from the command line and put to a
         ibsen-readable file.
         """
     )
@@ -41,7 +41,7 @@ def main():
                         help="fast: Whether to calculate faster (True) or correct (False)")
     parser.add_argument("--filename", type=str, required=True,
                         help="""filename: opacitiy tables will be saved
-                        as ibsen/absorbtion/absorb_tab/<filename>.nc""")
+                        as ibsen/absorption/absorp_tab/<filename>.nc""")
     parser.add_argument(
         "--nrho",
         type=int,

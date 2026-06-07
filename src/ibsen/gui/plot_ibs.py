@@ -1,6 +1,4 @@
-"""
-It's written mainly by ChatGPT. Sorry I'm not a coder jeez!!!!!!!!!! 
-"""
+# ibsen/gui/plot_ibs.py
 import numpy as np
 
 from PySide6.QtWidgets import (
@@ -10,8 +8,8 @@ from PySide6.QtWidgets import (
 
 from matplotlib.colors import Normalize
 from matplotlib.collections import LineCollection
-from ibsen import Orbit, Winds, IBS
-from ibsen.gui.base import  ToolWindowBase
+from ibsen import Orbit, Winds, IBS, OpticalStar, Pulsar
+from ibsen.gui.base import ToolWindowBase
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from ibsen.get_obs_data import known_names
 
@@ -53,7 +51,7 @@ def winds_and_ibs(
     delta: float,
     alpha_deg: float,
     incl_deg: float,
-    b_ns_13: float,
+    b_puls_13: float,
     b_opt_13: float,
     nu_los_deg: float,
     s_max: float,
@@ -61,28 +59,32 @@ def winds_and_ibs(
     ibs_color: str,
 ):
     orbit = Orbit(sys_name, nu_los=np.deg2rad(nu_los_deg), n=1002)
+    
+    star = OpticalStar(sys_name=sys_name,
+                allow_missing=False,
+                alpha_disk_deg=alpha_deg,
+                incl_disk_deg=incl_deg,
+                f_d=f_d,
+                np_disk=3.0,
+                delta=delta,
+                height_exp=0.5,
+                rad_prof="pl",
+                r_trunk=None,
+                b_model="linear",
+                b_ref=b_opt_13,
+                r_b_ref=1e13)
+    pulsar = Pulsar(r_b_ref=1e13,
+                    f_p=f_p,
+                    b_ref=b_puls_13,
+                    b_model='linear',
+                    r_p_ref=star.Ropt,
+        )
 
     winds = Winds(
         orbit=orbit,
-        sys_name=sys_name,
-        allow_missing=False,
-        M_ns=1.4 * 2e33,
-        f_p=f_p,
-        alpha=np.deg2rad(alpha_deg),
-        incl=np.deg2rad(incl_deg),
-        f_d=f_d,
-        np_disk=3.0,
-        delta=delta,
-        height_exp=0.5,
-        rad_prof="pl",
-        r_trunk=None,
-        t_forwinds=t,
-        ns_b_model="linear",
-        ns_b_ref=b_ns_13,
-        ns_r_ref=1e13,
-        opt_b_model="linear",
-        opt_b_ref=b_opt_13,
-        opt_r_ref=1e13,
+        star=star,
+        pulsar=pulsar,
+        
     )
 
     ibs = IBS(
@@ -180,8 +182,8 @@ class IBSWindow(ToolWindowBase): #!!!
         incl_layout, self.incl_deg = self.make_linear_slider("incl [deg]", 0.0, 180.0, 1.0, 30.0)
         self.controls_layout.insertLayout(8, incl_layout)
 
-        bns_layout, self.b_ns_13 = self.make_log10_slider("b_ns_13", 0.01, 100.0, 0.01, 1.0)
-        self.controls_layout.insertLayout(9, bns_layout)
+        bpuls_layout, self.b_puls_13 = self.make_log10_slider("b_puls_13", 0.01, 100.0, 0.01, 1.0)
+        self.controls_layout.insertLayout(9, bpuls_layout)
 
         bopt_layout, self.b_opt_13 = self.make_log10_slider("b_opt_13", 0.01, 100.0, 0.01, 1.0)
         self.controls_layout.insertLayout(10, bopt_layout)
@@ -212,7 +214,7 @@ class IBSWindow(ToolWindowBase): #!!!
 
         for s in (
             self.limits, self.t_days, self.f_d, self.f_p, self.delta, self.alpha_deg, self.incl_deg,
-            self.b_ns_13, self.b_opt_13, self.nu_los_deg, self.s_max, self.gamma_max
+            self.b_puls_13, self.b_opt_13, self.nu_los_deg, self.s_max, self.gamma_max
         ):
             hook_slider(s)
 
@@ -233,8 +235,6 @@ class IBSWindow(ToolWindowBase): #!!!
         ############# ------ disk passage related stuff ------- ###############
 
         t1, t2 = self._winds.times_of_disk_passage
-        # print('disk equator passage times [days]:')
-        # print(t1/DAY, t2/DAY)
         _r_scale = max(self._orb.r(t1), self._orb.r(t2))
         
         orb_x, orb_y = self._orb.xtab[show_cond], self._orb.ytab[show_cond]
@@ -265,7 +265,7 @@ class IBSWindow(ToolWindowBase): #!!!
             delta = float(self.slider_value(self.delta))
             alpha_deg = float(self.slider_value(self.alpha_deg))
             incl_deg = float(self.slider_value(self.incl_deg))
-            b_ns_13 = float(self.slider_value(self.b_ns_13))
+            b_puls_13 = float(self.slider_value(self.b_puls_13))
             b_opt_13 = float(self.slider_value(self.b_opt_13))
             nu_los_deg = float(self.slider_value(self.nu_los_deg))
             s_max = float(self.slider_value(self.s_max))
@@ -280,7 +280,7 @@ class IBSWindow(ToolWindowBase): #!!!
                 delta=delta,
                 alpha_deg=alpha_deg,
                 incl_deg=incl_deg,
-                b_ns_13=b_ns_13,
+                b_puls_13=b_puls_13,
                 b_opt_13=b_opt_13,
                 nu_los_deg=nu_los_deg,
                 s_max=s_max,
@@ -297,7 +297,7 @@ class IBSWindow(ToolWindowBase): #!!!
     
 
             # Draw winds/orbit overview only
-            winds.peek(ax=self.ax, plot_rs=False)
+            winds.peek(ax=self.ax, plot_rs=False, t_forwinds=t)
 
             if self._ibs_lc is not None:
                 try:
@@ -332,12 +332,9 @@ class IBSWindow(ToolWindowBase): #!!!
                 self.status_lbl.setText(f"Error: {type(e).__name__}: {e}")
                 
 def main():
-
-    # app = QApplication(sys.argv)
     w = IBSWindow()
     w.resize(1200, 700)
     w.show()
-    # sys.exit(app.exec())
 
 
 if __name__ == "__main__":
