@@ -11,7 +11,6 @@ from ibsen.utils import  beta_from_g, loggrid, t_avg_func, \
         interplg, index_simple
 from ibsen.transport_solvers.transport_on_ibs_solvers import (
     nonstat_characteristic_solver, solveTranspFDM)
-# from diff_pde import solve_diff_pde
 from ibsen.ibs import IBS
 
 

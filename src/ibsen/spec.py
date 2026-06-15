@@ -1,13 +1,12 @@
 # ibsen/spec.py
 import numpy as np
 from ibsen.utils import loggrid, trapz_loglog, \
-        interplg,  avg, index_simple
+        interplg,  avg, index_simple, unpack_params, index
         
 import astropy.units as u
 from ibsen.get_obs_data import get_parameters, known_names
-from ibsen.utils import unpack_params, index
+from ibsen.el_ev import e_syn_el, e_ic_el
 import ibsen.absorption.absorption as absb
-from scipy.interpolate import interp1d, RegularGridInterpolator
 import naima
 from naima.models import Synchrotron, InverseCompton
 
@@ -16,6 +15,7 @@ from astropy import constants as const
 
 EV_TO_ERG = float(const.e.value) * 1e7
 M_E = float(const.m_e.cgs.value)
+K_BOLTZ = float(const.k_B.cgs.value)
 C_LIGHT = float(const.c.cgs.value)
 MC2E = M_E * C_LIGHT**2
 
@@ -38,74 +38,148 @@ def _to_iter(required_n, arr=None, default_for_None=1.0, descr_for_errors='this 
         raise ValueError(f"'{descr_for_errors}' should be either iterable of length {required_n}, or int/float, or None.")
     return res
 
-def value_on_ibs_with_weights(arr_xy, x, y_extended, y_eval, weights, y_scale,
-                                    toboost=True, mode='rgi'):
+def _key_from_mechanism(mechanism, ic_ani):
     """
-    A technical function for constructing the 2d-array on the IBS:
-        SED(y) = Arr(x, y / y_scale(x) ) * weights(x), given 
-        the `Arr` pre-calculated at a grid [x, y_extended].
+    Turns user-passed key for mechanism and boolean ic_ani into internal
+    key for the emisison mechanism calculation: 'syn', 'ic', 'ic_ani'.
 
+    """
+    if mechanism.lower() in ('s', 'sy', 'syn', 'synchr', 'synchrotron'):
+        emiss_key = 'syn'
+        
+    elif mechanism.lower() in ('i', 'ic', 'inv', 'inverse_compton',
+                        'inverse compton'):
+        if ic_ani:
+            emiss_key = 'ic_ani'
+        else:
+            emiss_key = 'ic'
+    
+    else:
+        raise ValueError('I don\'t know this model. Try `Syn` or `IC`.' )
+    return emiss_key
+
+def _cell_signature_matrix(spatial_shape, *fields, decimals=None):
+    """
+    Build a 2D signature matrix: one row per spatial cell.
+
+    Each field may be either:
+      - scalar over space: shape == spatial_shape
+      - vector over space:  shape == spatial_shape + (k,)
+
+    The rows are concatenated into a single numeric signature.
+    """
+    mats = []
+    for f in fields:
+        a = np.asarray(f)
+
+        if a.shape == spatial_shape:
+            mats.append(a.reshape(-1, 1))
+        elif a.shape[:-1] == spatial_shape:
+            mats.append(a.reshape(-1, a.shape[-1]))
+        else:
+            raise ValueError(
+                f"Incompatible shape {a.shape}, expected {spatial_shape} "
+                f"or {spatial_shape + (a.shape[-1],)}"
+            )
+
+    sig = np.concatenate(mats, axis=1)
+
+    # Optional approximate symmetry detection:
+    # if decimals is None -> exact matching
+    # if decimals is set -> round before unique
+    if decimals is not None:
+        sig = np.round(sig, decimals=decimals)
+
+    _, first_idx, inv = np.unique(sig, axis=0, return_index=True, return_inverse=True)
+    return first_idx, inv
+
+
+def doppler_transform_sed(sed_prime, delta, weights, e_big, e_out):
+    """
+    Given the SED calculated in an extended zone (..., Ne), in co-moving
+    frames on a photon energies `e_big`, calculates the Doppler-boosted SED in 
+    a lab frame on photon energies `e_out`:
+        
+        SED(E) = SED_prime(E/delta) * weight.
+    
     Parameters
     ----------
-    arr_xy : 2d np.array
-        The array of function Arr(x, y) tabulated at a grid of 
-        x \times y_extended. It should be organized so that arr_xy[:, i] is 
-        the slice at y_extended[i] and arr_xy[i, :] is the slice at x[i].
-        
-    x : 1d np.array
-        The array of x-coordinates. On this array, arr_xy (see further) is \
-            tabulated, and the integration will be performed over this 
-            x-array.
-    y_extended : 1d np.array
-        The array of y-coordinates at which arr_xy is tabulated. The interval \
-            over which y_extended varies should contain all values of 
-            y_eval / y_scale over all x's.
-    y_eval : 1d np.array
-        The array of y-coordinates to evaluate the integral at.
-    weights : 1d np.array
-        An array of weights(x) tabulated at x.
-    y_scale : 1d np.array
-        An array of y_scale(x) tabulated at x.
+    sed_prime : array, shape (..., Ne_big)
+        Comoving-frame SED in each cell.
+    delta : array, shape (...)
+        Doppler factor in each cell.
+    weights : array, shape (...)
+        The weights at which to multiply the lab-frame SED.
+    e_big : array, shape (Ne_big,)
+        Energy grid on which sed_prime is tabulated.
+    e_out : array, shape (Ne,)
+        Desired lab-frame energy grid.
 
     Returns
-    -------
-    sed_s_e_up : 2d np.array
-        The quantity evaluated at x \times y_eval.
-
+    ----------
+    sed_lab : array, shape (..., Ne)
+        Lab-frame SED.
+        
+    Notes
+    ----------
+    
+    Puts all spatial dimensions in one row, obtaining the array 
+    (N_spat_tot, Ne_big), then interpolates, in a self-written manner, over
+    energies to recalculate SED(e) --> SED(e/delta_{ij...}). Then multiplies
+    by `weights`, which are typically expected to be delta^(3...4). 
+    
+    The interpolation is in a log-log scale. The SED_prime values are clipped
+    from below at the level of 2x numpy minimum non-zero value.
+    
+    If the inputs: `sed_prime` or `delta` or `weights`, contain NaNs/infs,
+    the behaviour is undefined.
+        
     """
-    if mode == 'rgi':
-        # It's maybe not the best idea to use RGI here, seems like it sometimes
-        # interpolates too rough. The other mode uses `interp1d`, but you I 
-        # think you can only use `interp1d` in a 'for' cycle.
-        RGI = RegularGridInterpolator((x, y_extended), arr_xy, bounds_error=False,
-                                      method = 'linear') 
-        E_new_up = (y_eval[None, :] / y_scale[:, None])
     
-        pts_up = np.column_stack([
-            np.repeat(x, y_eval.size),
-            E_new_up.ravel()      
-        ])
+    spatial_shape = delta.shape
+    M = delta.size
+    Ne_big = e_big.size
+    Ne = e_out.size
+
+    sed2 = sed_prime.reshape(M, Ne_big)
+    d = delta.reshape(M)
+    w = weights.reshape(M)
+    _tiny = np.finfo(float).tiny
+
+    # Work in log-energy space
+    logE_big = np.log(e_big)
+    logE_out = np.log(e_out)
     
-        vals = RGI(pts_up) 
-        I_interp = vals.reshape(x.size, y_eval.size)  
-    if mode == 'int':
-        I_interp  = np.zeros((x.size, y_eval.size))
-        for ix, x_ in enumerate(x):
-            _good = (arr_xy[ix, :] > 0) & np.isfinite(arr_xy[ix, :])
-            ygood = y_extended[_good]
-            arrgood = arr_xy[ix, _good]
-            if ygood.size < 3:    
-                I_interp[ix, :] = np.zeros(y_eval.size)
-            else:    
-                spl = interp1d(np.log10(ygood),
-                              np.log10(arrgood), 
-                              bounds_error=False,
-                              fill_value=(np.log10(arrgood[0]),
-                                          np.log10(arrgood[-1])))
-                I_interp[ix, :] = 10**spl(np.log10(y_eval / y_scale[ix]))
+    # Target comoving-frame energies for each cell and each output energy
+    logEt = logE_out[None, :] - np.log(d)[:, None]   # shape (M, Ne)
     
-    sed_s_e_up = I_interp * weights[:, None]
-    return sed_s_e_up
+    # Find bracketing indices in log-energy grid
+    idx = np.searchsorted(logE_big, logEt, side="left")
+    idx = np.clip(idx, 1, Ne_big - 1)
+    
+    i0 = idx - 1
+    i1 = idx
+    
+    # Bracketing coordinates in log-energy
+    x0 = logE_big[i0]
+    x1 = logE_big[i1]
+    
+    # Bracketing SED values
+    y0 = np.take_along_axis(sed2, i0, axis=-1)
+    y1 = np.take_along_axis(sed2, i1, axis=-1)
+    
+    # Log-log interpolation:
+    # interpolate log(SED) linearly as a function of log(E)
+    logy0 = np.log(np.maximum(y0, 2.*_tiny))
+    logy1 = np.log(np.maximum(y1, 2.*_tiny))
+    
+    t = (logEt - x0) / (x1 - x0)
+    log_sed_interp = (1.0 - t) * logy0 + t * logy1
+    
+    # Back to linear space and apply weights
+    sed_lab = w[:, None] * np.exp(log_sed_interp)
+
+    return sed_lab.reshape(spatial_shape + (Ne,))
 
 def calculate_sed_1zone_naima(e_photon, sed_function, dne_de, e_el, distance,
                           **sed_function_kwargs):
@@ -291,7 +365,8 @@ docstr_specibs =  f"""
     """
 class SpectrumIBS: #!!!
     __doc__ = docstr_specibs
-    def __init__(self, els, mechanisms=['syn', 'ic'], 
+    def __init__(self, els, 
+                 mechanisms=['syn', 'ic'], 
                  method='full',
                  ic_ani=False, 
                  sys_name=None, sys_params=None,
@@ -305,9 +380,11 @@ class SpectrumIBS: #!!!
                  nEed_ic = None):
         self.calculated = False
         self.els = els
-        self._orb = self.els.ibs.winds.orbit
-        self._ibs = self.els.ibs
-        self.ndim = self._ibs.ndim
+        try:
+            self._orb = self.els.ibs.winds.orbit
+            self._ibs = self.els.ibs
+        except:
+            print("No attributes 'ibs' and 'winds.orbit' here!")
         self.method = method
         self.ic_ani = ic_ani
         self.delta_power = delta_power
@@ -341,12 +418,10 @@ class SpectrumIBS: #!!!
         if not self.els.calculated:
             print('no dNe_deds_IBS in els, calculating...')
             self.els.calculate()
+
             
-        if self.ndim == 2:
-            self.i_apex = int(  (self._ibs.s_mid.size-1)  / 2) # apex point at IBS    
-            self.ibs_size = self._ibs.s_mid.size
-            
-        self.dopls = self._ibs.dopl_mid # for both horns
+        self.dopls = self._ibs.dopl_mid 
+        self.spatial_shape = self.dopls.shape
         if self.lorentz_boost:
             b_2horns = self._ibs.b_mid_comov
             u_2horns = self._ibs.ug_mid_comov
@@ -367,6 +442,7 @@ class SpectrumIBS: #!!!
             
         self.b = b_2horns
         self.u = u_2horns
+        self.pe_default = self.els.p_e
         
         self.temp_eff = temp_2horns
         self.scat_ang = scat_ang_2horns
@@ -375,32 +451,12 @@ class SpectrumIBS: #!!!
         self.b_apex = self._ibs.b_apex
         self.u_apex = self._ibs.ug_apex
         self.scat_ang_apex = self._ibs.scatter_angle_apex
-        # self.gg_abs_apex = self._ibs.gg_abs_apex()
         
         
         self.e_el = e_vals
         self.dne_de = dne_de_mid
         self.ne_i = ne_i_mid
         
-    def _key_from_mechanism(mechanism, ic_ani):
-        """
-        Turns user-passed key for mechanism and boolean ic_ani into internal
-        key for the emisison mechanism calculation: 'syn', 'ic', 'ic_ani'.
-
-        """
-        if mechanism.lower() in ('s', 'sy', 'syn', 'synchr', 'synchrotron'):
-            emiss_key = 'syn'
-            
-        elif mechanism.lower() in ('i', 'ic', 'inv', 'inverse_compton',
-                            'inverse compton'):
-            if ic_ani:
-                emiss_key = 'ic_ani'
-            else:
-                emiss_key = 'ic'
-        
-        else:
-            raise ValueError('I don\'t know this model. Try `Syn` or `IC`.' )
-        return emiss_key
         
     def _set_absorption(self, e_ph):
         """
@@ -418,7 +474,7 @@ class SpectrumIBS: #!!!
 
         """
         _abs_ph = np.ones(e_ph.size)
-        _abs_gg = np.ones((self.ibs_size, e_ph.size)) if self.ndim == 2 else np.ones((self._ibs.n_phi, self._ibs.n-1, e_ph.size))
+        _abs_gg = np.ones(self.spatial_shape + (e_ph.size, ))
         _abs_gg_apex = np.ones(e_ph.size)
         
         if self.abs_photoel:
@@ -427,7 +483,7 @@ class SpectrumIBS: #!!!
             _abs_gg = self._ibs.gg_abs_mid(e_ph)  # array of shape (s_mid.size, e_ph.size) or (n_phi, n-1, e_ph.size)           
             _abs_gg_apex = self._ibs.gg_abs_apex(e_ph)
         # abs_tot=
-        self.abs_tot = _abs_gg*_abs_ph[..., :]
+        self.abs_tot = _abs_gg * _abs_ph[..., :]
         self.abs_tot_apex = _abs_gg_apex * _abs_ph
     
     def _extended_photon_energies(self, e_ph):
@@ -446,7 +502,7 @@ class SpectrumIBS: #!!!
         
         d_max = max(np.max(self.dopls), 1/np.min(self.dopls))
         if self.method != 'apex':
-            ### Introduce an auxillary extended grid over photon energries.
+            ### Introduce an auxillary extended grid over photon energries
             ndec_ = int(self.ne_mult * e_ph.size /
                         np.log10(np.max(e_ph) / np.min(e_ph))
                         )
@@ -474,11 +530,8 @@ class SpectrumIBS: #!!!
             SED calculated at e_ext.
 
         """
-        if self.ndim == 2:
-            dne_de_tot = np.sum(self.dne_de, axis=0)
-        if self.ndim == 3:
-            dne_de_tot = np.sum(self.dne_de, axis=(0, 1))
-        # n_ = self.i_apex
+        dne_de_tot = np.sum(self.dne_de, axis=tuple(range(self.dne_de.ndim-1)))
+
         if emiss_mechanism == 'syn':
             emiss_function = Synchrotron
             kwargs = dict(B = self.b_apex * u.G, nEed=self.nEed_syn)
@@ -512,12 +565,12 @@ class SpectrumIBS: #!!!
         values are chosen as to give the best results for 
         energies around 1 keV (for synchrotron) and around 1 TeV (for IC).
 
-        For synchrotron, the effective B is calculated as ssuming
+        For synchrotron, the effective B is calculated assuming
         that in the energy range around 1 keV (for photons), 
         electron population is powerlaw like (the effective index p is
         found), and that emissivity \propto B^(p+1)/2. So
 
-        B_eff^(p+1)/2  = sum( B^(p+1)/2 * dopl^delta_power ) / sum( dopl^delta_power ). 
+        B_eff^(p+1)/2  = average( B^(p+1)/2) with weights = dopl^delta_power * n_e_relevant 
           
          For IC,
         in analogy, we assume that the emissivity \propto u^(p+1)/2
@@ -528,7 +581,7 @@ class SpectrumIBS: #!!!
         sed_ic(s) = sed_eff_ic * (u(s) / B_eff)^((p_eff+1)/2) * n_i(s) / n_i_tot.
         
         These approximations seem to work with an accuracy of
-         a few percent for
+         ~10 percent for
         'syn' around 1 keV and for 'ic' around 1 TeV, while for 
         'ic_ani' the accuracy is worse, up to 10-30%.
 
@@ -541,18 +594,17 @@ class SpectrumIBS: #!!!
 
         Returns
         -------
-        np.ndarray (e_ext.size, )
+        np.ndarray (spatial_shape, e_ext.size)
             SED calculated at e_ext.
 
         """
-        if self.ndim == 2:
-            dne_de_tot = np.sum(self.dne_de, axis=0)
-        if self.ndim == 3:
-            dne_de_tot = np.sum(self.dne_de, axis=(0, 1))
+        dne_de_tot = np.sum(self.dne_de, axis=tuple(range(self.dne_de.ndim-1)))
         
-        _pow = 0.5*(self.els.p_e+1)
-        e_el_sy = (3*3/1.6e-11)**0.5 * MC2E / EV_TO_ERG
-        e_el_ic = (3e12 / 3 / 4)**0.5 * MC2E / EV_TO_ERG
+        _pow = 0.5*(self.pe_default+1.)
+        _b_avg = np.sqrt(np.average(self.b**1.5))
+        _e_soft_avg = np.average( (self.temp_eff * K_BOLTZ * u.erg).to('eV').value)
+        e_el_sy = e_syn_el(e_ph=3e4, b=_b_avg, return_dim='eV')
+        e_el_ic = e_ic_el(e_ph=3e12, e_soft=_e_soft_avg, return_dim='eV', numerical_coef=4.0)
         pe_b = index(dne_de_tot, self.e_el, e_el_sy/5, e_el_sy*5)
         pe_u = index(dne_de_tot, self.e_el, e_el_ic/5, e_el_ic*5)
         
@@ -560,22 +612,24 @@ class SpectrumIBS: #!!!
         _pow_u = 0.5*(pe_u+1) if not np.isnan(pe_u) else _pow
         sy_r = (self.e_el > e_el_sy/5)  & (self.e_el < e_el_sy*5)
         n_i_syn = trapz_loglog(self.dne_de[..., sy_r], self.e_el[sy_r], axis=-1)
-        n_norm = n_i_syn / np.sum(n_i_syn) 
+        ic_r = (self.e_el > e_el_ic/5)  & (self.e_el < e_el_ic*5)
+        n_i_ic = trapz_loglog(self.dne_de[..., ic_r], self.e_el[ic_r], axis=-1)
+        
+        n_norm_sy = n_i_syn / np.sum(n_i_syn) 
+        n_norm_ic = n_i_ic / np.sum(n_i_ic) 
+        
         
         if emiss_mechanism == 'syn':
             emiss_function = Synchrotron
-            b_eff = (np.sum(self.b**_pow * self.dopls**self.delta_power) 
-                     / np.sum(self.dopls**self.delta_power ))**(1/_pow)
+            b_eff = avg(self.b, power=_pow_b, weights=self.dopls**self.delta_power  * n_i_syn)
             kwargs = dict(B = b_eff * u.G, nEed=self.nEed_syn)
-            rescale_coef = (self.b / b_eff) ** _pow_b * n_norm
+            rescale_coef = (self.b / b_eff) ** _pow_b * n_norm_sy
             
         if emiss_mechanism in ('ic', 'ic_ani'):
             emiss_function = InverseCompton
-            u_eff = (np.sum(self.u**_pow_u * self.dopls**self.delta_power) 
-                     / np.sum(self.dopls**self.delta_power ))**(1/_pow_u)
-            temp_eff_eff = avg(self.temp_eff, power=_pow_u, 
-                               weights=self.dopls**self.delta_power )
-            rescale_coef = (self.u / u_eff) ** _pow_u * n_norm
+            u_eff = avg(self.u, power=_pow_u, weights=self.dopls**self.delta_power  * n_i_ic)
+            temp_eff_eff = avg(self.temp_eff, power=_pow_u, weights=self.dopls**self.delta_power )
+            rescale_coef = (self.u / u_eff) ** _pow_u * n_norm_ic
             
         if emiss_mechanism == 'ic':
             kwargs = dict(seed_photon_fields=[['star',
@@ -585,7 +639,8 @@ class SpectrumIBS: #!!!
             
         if emiss_mechanism == 'ic_ani':
             scat_ang_eff = avg(self.scat_ang, power=_pow_u, 
-                               weights=self.dopls**self.delta_power * self.ne_i)
+                               weights=self.dopls**self.delta_power * n_i_ic)
+            
             kwargs = dict(seed_photon_fields=[['star',
                                 temp_eff_eff * u.K,
                                 u_eff * u.erg / u.cm**3,
@@ -599,125 +654,115 @@ class SpectrumIBS: #!!!
                                     e_el=self.e_el,
                                     distance = self.distance,
                                     **kwargs)
-        if self.ndim==2:
-            return sed_eff[None, :] * rescale_coef[:, None]
-        if self.ndim==3:
-            return sed_eff[None, None, :] * rescale_coef[:, :, None]
-        
-    
-    def sed_nonboosted_full(self, e_ext, emiss_mechanism):
+        return rescale_coef[..., None] * sed_eff
+ 
+    def sed_nonboosted_full(self, e_ext, emiss_mechanism, decimals=None):
         """
-        Calculates a non-boosted SED properly in every point of the IBS,
-        using the local values of fields and the local electron population.
-
-        We iterate over the whole IBS. If mechanism is isotropic Sy or IC,
-        and calculate everything properly for one horn (lower) and then
-        for the upper horn we appoint the corresponding values. 
-        
-        If the mechanism in non-isotropic ic_ani (or generally any mechanism
-        which is not axisymmetric), we calculate SED properly and 
-        independently for both horns.
-        
+        Calculates the non-boosted SED in every point of the emission zone,
+        but only once for each unique set of local parameters.
+    
         Parameters
         ----------
         e_ext : np.ndarray
-            The photon energies [eV].
+            Photon energies [eV].
         emiss_mechanism : str {'syn', 'ic', 'ic_ani'}
-            How to calculate the emission.
-
+            Emission mechanism.
+        decimals : int or None
+            If None, cells are considered identical only if all parameters match
+            exactly. If an integer is given, parameters are rounded to that many
+            decimals before deduplication.
+    
         Returns
         -------
-        np.ndarray (e_ext.size, )
-            SED calculated at e_ext.
-
+        np.ndarray
+            SED on the full spatial grid, shape (..., e_ext.size).
         """
-        if self.ndim == 2:
-            sed_s = np.zeros((self.ibs_size, e_ext.size))    
-
-            for i_ibs in range(0, self.ibs_size):
-                if i_ibs == self.i_apex:
-                    # in apex there are no electrons in our approach...
-                    sed_s[i_ibs, :] = np.zeros(e_ext.size)
-                    continue
-                if emiss_mechanism in ('syn', 'ic'):
-                    
-                    if i_ibs > self.i_apex:  
-                        sed_s[i_ibs, :] = sed_s[2*self.i_apex - i_ibs, :]
-                        continue
-                    
-                if emiss_mechanism == 'syn':
-                    emiss_function = Synchrotron
-                    kwargs = dict(B = self.b[i_ibs] * u.G, nEed=self.nEed_syn)
-                if emiss_mechanism == 'ic':
-                    emiss_function = InverseCompton
-                    kwargs = dict(seed_photon_fields=[['star',
-                                        self.temp_eff[i_ibs] * u.K,
-                                        self.u[i_ibs] * u.erg / u.cm**3]],
-                                  nEed=self.nEed_ic)
-                if emiss_mechanism == 'ic_ani':
-                    emiss_function = InverseCompton
-                    kwargs = dict(seed_photon_fields=[['star',
-                                        self.temp_eff[i_ibs] * u.K,
-                                        self.u[i_ibs] * u.erg / u.cm**3,
-                                        self.scat_ang[i_ibs] * u.rad
-                                        ]],
-                                  nEed=self.nEed_ic)
-                sed_s[i_ibs, :] = calculate_sed_1zone_naima(e_photon=e_ext,
-                                            sed_function=emiss_function,
-                                            dne_de=self.dne_de[i_ibs, :],
-                                            e_el=self.e_el,
-                                            distance = self.distance,
-                                        **kwargs)
-        if self.ndim == 3:
-            sed_s = np.zeros((self._ibs.n_phi, self._ibs.n-1, e_ext.size))
-            if emiss_mechanism in ('syn', 'ic'): symmetric = True
-            if emiss_mechanism == 'ic_ani': symmetric = False
-            if symmetric:
-                sed_s_1horn = np.zeros((self._ibs.n-1, e_ext.size))   
-                for i_ibs in range(0, self._ibs.n-1):
-
-                    if emiss_mechanism == 'syn':
-                        emiss_function = Synchrotron
-                        kwargs = dict(B = self.b[0, i_ibs] * u.G, nEed=self.nEed_syn)
-                    if emiss_mechanism == 'ic':
-                        emiss_function = InverseCompton
-                        kwargs = dict(seed_photon_fields=[['star',
-                                            self.temp_eff[0, i_ibs] * u.K,
-                                            self.u[0, i_ibs] * u.erg / u.cm**3]],
-                                      nEed=self.nEed_ic)
-
-                    sed_s_1horn[i_ibs, :] = calculate_sed_1zone_naima(e_photon=e_ext,
-                                            sed_function=emiss_function,
-                                            dne_de=self.dne_de[0, i_ibs, :],
-                                            e_el=self.e_el,
-                                            distance = self.distance,
-                                        **kwargs)
-                sed_s = np.array([sed_s_1horn for _i in range(self._ibs.n_phi)])
-            if not symmetric:
-                for i_s in range(0, self._ibs.n-1):
-                    for i_phi in  range(0, self._ibs.n_phi):
-                        emiss_function = InverseCompton
-                        kwargs = dict(seed_photon_fields=[['star',
-                                            self.temp_eff[i_phi, i_s] * u.K,
-                                            self.u[i_phi, i_s] * u.erg / u.cm**3,
-                                            self.scat_ang[i_phi, i_s] * u.rad
-                                            ]],
-                                      nEed=self.nEed_ic)
-                        sed_s[i_phi, i_s, :] = calculate_sed_1zone_naima(e_photon=e_ext,
-                                                    sed_function=emiss_function,
-                                                    dne_de=self.dne_de[i_phi, i_s, :],
-                                                    e_el=self.e_el,
-                                                    distance = self.distance,
-                                                **kwargs)
-
-        return sed_s
+        e_ext = np.asarray(e_ext)
+    
+        # Spatial shape is the shape of the scalar fields
+        spatial_shape = np.shape(self.b)
+        M = int(np.prod(spatial_shape))
+    
+        flat_dne = self.dne_de.reshape(M, self.dne_de.shape[-1])
+    
+        if emiss_mechanism == "syn":
+            emiss_function = Synchrotron
+    
+            # Parameters that define the SED for a cell
+            sig_fields = (self.b, self.dne_de)
+    
+            def build_kwargs(i):
+                return dict(
+                    B=self.b.reshape(M)[i] * u.G,
+                    nEed=self.nEed_syn,
+                )
+    
+        elif emiss_mechanism == "ic":
+            emiss_function = InverseCompton
+            sig_fields = (self.u, self.temp_eff, self.dne_de)
+    
+            def build_kwargs(i):
+                return dict(
+                    seed_photon_fields=[[
+                        "star",
+                        self.temp_eff.reshape(M)[i] * u.K,
+                        self.u.reshape(M)[i] * u.erg / u.cm**3,
+                    ]],
+                    nEed=self.nEed_ic,
+                )
+    
+        elif emiss_mechanism == "ic_ani":
+            emiss_function = InverseCompton
+            sig_fields = (self.u, self.temp_eff, self.scat_ang, self.dne_de)
+    
+            def build_kwargs(i):
+                return dict(
+                    seed_photon_fields=[[
+                        "star",
+                        self.temp_eff.reshape(M)[i] * u.K,
+                        self.u.reshape(M)[i] * u.erg / u.cm**3,
+                        self.scat_ang.reshape(M)[i] * u.rad,
+                    ]],
+                    nEed=self.nEed_ic,
+                )
+    
+        else:
+            raise ValueError(f"Unknown emiss_mechanism={emiss_mechanism!r}")
+    
+        # Find unique parameter combinations
+        first_idx, inv = _cell_signature_matrix(spatial_shape, *sig_fields, decimals=decimals)
+    
+        # Compute each unique SED once
+        sed_unique = np.empty((len(first_idx), e_ext.size), dtype=float)
+    
+        for k, i in enumerate(first_idx):
+            # If there are no electrons in this cell, set SED to zero
+            dne = flat_dne[i]
+            _ok = np.isfinite(dne) & (dne > 0)
+            if dne[_ok].size < 2:
+                sed_unique[k] = 0.0
+                continue
+            
+            sed_unique[k, :] = calculate_sed_1zone_naima(
+                e_photon=e_ext,
+                sed_function=emiss_function,
+                dne_de=flat_dne[i],
+                e_el=self.e_el,
+                distance=self.distance,
+                **build_kwargs(i),
+            )
+    
+        # Scatter back to all cells
+        sed_flat = sed_unique[inv]
+        return sed_flat.reshape(spatial_shape + (e_ext.size,))
 
     def calculate(self, e_ph = np.logspace(2, 14, 1000),
-                             to_return=False,):
+                             to_return=False,
+                             ):
         """
         Calculates emission from the intrabinary shock (IBS) for given
-        mechanisms. The SED is calculated for both horns of the IBS and
-        then summed up, doppler-boosted and absorbed.
+        mechanisms. The SED is calculated for the whole emission zone and
+        then summed up, doppler-boosted, and absorbed.
         The SED is calculated in erg/s/cm2, and e_ph is in eV.
 
         Parameters
@@ -726,8 +771,9 @@ class SpectrumIBS: #!!!
             Photon energies to calculate the SEDs on. 
             The default is np.logspace(2, 14, 1000).
         to_return : bool, optional
-            Whether to return e_ph, sed (total, 1d),
-              sed-s (in every IBS segmens, 2d). The default is False.
+            Whether to return e_ph, sed (total, shape (e_ph.size, )),
+              sed-s (in every IBS segmens, (spatial_shape, e_ph.size)). 
+              The default is False.
 
         Raises
         ------
@@ -742,29 +788,25 @@ class SpectrumIBS: #!!!
         e_ph : np.array
             Photon energies (eV).
         sed_tot : np.array of size of e_ph
-            SED summed over the whole IBS (erg/s/cm2).
-        sed_s_ : 2d np.array of ibs.s.size x e_ph.size
-            SED in every segment of IBS (erg/s/cm2).
+            SED summed over the emisison zone (erg/s/cm2).
+        sed_s_ : N+1-dim np.array of (..., e_ph.size) where N is the dimension
+            of the emission zone.
+            SED in every segment of the emission zone (erg/s/cm2).
 
         """
         
         self._set_absorption(e_ph=e_ph)
         # -------------------------------------------------------------------------
         # for each segment of IBS, we calulate a spectrum and put it into
-        # the 2-dimentional array sed_s_. The E_ph is always the same and it is 
-        # e_ph but extended: ~ min(e_ph) / max(delta) < E_ph < max(e_ph) * max(delta)
+        # the array sed_s_ (..., Ne_ext). The E_ph is the same for all cells and it is 
+        # extended e_ph: ~ min(e_ph) / max(delta) < E_ph < max(e_ph) * max(delta)
         # -------------------------------------------------------------------------
         e_ext = self._extended_photon_energies(e_ph=e_ph)
-        
         sed_tot = np.zeros(e_ph.size)
-        if self.ndim == 2:
-            sed_s_ = np.zeros((self._ibs.s_mid.size, e_ph.size))
-        if self.ndim == 3:
-            sed_s_ = np.zeros((self._ibs.n_phi, self._ibs.n-1, e_ph.size))
-        
+        sed_s_ = np.zeros(self.spatial_shape + (e_ph.size,))
 
         for mechanism in self.mechanisms:
-            emiss_key = SpectrumIBS._key_from_mechanism(mechanism, self.ic_ani)
+            emiss_key = _key_from_mechanism(mechanism, self.ic_ani)
             if self.method == 'apex':
                 sed_apex = self.sed_nonboosted_apex(e_ext=e_ext,
                                                     emiss_mechanism=emiss_key)
@@ -777,40 +819,24 @@ class SpectrumIBS: #!!!
                                                     emiss_mechanism=emiss_key)
                 if self.method == 'full':
                     sed_s_nonboosted = self.sed_nonboosted_full(e_ext=e_ext,
-                                                    emiss_mechanism=emiss_key)
-                if self.ndim == 2:
-                    sed_s_nonabs_boosted = value_on_ibs_with_weights(
-                                        arr_xy=sed_s_nonboosted,
-                                        x=self._ibs.s_mid,
-                                        y_extended=e_ext,
-                                        y_eval=e_ph,
-                                        weights=self.dopls ** self.delta_power,
-                                        y_scale = self.dopls,
-                                        mode=self.mode)
-                if self.ndim == 3:
-                    sed_s_nonabs_boosted = np.zeros((self._ibs.n_phi, self._ibs.n-1, e_ph.size))
-                    for i_phi in range(self._ibs.n_phi):
-                        sed_s_nonabs_boosted[i_phi, :, :] = value_on_ibs_with_weights(
-                                        arr_xy=sed_s_nonboosted[i_phi],
-                                        x=self._ibs.s_mid[i_phi],
-                                        y_extended=e_ext,
-                                        y_eval=e_ph,
-                                        weights= self.dopls[i_phi] ** self.delta_power,
-                                        y_scale = self.dopls[i_phi],
-                                        mode=self.mode)
+                                                emiss_mechanism=emiss_key,
+                                                decimals=6)
+                    
+                sed_s_nonabs_boosted = doppler_transform_sed(
+                    sed_prime=sed_s_nonboosted,
+                    delta=self.dopls, 
+                    weights=self.dopls ** self.delta_power,
+                    e_big = e_ext, 
+                    e_out = e_ph)
                 
                 sed_s_here = sed_s_nonabs_boosted * self.abs_tot
-                if self.ndim==2:
-                    sed_here = np.sum(sed_s_here, axis=0)
-                if self.ndim==3:
-                    sed_here = np.sum(sed_s_here, axis=(0, 1))
+                sed_here = np.sum(sed_s_here, axis=tuple(np.arange(sed_s_here.ndim - 1)))
                 
             else:
                 raise ValueError("""I don\'t know this method.
                                  Try `apex`, `simple`, or 'full'.""")
             
-            # sed_s_here = fill_nans(sed_s_here)
-            # sed_here = fill_nans_1d(sed_here)
+
             sed_tot += sed_here
             sed_s_ += sed_s_here 
            
@@ -823,8 +849,6 @@ class SpectrumIBS: #!!!
                 
         ### now SEDs are in erg / s / cm2 
         ### but e_ph is in eV
-        # self.sed = fill_nans_1d(sed_tot)
-        # self.sed_s = fill_nans(sed_s_)
         self.sed = sed_tot
         self.sed_s = sed_s_
         self.e_ph = e_ph
@@ -999,7 +1023,7 @@ class SpectrumIBS: #!!!
         
         emiss_to_integr = np.where(np.isfinite(self.sed_s), self.sed_s, 0)
         s_plot = self._ibs.s_mid
-        if self.ndim==3:
+        if s_plot.ndim==2:
             _where = (self._ibs.phis<np.pi)
             emiss_to_integr_m, emiss_to_integr_p = emiss_to_integr.copy(), emiss_to_integr.copy()
             emiss_to_integr_p[_where, :, :] = 0

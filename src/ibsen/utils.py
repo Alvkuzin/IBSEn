@@ -3,7 +3,7 @@ import numpy as np
 # from scipy.optimize import brentq
 from scipy.interpolate import interp1d
 from scipy.integrate import trapezoid
-from scipy.optimize import curve_fit
+from scipy.optimize import curve_fit, minimize_scalar, brentq
 
 from numpy import pi, sin, cos, exp
 import warnings
@@ -1662,6 +1662,66 @@ def fit_norm(ydata, dy_data, y0_normalized, return_err=False, addit_const=False)
     if addit_const:
         return _fit_norm_addit_and_multi(ydata, dy_data, y0_normalized, return_err)
     return _fit_norm_only_multi(ydata, dy_data, y0_normalized, return_err)
+
+def df_dx(f, x, eps=1e-5):
+    dx = x * eps
+    return (f(x + dx) - f(x - dx)) / 2. / dx
+
+def fit_N_x_shift(f, edata, fdata, complicated_params, weights=None, bounds=None):
+    """
+    Fit model = N * f(edata * c, 1.0, **complicated_params)
+
+    Parameters
+    ----------
+    f : callable
+        f(E, C, **kwargs)
+    edata, fdata : array-like
+        Data x and y.
+    complicated_params : dict
+        Extra parameters passed to f.
+    weights : array-like or None
+        If None, uses ones. Usually this should be 1/dy^2.
+    bounds : tuple or None
+        Bounds for c if using bounded minimization.
+
+    Returns
+    -------
+    N_opt, c_opt, model_opt
+    """
+    edata = np.asarray(edata, dtype=float)
+    fdata = np.asarray(fdata, dtype=float)
+
+    if weights is None:
+        weights = np.ones_like(edata, dtype=float)
+    else:
+        weights = np.asarray(weights, dtype=float)
+
+    def model(c):
+        return f(edata * c, 1.0, **complicated_params)
+
+    def N_best(c):
+        m = model(c)
+        denom = np.sum(weights * m * m)
+        if denom <= 0:
+            raise ValueError("Degenerate denominator in N fit")
+        return np.sum(weights * fdata * m) / denom
+
+    def chi2(c):
+        m = model(c)
+        N = N_best(c)
+        resid = fdata - N * m
+        return np.sum(weights * resid * resid)
+
+    if bounds is None:
+        res = minimize_scalar(chi2)
+    else:
+        res = minimize_scalar(chi2, bounds=bounds, method="bounded")
+
+    c_opt = res.x
+    m_opt = model(c_opt)
+    N_opt = N_best(c_opt)
+
+    return N_opt, c_opt, N_opt * m_opt
     
 
 def index_simple(dnde, e):
@@ -1759,7 +1819,8 @@ def avg(arr, weights=None, power=None, axis=None):
     if power is None:
         power = 1.
         
-    return (np.average(arr**power, weights=weights, axis=axis))**(1. / power)
+    return (np.sum(arr**power * weights, axis=axis) / 
+            np.sum(weights, axis=axis))**(1. / power)
 
 
 """ #!!!

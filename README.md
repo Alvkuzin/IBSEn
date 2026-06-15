@@ -41,10 +41,10 @@ pip install -r requirements.txt
 
 Scripts now are mainly not suited for running from the command line... And I don't have proper tests yet, so to find out if the installation works, try running a very basic python script that simply initializes a lot of classes with more or less default parameters and stores the output in a file:
 ```bash
-python test_ibsen.py --testall True > ibsen_test_out.txt
+python test_ibsen.py --testall True --ndim -1 > ibsen_test_out.txt
 
 ```
-Compare the output with the file `ibsen_test_results_0_5_4.txt`
+Compare the output with the file `ibsen_test_results_0_5_5.txt`
 
 ## Usage
 There is a poor attempt at the graphical interface: run it with
@@ -128,10 +128,11 @@ See tutorials in `tutorials` folder for the complete description of these models
 
 
 ### TODO
- 1. When calculating IC, should we account for the seed photons coming from the disk? 
- 2. How to visualize winds in 3D?
- 3. Write fitting utils for LC/SEDs. It should take several datasets and fit to the theoretical model using the same sets of parameters except normalizations.
- 4. If one is bored so much that one feels the need to make the graphical interface better, it'd be cool to add all gamma-ray binaies systems in the drop-down windows, as well as allow for the basic system parameters variation (such as Torb, Mopt, e...) instead of keeping them strictly fixed. Also, the default values and ranges of sliders should be system-dependent.
+ 1. How to visualize winds in 3D?
+ 2. Write fitting utils for LC/SEDs. It should take several datasets and fit to the theoretical model using the same sets of parameters except normalizations.
+ 3. If one is bored so much that one feels the need to make the graphical interface better, it'd be cool to add all gamma-ray binaies systems in the drop-down windows, as well as allow for the basic system parameters variation (such as Torb, Mopt, e...) instead of keeping them strictly fixed. Also, the default values and ranges of sliders should be system-dependent.
+ 4. The spectrum calculation utils are currently very close to being a general function for calculating the non-thermal spectra from an extended emission zone. 
+It'd be a good idea to actually make it so.
  5. Do something with occasional NaNs in IC spectrum.
 
 
