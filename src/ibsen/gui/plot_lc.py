@@ -13,7 +13,8 @@ from PySide6.QtWidgets import (
 from ibsen.gui.base import ToolWindowBase
 from ibsen import LightCurve, Orbit
 from ibsen.get_obs_data import known_names
-from ibsen.gui.utils_gui import read_lightcurve, fit_norm_here
+from ibsen.gui.utils_gui import read_lightcurve
+from ibsen.fitting.utils_fit import fit_norm_here
 
 NORMALIZATION_INITIAL = 1E37
 DAY = 86400.

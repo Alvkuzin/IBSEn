@@ -6,7 +6,7 @@ from ibsen.winds import Winds
 from ibsen.ibs_norm import IBS_norm, IBS_norm3D
 from ibsen.utils import plot_with_gradient, \
  lor_trans_ug_iso, lor_trans_b_iso, lor_trans_Teff_iso, rotated_vector, absv, \
-     plot_surface_quads, vector_angle, n_from_v, vec_between, trapz_loglog
+     plot_surface_quads, vector_angle, n_from_v, vec_between, trapz_loglog, doppler_delta
 from ibsen.absorption.absorption import gg_analyt, gg_tab
 from ibsen.get_obs_data import known_names
 
@@ -249,8 +249,12 @@ class IBS: #!!!
         
         self.x_apex_coord = self.r_se/self.r_sp * self.winds.orbit.x(self.t_forbeta)
         self.y_apex_coord = self.r_se/self.r_sp * self.winds.orbit.y(self.t_forbeta)
+        self.symm_ax = n_from_v(np.array([self.x_apex_coord, self.y_apex_coord, 0.]))
         self.scatter_angle_apex = vector_angle(self.winds.orbit.vector_sp(self.t_forbeta),
                                                self.unit_los)
+        self.dopl_apex_eff = doppler_delta(self.gamma_max,
+                        vector_angle(self.winds.orbit.unit_los, self.symm_ax))
+
         
     def rescale_gamma(self):
         r_pIBS = np.array([np.array([_x, _y, 0.]) for _x, _y in zip(self.x, self.y)])
@@ -767,9 +771,9 @@ class IBS3D: #!!!
         if self.orientation is None:
             self.beta = self.winds.beta_eff(self.t_forbeta)
             self.r_se = self.winds.dist_se_1d(self.t_forbeta)
-            self.symm_ax = self.winds.orbit.vector_sp(self.t_forbeta)
+            self.symm_ax = n_from_v(self.winds.orbit.vector_sp(self.t_forbeta))
         else:
-            vec_pe_3d = self.winds.vec_pe_3d(self.t_forbeta) # !!!
+            vec_pe_3d = self.winds.vec_pe_3d(self.t_forbeta) 
             # r_pe = absv(vec_pe_3d)
             self.r_se = absv(vec_pe_3d + vec_sp)
             self.symm_ax = -n_from_v(vec_pe_3d)
@@ -815,8 +819,6 @@ class IBS3D: #!!!
         ### rescale some other stuff        
         for name in ("s", "s_max_g", "r", "r1", "r_mid", "r1_mid",  "x_apex", "ds_dtheta",
                      "s_m", "s_p", "s_mid", "ds", "dx", "dy", "s_max_cm"):
-            # if name == 's_max_cm':
-            #     print(getattr(self.ibs_n, name))
             setattr(self, name, _r_sp * getattr(self.ibs_n, name))
    
         
@@ -824,6 +826,8 @@ class IBS3D: #!!!
         self.y_apex_coord = self.r_se/self.r_sp * self.winds.orbit.y(self.t_forbeta)
         self.scatter_angle_apex = vector_angle(self.winds.orbit.vector_sp(self.t_forbeta),
                                                self.unit_los)
+        self.dopl_apex_eff = doppler_delta(self.gamma_max,
+                        vector_angle(self.winds.orbit.unit_los, self.symm_ax))
         
     
     def rescale_gamma(self):
@@ -1212,7 +1216,7 @@ class IBS3D: #!!!
     None.
 
     """
-    def peek(self,  ax=None, show_winds=False,
+    def peek(self,  ax=None, fig=None, show_winds=False,
              ibs_color='k', to_label=True,
              edgecolor='k', linewidth=0.1,
              alpha=0.5, colorbar=True,
@@ -1224,7 +1228,7 @@ class IBS3D: #!!!
         
         if ax is None:
             fig = plt.figure()
-            ax = fig.add_subplot(111, projection="3d")    
+            ax = fig.add_subplot(111, projection="3d")   
         if ibs_color == 'doppler':
             color_param = self.dopl
             bar_label = r'doppler factor $\delta$'

@@ -1,8 +1,9 @@
 # ibsen/spec.py
 import numpy as np
-from ibsen.utils import loggrid, trapz_loglog, \
-        interplg,  avg, index_simple, unpack_params, index
-        
+from ibsen.utils import (loggrid, trapz_loglog, \
+        interplg, unpack_params)
+from ibsen.fitting.utils_fit import index_simple, index, avg
+
 import astropy.units as u
 from ibsen.get_obs_data import get_parameters, known_names
 from ibsen.el_ev import e_syn_el, e_ic_el
@@ -419,9 +420,17 @@ class SpectrumIBS: #!!!
             print('no dNe_deds_IBS in els, calculating...')
             self.els.calculate()
 
-            
-        self.dopls = self._ibs.dopl_mid 
+        ##### --------- general --------- ####
+        self.dopls = self._ibs.dopl_mid         
+        self.Topt = self._ibs.winds.star.Topt
         self.spatial_shape = self.dopls.shape
+        ##### ---------- apex ----------- ####
+        self.b_apex = self._ibs.b_apex
+        self.u_apex = self._ibs.ug_apex
+        self.scat_ang_apex = self._ibs.scatter_angle_apex
+        self.symm_ax = self._ibs.symm_ax
+        self.dopl_apex = self._ibs.dopl_apex_eff
+        ##### ---------- extended zone props, incl dNe_de ----------- ####
         if self.lorentz_boost:
             b_2horns = self._ibs.b_mid_comov
             u_2horns = self._ibs.ug_mid_comov
@@ -442,20 +451,14 @@ class SpectrumIBS: #!!!
             
         self.b = b_2horns
         self.u = u_2horns
-        self.pe_default = self.els.p_e
-        
         self.temp_eff = temp_2horns
         self.scat_ang = scat_ang_2horns
-        
-        self.Topt = self._ibs.winds.star.Topt
-        self.b_apex = self._ibs.b_apex
-        self.u_apex = self._ibs.ug_apex
-        self.scat_ang_apex = self._ibs.scatter_angle_apex
-        
-        
         self.e_el = e_vals
         self.dne_de = dne_de_mid
         self.ne_i = ne_i_mid
+        #####  ------- needed for a fallback in 'simple' calc ------- ######
+        self.pe_default = self.els.p_e
+
         
         
     def _set_absorption(self, e_ph):
@@ -545,7 +548,7 @@ class SpectrumIBS: #!!!
             emiss_function = InverseCompton
             kwargs = dict(seed_photon_fields=[['star',
                                 self.Topt * u.K,
-                                self.ug_apex * u.erg / u.cm**3,
+                                self.u_apex * u.erg / u.cm**3,
                                 self.scat_ang_apex * u.rad
                                 ]],
                           nEed=self.nEed_ic)
@@ -808,12 +811,16 @@ class SpectrumIBS: #!!!
         for mechanism in self.mechanisms:
             emiss_key = _key_from_mechanism(mechanism, self.ic_ani)
             if self.method == 'apex':
-                sed_apex = self.sed_nonboosted_apex(e_ext=e_ext,
+                sed_apex_nonboosted = self.sed_nonboosted_apex(e_ext=e_ext,
                                                     emiss_mechanism=emiss_key)
-                sed_here = sed_apex * self.abs_tot_apex
-                sed_s_here = sed_here[None, :]
+                sed_here_nonboosted = sed_apex_nonboosted
+                absorb_to_use = self.abs_tot_apex[None, :]
+                sed_s_nonboosted = sed_here_nonboosted[None, :]
+                dopls_to_use = np.asarray([self.dopl_apex])
                 
             elif self.method in ('full', 'simple'):
+                dopls_to_use = self.dopls
+                absorb_to_use = self.abs_tot
                 if self.method == 'simple':
                     sed_s_nonboosted = self.sed_nonboosted_simple(e_ext=e_ext,
                                                     emiss_mechanism=emiss_key)
@@ -821,20 +828,20 @@ class SpectrumIBS: #!!!
                     sed_s_nonboosted = self.sed_nonboosted_full(e_ext=e_ext,
                                                 emiss_mechanism=emiss_key,
                                                 decimals=6)
-                    
-                sed_s_nonabs_boosted = doppler_transform_sed(
-                    sed_prime=sed_s_nonboosted,
-                    delta=self.dopls, 
-                    weights=self.dopls ** self.delta_power,
-                    e_big = e_ext, 
-                    e_out = e_ph)
-                
-                sed_s_here = sed_s_nonabs_boosted * self.abs_tot
-                sed_here = np.sum(sed_s_here, axis=tuple(np.arange(sed_s_here.ndim - 1)))
                 
             else:
                 raise ValueError("""I don\'t know this method.
                                  Try `apex`, `simple`, or 'full'.""")
+                                 
+            sed_s_nonabs_boosted = doppler_transform_sed(
+                sed_prime = sed_s_nonboosted,
+                delta = dopls_to_use, 
+                weights = dopls_to_use ** self.delta_power,
+                e_big = e_ext, 
+                e_out = e_ph)
+            
+            sed_s_here = sed_s_nonabs_boosted * absorb_to_use
+            sed_here = np.sum(sed_s_here, axis=tuple(np.arange(sed_s_here.ndim - 1)))
             
 
             sed_tot += sed_here

@@ -15,7 +15,8 @@ from PySide6.QtWidgets import QFileDialog
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 
-from ibsen.gui.utils_gui import fit_norm_here, read_sed_gammapy, read_sed_txt_dat
+from ibsen.gui.utils_gui import read_sed_gammapy, read_sed_txt_dat
+from ibsen.fitting.utils_fit import fit_norm_here
 from ibsen import (Orbit, Winds, IBS,  ElectronsOnIBS, SpectrumIBS, IBS3D,
                    OpticalStar, Pulsar)
     

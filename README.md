@@ -1,6 +1,6 @@
 # IBSEn: calculates the IBS Emissivity for PSR B1259-63.
 
-IBSEn: **I**ntra**B**inary **S**hock **E**mission **n**-**n**ot-mea**n**i**n**g-a**n**ythi**n**g is a Python package for modeling and visualizing observational data of the gamma-ray binariy pulsars, especially PSR B1259-63. This project includes tools to compute intrabinary shock (IBS) emissivity: spectra and light curves, and (somewhere in future) fit theoretical models to light curves and spectra.
+IBSEn: **I**ntra**B**inary **S**hock **E**mission **n**-**n**ot-mea**n**i**n**g-a**n**ythi**n**g is a Python package for modeling and visualizing observational data of the gamma-ray binariy pulsars, especially PSR B1259-63. This project includes tools to compute intrabinary shock (IBS) emissivity: spectra and light curves, and fit theoretical models to light curves and spectra.
 
 
 ## Installation & Requirements 
@@ -44,7 +44,7 @@ Scripts now are mainly not suited for running from the command line... And I don
 python test_ibsen.py --testall True --ndim -1 > ibsen_test_out.txt
 
 ```
-Compare the output with the file `ibsen_test_results_0_5_5.txt`
+Compare the output with the file `ibsen_test_results_0_5_6.txt`
 
 ## Usage
 There is a poor attempt at the graphical interface: run it with

@@ -1,14 +1,14 @@
 # ibsen/winds.py
 import numpy as np
 from numpy import pi, sin, cos
-from scipy.optimize import brentq
+from scipy.optimize import brentq#, least_squares
 from scipy.integrate import solve_ivp
 from scipy.interpolate import interp1d
 from astropy import constants as const
 from ibsen.get_obs_data import get_parameters, known_names
 from ibsen.utils import unpack_params
-from ibsen.utils import rotated_vector, mydot, mycross, n_from_v, absv, \
-    enhanche_jump, angles_from_vec, vector_angle, orthonormal_basis_perp, rotate_vec1_around_vec2
+from ibsen.utils import (rotated_vector, mydot, mycross, n_from_v, absv, 
+                                     enhanche_jump)
 from ibsen.orbit import Orbit
 
 
@@ -284,7 +284,10 @@ class OpticalStar: #!!!
             height_exp = 0.5, # exponent for z0/r \propto r^height_exp
             rad_prof = 'pl', # rad profile for r-dependence of disk pressure
             r_trunk = None, # if rad_prof == 'bkpl', it's used as a truncation radius
-                             # beyond which P \propto r^-2
+                             # beyond which P \propto r^-np_disk and within which
+                             # P \propto r^-np_disk_in
+            vert_prof='gauss',
+            np_disk_in=None,
             v_polar_wind = 3e8, # (constant) radial velocity of polar wind
             
             p_enh = [1, ],
@@ -317,7 +320,9 @@ class OpticalStar: #!!!
         self.height_exp = height_exp
         self.np_disk = np_disk
         self.rad_prof = rad_prof
+        self.vert_prof=vert_prof
         self.r_trunk = r_trunk
+        self.np_disk_in = np_disk_in if np_disk_in is not None else np_disk
         self.n_disk = n_from_v(rotated_vector(alpha=self.alpha_disk, incl=self.incl_disk)  )
         
         self.p_enh = p_enh
@@ -459,13 +464,22 @@ class OpticalStar: #!!!
         r_to_d = absv(r_fromdisk) # (shape0)
         r_in_d = absv(r_indisk) # (shape0)
         z0 = self.disk_height(r_in_d, true_an=true_an) # (shape0)
-        vert = np.exp(-r_to_d**2 / 2 / z0**2) # (shape0)
+        if isinstance(self.vert_prof, str) and self.vert_prof == 'gauss':
+            vert = np.exp(-r_to_d**2 / 2 / z0**2) # (shape0)
+        elif isinstance(self.vert_prof, str) and self.vert_prof == 'exp':
+            vert = np.exp(-r_to_d /z0) # (shape0)
+        else:
+            if not isinstance(self.vert_prof, (list, tuple, np.ndarray)):
+                raise ValueError("`vert_prof` should be 'gauss', 'exp', or a tuple (k, d).")
+            _k, _dd = self.vert_prof
+            vert = 1./(1.+_k) * (np.exp(-r_to_d**2 / 2 / z0**2) 
+                                 + _k * np.exp(-r_to_d / _dd / z0))
         if self.rad_prof == 'pl':
             rad = (self.Ropt / r_in_d)**self.np_disk  # (shape0)
         if self.rad_prof == 'bkpl':
             rad = np.where(r_in_d < self.r_trunk,
-                    (self.Ropt / r_in_d)**self.np_disk,
-                    (self.Ropt / self.r_trunk)**self.np_disk * (self.r_trunk / r_in_d)**2
+                    (self.Ropt / self.r_trunk)**self.np_disk * (self.r_trunk / r_in_d)**self.np_disk_in,
+                    (self.Ropt / r_in_d)**self.np_disk
                            )
         return self._f_d_eff(true_an=true_an) * rad * vert 
 
@@ -494,11 +508,11 @@ class OpticalStar: #!!!
         
         `vec_se` is a vector from the optical star.
         """
-        norm_se = n_from_v(vec_se)
-        vec_r_in_disc = vec_se - mydot(vec_se, self.n_disk) * self.n_disk
-        v_disc_absv = np.sqrt(self.GMopt / absv(vec_r_in_disc))
-        keplerian_direction = n_from_v(mycross(self.n_disk, norm_se))
-        v_disc = v_disc_absv * keplerian_direction
+        norm_se = n_from_v(vec_se) # (shape0, 3)
+        vec_r_in_disc = vec_se - mydot(vec_se, self.n_disk)[..., None] * self.n_disk # (shape0, 3)
+        v_disc_absv = np.sqrt(self.GMopt / absv(vec_r_in_disc)) # (shape0, )
+        keplerian_direction = n_from_v(mycross(self.n_disk, norm_se)) # (shape0, 3)
+        v_disc = v_disc_absv[..., None] * keplerian_direction
         return v_disc
     
 
@@ -601,7 +615,7 @@ class Winds: # !!!
         if t_precalculate is not None:
             self.t_precalculate = t_precalculate
         else:
-            self.t_precalculate = np.linspace(-self.orbit.T/4., self.orbit.T/4., 501)
+            self.t_precalculate = self.orbit.t_from_true_an(np.linspace(-np.pi, np.pi, 501))
         self.k_time = k_time
         self.alpha_interaction = alpha_interaction
         
@@ -691,34 +705,69 @@ class Winds: # !!!
             _t_ev = self.orbit.t_from_true_an(nu = np.linspace(-0.75*pi, 0.75*pi))
         else:
             _t_ev = np.asarray(_t_ev)
+        # def _rhs(t, f_add, k_time, eps1, return_rpe=False):
+        #     r_sp = self.orbit.r(t)
+        #     t_kepl = self.orbit.kepl_period(t)
+        #     r_sp_vec = self.orbit.vector_sp(t)
+        #     _nu = self.orbit.true_an(t)
+        #     nwind = n_from_v(r_sp_vec) # unit vector from S to P
+        #     pres_p = lambda r_se: self.pulsar.wind_pressure(r_from_p = np.abs(r_sp - r_se))
+        #     pres_ext = lambda r_se: (self.star.polar_wind_pressure(r_from_s = r_se) + 
+        #                              self.star.decr_disk_pressure(vec_r_from_s = nwind * r_se, true_an=_nu) )
+        #     to_solve = lambda r_se: pres_ext(r_se) + f_add - pres_p(r_se)
+        #     # rse = brentq(to_solve, self.star.Ropt, r_sp*(1-1e-8), rtol=1e-7)
+        #     try:
+        #         rse = brentq(to_solve, r_sp*0.01, r_sp*(1-1e-6), rtol=1e-7)
+        #     except:
+        #         print(to_solve(r_sp*0.5), to_solve(r_sp*0.8), to_solve(r_sp*(1-1e-6)))
+        #         print(f_add)
+        #         print(t / DAY)
+        #     rse = max(self.star.Ropt, rse)
+        #     char_outer_p = pres_ext(r_se = r_sp)
+        #     rpe = np.abs(r_sp - rse)
+        #     if return_rpe:
+        #         return rpe
+        #     if f_add <= 0.0:
+        #         return 0.
+        #     return (
+        #             (-(f_add - 1e-5*char_outer_p) / k_time +
+        #             eps1 * pres_ext(rse) * (rpe / self.orbit.r_periastr)**(-3)
+        #             )  / (t_kepl)
+        #             )
+        
         def _rhs(t, f_add, k_time, eps1, return_rpe=False):
-            r_sp = self.orbit.r(t)
-            t_kepl = self.orbit.kepl_period(t)
-            r_sp_vec = self.orbit.vector_sp(t)
+            # r_sp = self.orbit.r(t)
+            # t_kepl = self.orbit.kepl_period(t)
+            # r_sp_vec = self.orbit.vector_sp(t)
             _nu = self.orbit.true_an(t)
-            nwind = n_from_v(r_sp_vec) # unit vector from S to P
+            # nwind = n_from_v(r_sp_vec) # unit vector from S to P
+            # pres_p = lambda r_se: self.pulsar.wind_pressure(r_from_p = np.abs(r_sp - r_se))
+            vec_sp = self.orbit.vector_sp(t)
+            r_sp = absv(vec_sp)
+            pres_ext = lambda r_se: (self.star.polar_wind_pressure(r_se) + 
+                                     self.star.decr_disk_pressure(vec_r_from_s = n_from_v(vec_sp)*r_se, true_an=_nu) )
             pres_p = lambda r_se: self.pulsar.wind_pressure(r_from_p = np.abs(r_sp - r_se))
-            pres_ext = lambda r_se: (self.star.polar_wind_pressure(r_from_s = r_se) + 
-                                     self.star.decr_disk_pressure(vec_r_from_s = nwind * r_se, true_an=_nu) )
-            to_solve = lambda r_se: pres_ext(r_se) + f_add - pres_p(r_se)
-            # rse = brentq(to_solve, self.star.Ropt, r_sp*(1-1e-8), rtol=1e-7)
-            try:
-                rse = brentq(to_solve, r_sp*0.01, r_sp*(1-1e-6), rtol=1e-7)
-            except:
-                print(to_solve(r_sp*0.5), to_solve(r_sp*0.8), to_solve(r_sp*(1-1e-6)))
-                print(f_add)
-                print(t / DAY)
-            rse = max(self.star.Ropt, rse)
-            char_outer_p = pres_ext(r_se = r_sp)
-            rpe = np.abs(r_sp - rse)
             if return_rpe:
+                to_solve = lambda r_se: pres_ext(r_se) + f_add - pres_p(r_se)
+                rse = brentq(to_solve, self.star.Ropt, r_sp*(1-1e-8), rtol=1e-7)
+                try:
+                    rse = brentq(to_solve, r_sp*0.49, r_sp*(1-1e-6), rtol=1e-7)
+                except:
+                    print(to_solve(r_sp*0.5), to_solve(r_sp*0.8), to_solve(r_sp*(1-1e-6)))
+                    print(f_add)
+                    print(t / DAY)
+                rse = max(self.star.Ropt, rse)
+                rpe = np.abs(r_sp - rse)
                 return rpe
             if f_add <= 0.0:
                 return 0.
+            t_kepl = self.orbit.kepl_period(t)
+            t_kepl = 10.*DAY
+            char_outer_p = pres_ext(r_se = r_sp)
             return (
-                    (-(f_add - 1e-5*char_outer_p) / k_time +
-                    eps1 * pres_ext(rse) * (rpe / self.orbit.r_periastr)**(-3)
-                    )  / (t_kepl)
+                    (-(f_add - 1e-5*char_outer_p) +
+                    eps1 * pres_ext(r_sp) * (self.orbit.r_periastr/r_sp)**3
+                    )  / (t_kepl * k_time)
                     )
         
         t_i = _t_ev.min()
@@ -810,7 +859,7 @@ class Winds: # !!!
         n_pe = n_from_v(vec_pe)
         relative_v_wind = self.u_polar_w_pulsar_frame(t=t, vec=vec, which=which)
         n_v_w = n_from_v(relative_v_wind)
-        p_w = self.polar_wind_pressure(absv(vec_se)) * mydot(n_v_w, n_pe) * n_v_w
+        p_w = self.star.polar_wind_pressure(absv(vec_se)) * mydot(n_v_w, n_pe) * n_v_w
         return p_w
     
     def u_disk_w_pulsar_frame(self, t, vec, which='pe'):
@@ -819,9 +868,9 @@ class Winds: # !!!
         defined by `vec`, which is treated either as pe- or se-vector depending
         on the  `which`={'se', 'pe'}.
         """
-        v_orbital_pulsar =self.orbit.vector_v(t)
+        v_orbital_pulsar =self.orbit.vector_v(t) # (3,)
         vec_pe, vec_se = self._vecs(t, vec, which)
-        v_disc = self.star.u_disk_w_lab_frame(vec_se=vec_se)
+        v_disc = self.star.u_disk_w_lab_frame(vec_se=vec_se) 
         relative_v_disc = v_disc - v_orbital_pulsar
         return relative_v_disc
     
@@ -862,6 +911,18 @@ class Winds: # !!!
         """
         return r * rotated_vector(phi, theta)
     
+    def _ext_wind_direction(self, t, vec, which='pe'):
+        vec_pe, vec_se = self._vecs(t, vec, which)
+        _nu = self.orbit.true_an(t)
+        pw = self.star.polar_wind_pressure(absv(vec_se))        
+        pd = self.star.decr_disk_pressure(vec_se, true_an=_nu)
+        totp = pw+pd
+        vec_pw_zero = (pw+1e-3*totp) * n_from_v(self.u_polar_w_pulsar_frame(t, vec_se, 'se'))
+        vec_pd_zero = (pd+1e-3*totp) * n_from_v(self.u_disk_w_pulsar_frame(t, vec_se, 'se'))
+        tot_ext_at_p = -vec_pw_zero - vec_pd_zero
+        init_direction = n_from_v(tot_ext_at_p)
+        return init_direction
+    
     
     def _vec_pe_3d_novec(self, t, eps=1e-3):
         """
@@ -870,39 +931,115 @@ class Winds: # !!!
         t should be float [s]
         """
         vec_sp = self.orbit.vector_sp(t)
-        _nu = self.orbit.true_an(t)
         rsp = absv(vec_sp)
             
         r_se_1d = self.dist_se_1d(t) # zero approximation
         r_pe_1d = rsp - r_se_1d
 
-        pw = self.star.polar_wind_pressure(r_se_1d)
         effective_se = vec_sp*r_se_1d/rsp 
-        
-        pd = self.star.decr_disk_pressure(effective_se, true_an=_nu)
-        totp = pw+pd
-        vec_pw_zero = (pw+1e-3*totp) * n_from_v(self.u_polar_w_pulsar_frame(t, effective_se, 'se'))
-        vec_pd_zero = (pd+1e-3*totp) * n_from_v(self.u_disk_w_pulsar_frame(t, effective_se, 'se'))
-
-        tot_ext_at_p = -vec_pw_zero - vec_pd_zero
-
-        init_direction = n_from_v(tot_ext_at_p)
+        init_direction = self._ext_wind_direction(t, vec = effective_se, which='se')
 
         return r_pe_1d * init_direction
     
+    def _r_in_direction(self, t, ndir, lims=None):
+        def to_solve(r):
+            vec_pe = r * ndir
+            _res = (mydot(self.vec_disk_w(t, vec_pe), ndir) 
+                    + mydot(self.vec_polar_w(t, vec_pe), ndir) 
+                    - mydot(self.vec_pulsar_p(t, vec_pe), ndir))
+            return _res
+        _r = self.orbit.r(t)
+        if lims is None:
+            lo, hi = _r/1e3, _r
+        if lims is not None:
+            lo, hi = lims
+            if lo is None:
+                lo = _r/1e3
+            if hi is None:
+                hi = _r 
+        return brentq(to_solve, lo, hi)
+        
+         
+    
+    def _vec_pe_3d_novec_full(self, t, eps=1e-3):
+        """
+        A vector from the pulsar to the emission zone calculated in 3d. 
+        
+        t should be float [s]
+        """            
+        # # a and i --- relative to the pulsar
+        # vec_pe_0_app = self._vec_pe_3d_novec(t, eps)
+        # a_old, i_old = angles_from_vec(vec_pe_0_app)
+        # r_old = absv(vec_pe_0_app)
+        # r_new = self._r_in_direction(t, ndir = n_from_v(vec_pe_0_app))
+        # # dir_1 = self._ext_wind_direction(t, vec = r_new * rotated_vector(a_old, i_old), which='pe')
+        # dir_1 = self._ext_wind_direction(t, vec = self.orbit.vector_sp(t), which='se')
+        # a_new, i_new = angles_from_vec(dir_1)
+        
+        vec_sp = self.orbit.vector_sp(t)
+        rsp = absv(vec_sp)
+            
+        r_se_1d = self.dist_se_1d(t) # zero approximation
+        r_pe_1d = rsp - r_se_1d
+        ndir = self._ext_wind_direction(t, vec_sp, which='se')
+        # r_new = self._r_in_direction(t, ndir = ndir)
+        return r_pe_1d * ndir
+        # return r_new * ndir
 
-    def vec_pe_3d(self, t, eps=1e-3): 
+    
+        
+        # rel_err = (absv(r_new*rotated_vector(a_new, i_new) -
+        #                r_old*rotated_vector(a_old, i_old)) / absv(r_new*rotated_vector(a_new, i_new)))
+        # count = 1
+        # while (rel_err > eps):
+        #     r_old, a_old, i_old = (r_new, a_new, i_new)
+        #     r_new = self._r_in_direction(t, ndir = rotated_vector(a_new, i_new),
+        #                                  #lims=(r_old/2., None)
+        #                                  )
+        #     dir_new = self._ext_wind_direction(t, vec = r_new * rotated_vector(a_new, i_new), which='pe')
+        #     a_new, i_new = angles_from_vec(dir_new)
+        #     rel_err = (absv(r_new*rotated_vector(a_new, i_new) -
+        #                    r_old*rotated_vector(a_old, i_old)) / absv(r_new*rotated_vector(a_new, i_new)))
+        #     count += 1
+        #     if count > 30:
+        #         print('count > 30!')
+        #         break
+        # print(count)
+        # return r_new*rotated_vector(a_new, i_new)
+        
+        # def resid(popt):
+        #     r, a, i = popt
+        #     n = rotated_vector(a, i)
+        #     vec_pe = r * n
+        #     _res = self.vec_disk_w(t, vec_pe) + self.vec_polar_w(t, vec_pe) - self.vec_pulsar_p(t, vec_pe)
+        #     return _res
+        
+        # sol = least_squares(resid, x0 = (r0, a0, i0),
+        #                        ftol=eps,
+        #                        gtol=eps)
+        # (r, a, i) = sol.x
+        # return r * rotated_vector(a, i)
+    
+    
+
+    def vec_pe_3d(self, t, eps=1e-3, orientation='flow'): 
         """
         A vector from the pulsar to the emission zone calculated in 3d. 
         
         t is a float or a 1d np.ndarray [s].
         """
         t_ = np.asarray(t)
+        if orientation == 'flow':
+            _func = self._vec_pe_3d_novec
+        elif orientation == 'flow_p':
+            _func = self._vec_pe_3d_novec_full
+        else:
+            raise ValueError('nah')
         if t_.ndim == 0:
-            return self._vec_pe_3d_novec(float(t), eps)
+            return _func(float(t), eps)
         
         return np.array( [
-            self._vec_pe_3d_novec(t_now, eps) for t_now in t_
+            _func(t_now, eps) for t_now in t_
             ] )
     
     def dist_pe(self, t, orientation=None, return_se=False):
@@ -916,7 +1053,7 @@ class Winds: # !!!
             r_se = self.dist_se_1d(t)
             r_pe = r_sp - r_se
         else:
-            vec_pe = self.vec_pe_3d(t, 1e-3)
+            vec_pe = self.vec_pe_3d(t, 1e-3, orientation)
             vec_sp = self.orbit.vector_sp(t)
             r_pe = absv(vec_pe)
             r_se = absv(vec_sp + vec_pe)

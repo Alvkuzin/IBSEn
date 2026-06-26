@@ -8,7 +8,8 @@ from scipy.interpolate import interp1d
 
 from ibsen.utils import  beta_from_g, loggrid, t_avg_func, \
     trapz_loglog, lor_trans_e_spec_iso, pl, ecpl, secpl, bkpl, interplg_positive, \
-        interplg, index_simple
+        interplg
+from ibsen.fitting.utils_fit import index_simple
 from ibsen.transport_solvers.transport_on_ibs_solvers import (
     nonstat_characteristic_solver, solveTranspFDM)
 from ibsen.ibs import IBS

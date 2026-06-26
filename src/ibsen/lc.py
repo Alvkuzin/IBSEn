@@ -291,7 +291,8 @@ class LightCurve: # !!!
                  p_enh = [1, ], p_enh_times = [0, ], 
                  h_enh = [1, ], h_enh_times = [0, ],
                  height_exp = 0.5,
-                 rad_prof = 'pl', r_trunk = None,
+                 rad_prof = 'pl', r_trunk = None, np_disk_in=None,
+                 vert_prof='gauss',
                  
                  hyst=False,  k_time=1.0, alpha_interaction=0.0,
                  
@@ -370,8 +371,9 @@ class LightCurve: # !!!
         self.delta = delta
         self.height_exp = height_exp
         self.rad_prof = rad_prof
+        self.vert_prof = vert_prof
         self.r_trunk = r_trunk
-        
+        self.np_disk_in = np_disk_in
         self.hyst = hyst
         self.k_time = k_time
         self.alpha_interaction = alpha_interaction
@@ -469,7 +471,8 @@ class LightCurve: # !!!
                         rad_prof=self.rad_prof,
                         height_exp=self.height_exp,
                         r_trunk=self.r_trunk,
-
+                        np_disk_in=self.np_disk_in,
+                        vert_prof=self.vert_prof,
                         Ropt = self.Ropt,
                         Topt=self.Topt, 
                         Mopt=self.Mopt,

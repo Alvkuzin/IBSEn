@@ -1,9 +1,8 @@
 # ibsen/utils.py
 import numpy as np
-# from scipy.optimize import brentq
 from scipy.interpolate import interp1d
 from scipy.integrate import trapezoid
-from scipy.optimize import curve_fit, minimize_scalar, brentq
+from scipy.optimize import minimize_scalar
 
 from numpy import pi, sin, cos, exp
 import warnings
@@ -248,7 +247,7 @@ def unpack_params(
     return out if return_dict else tuple(out[n] for n in param_names)
 
 
-""" #!!! 
+"""#!!! 
  ------------------------------------------------------------------------------
  --------------------- #####  vector operations  ##### ------------------------
  ------------------------------------------------------------------------------
@@ -892,7 +891,8 @@ def vector_angle(n1, n2, vec_beta=np.zeros(3), lor_trans=False):
 def lor_trans_e_spec_iso(E_lab, dN_dE_lab, gamma, E_comov=None, n_mu=51, 
                          mode=None):
     """
-    Returns (E_comov, dN_dE_comov), the angle-averaged spectrum in the cloud frame.
+    Returns (E_comov, dN_dE_comov), the angle-averaged spectrum in the co-moving
+    ('cloud') frame.
 
     Steps:
       1. Build an interpolator for the lab spectrum (zero outside input range).
@@ -909,13 +909,13 @@ def lor_trans_e_spec_iso(E_lab, dN_dE_lab, gamma, E_comov=None, n_mu=51,
     dN_dE_lab : np.ndarray
         1D array of dN/dE in lab frame, same shape as E_lab.
     gamma : float
-        bulk Lorentz factor Γ of the cloud.
+        bulk Lorentz factor of the cloud.
     E_comov : np.ndarray, optional
         optional 1D array of desired comoving energies; if None, will use a 
         grid spanning from min(E_lab) * Gamma * (1-beta) to 
         max(E_lab) * Gamma * (1+beta). The default is None.
     n_mu : int, optional
-        number of μ' samples for angle-average (must be odd for symmetry). The
+        number of mu samples for angle-average (must be odd for symmetry). The
         real number is calculated as int(n_mu * gamma**2).
         The default is 51.
 
@@ -1346,7 +1346,7 @@ def angles_from_vec(v):
 def rotate_vec1_around_vec2(v, axis, theta):
     """
     Rotate vector(s) v around axis vector(s) 'axis' by angle(s) theta (radians).
-    The rotation is in the positive direction around vec 'axis according to 
+    The rotation is in the positive direction around vec axis according to 
     the Rodribues' formula:
         v_rot = v*c + (k×v)*s + k*(k·v)*(1-c)
 
@@ -1539,288 +1539,6 @@ def l2_norm(xarr, yarr):
 
     """
     return ( trapezoid(yarr**2, xarr) )**0.5
-
-        
-"""
- ------------------------------------------------------------------------------
- -------------------------  fitting procedures --------------------------------
- ------------------------------------------------------------------------------
-
-"""
-        
-def linear_slope(x, y):
-    """
-    Analytical linear fit of the data x, y by y=kx+b; returns slope k
-    """
-    _n = x.size
-    return ((_n * np.sum(x*y) - np.sum(x) * np.sum(y)) 
-            / (_n * np.sum(x**2) - np.sum(x)**2))
-        
-def _fit_norm_only_multi(ydata, dy_data, y0_normalized, return_err=False):
-    """
-    Fits a multiplicative coefficient N: 
-        y_obs = N * y0_normalized
-    """
-    w = 1.0 / dy_data**2
-    denom = np.sum(w * y0_normalized * y0_normalized)
-    if denom <= 0:
-        raise ValueError('denominator < 0 in fit_norm, cannot find normalization')
-    N_best = np.sum(w * y0_normalized * ydata) / denom
-    if not return_err:
-        return N_best, N_best * y0_normalized
-    resid = ydata - N_best * y0_normalized
-    chi2 = np.sum((resid / dy_data)**2)
-    nu = ydata.size - 1
-    s2 = chi2 / nu
-    sigma_N = np.sqrt(s2 / denom)
-    return N_best, N_best * y0_normalized, sigma_N
-    
-def _fit_norm_addit_and_multi(ydata, dy_data, y0_normalized, return_err=False):
-    """
-    Fits a multiplicative coefficient N and an additive const C: 
-        y_obs = C + N * y0_normalized
-    """
-    f = y0_normalized
-    w = 1.0 / dy_data**2
-
-    S0 = np.sum(w)
-    Sf = np.sum(w * f)
-    Sff = np.sum(w * f * f)
-    
-    Sy = np.sum(w * ydata)
-    Syf = np.sum(w * ydata * f)
-    
-    D = S0 * Sff - Sf**2
-    
-    if D <= 0:
-        D = np.nan
-        # raise ValueError(
-        #     'degenerate system in fit_norm(addit_const=True)'
-        # )
-    
-    C_best = (Sy * Sff - Sf * Syf) / D
-    N_best = (S0 * Syf - Sf * Sy) / D
-    
-    model_best = C_best + N_best * f
-    
-    if not return_err:
-        return N_best, C_best, model_best
-    
-    resid = ydata - model_best
-    chi2 = np.sum((resid / dy_data)**2)
-    nu = ydata.size - 2
-    s2 = chi2 / nu
-    
-    # covariance matrix = s2 (X^T W X)^(-1)
-    sigma_C = np.sqrt(s2 * Sff / D)
-    sigma_N = np.sqrt(s2 * S0 / D)
-    cov = s2 / D * np.array([
-            [Sff, -Sf],
-            [-Sf,  S0]
-            ])
-    
-    return N_best, C_best, model_best, sigma_N, sigma_C, cov
-
-def fit_norm(ydata, dy_data, y0_normalized, return_err=False, addit_const=False):
-    """
-    Analytically finds N and C assuming 
-            y = C + N * y0_normalized, 
-    given data: ydata, dydata,
-    and one model y0 calculated with N0 (y0_normalized = y0/N0)
-
-    Parameters
-    ----------
-    ydata : np.ndarray
-        Data y
-    dy_data : np.ndarray
-        Data errors dy
-    y0_normalized : np.ndarray
-        Model calculated with N0, in the same points where ydata was measured,
-        divided by this N0
-    return_err : bool, optional
-        Whether to estimate errors for parameters. Default False
-    addit_const : bool, optional
-        Whether to add an additive constant C. If False, C === 0. Default False
-
-    Returns 
-    -------
-    if not addit_const:
-        if return_err:
-            n_best, y_renorm, dn_best
-        else:
-            n_best, y_renorm
-    if addit_const:
-        if return_err:
-            n_best, c_best, y_renorm, dn_best, dc_best
-        else:
-            n_best, c_best, y_renorm
-            
-    Here optimized normalizaion and addit constant n_best/c_best and their
-    errors dn_best/dc_best are floats; re-normalized y_renorm is a np.ndarray
-
-    """
-    if addit_const:
-        return _fit_norm_addit_and_multi(ydata, dy_data, y0_normalized, return_err)
-    return _fit_norm_only_multi(ydata, dy_data, y0_normalized, return_err)
-
-def df_dx(f, x, eps=1e-5):
-    dx = x * eps
-    return (f(x + dx) - f(x - dx)) / 2. / dx
-
-def fit_N_x_shift(f, edata, fdata, complicated_params, weights=None, bounds=None):
-    """
-    Fit model = N * f(edata * c, 1.0, **complicated_params)
-
-    Parameters
-    ----------
-    f : callable
-        f(E, C, **kwargs)
-    edata, fdata : array-like
-        Data x and y.
-    complicated_params : dict
-        Extra parameters passed to f.
-    weights : array-like or None
-        If None, uses ones. Usually this should be 1/dy^2.
-    bounds : tuple or None
-        Bounds for c if using bounded minimization.
-
-    Returns
-    -------
-    N_opt, c_opt, model_opt
-    """
-    edata = np.asarray(edata, dtype=float)
-    fdata = np.asarray(fdata, dtype=float)
-
-    if weights is None:
-        weights = np.ones_like(edata, dtype=float)
-    else:
-        weights = np.asarray(weights, dtype=float)
-
-    def model(c):
-        return f(edata * c, 1.0, **complicated_params)
-
-    def N_best(c):
-        m = model(c)
-        denom = np.sum(weights * m * m)
-        if denom <= 0:
-            raise ValueError("Degenerate denominator in N fit")
-        return np.sum(weights * fdata * m) / denom
-
-    def chi2(c):
-        m = model(c)
-        N = N_best(c)
-        resid = fdata - N * m
-        return np.sum(weights * resid * resid)
-
-    if bounds is None:
-        res = minimize_scalar(chi2)
-    else:
-        res = minimize_scalar(chi2, bounds=bounds, method="bounded")
-
-    c_opt = res.x
-    m_opt = model(c_opt)
-    N_opt = N_best(c_opt)
-
-    return N_opt, c_opt, N_opt * m_opt
-    
-
-def index_simple(dnde, e):
-    """
-    Finds a powerlaw index: dnde \propto e^\ind. Fitted as a linear function
-    analytically, assuming equal weights for all datapoints. 
-
-    Parameters
-    ----------
-    dnde : np.array (Ne, )
-        The y-array.
-    e : np.array (Ne, )
-        The x-array.
-
-    Raises
-    ------
-    ValueError
-        If the arrays are of different size.
-
-    Returns
-    -------
-    float
-        The index.
-
-    """
-    dnde, e = np.asarray(dnde), np.asarray(e)
-    if dnde.size != e.size:
-        raise ValueError('dnde and e should be the same size')
-    _good = np.isfinite(dnde) & (dnde > 0)
-    dnde_, e_ = dnde[_good], e[_good]
-    if e_.size < 2:
-        return np.nan
-    elif e_.size == 2:
-        return -np.log10(dnde_[-1] / dnde_[0]) / np.log10(e_[-1] / e_[0])
-    else:
-        return - linear_slope(np.log10(e_), np.log10(dnde_))
-
-
-
-def index(dnde, e, e1, e2):
-    """
-    Electron index of a spectrum dnde. Fits a dnde in a given range 
-    [e1, e2] with a powerlaw.
-
-    Parameters
-    ----------
-    dnde : np.ndarray (Ne, )
-        Array to fit
-    e : np.ndarray (Ne, )
-        Energies at which dnde is calculated
-    e1 : float
-        Lower energy [eV].
-    e2 : float
-        Upper energy [eV].
-
-    Returns
-    -------
-    float | np.nan
-        If the fit is successful, the index is returned. If the 
-        curve_fit raised an error, np.nan is returned.
-
-    """
-        
-    _mask = np.logical_and(e >= e1/1.2, e <= e2*1.2)
-    _good = _mask & np.isfinite(dnde)
-    ind_ = index_simple(dnde[_good],
-                        e[_good])
-    return ind_
-
-
-
-def avg(arr, weights=None, power=None, axis=None):
-    """
-    Calculates weighted average defined as:
-        
-        avg^power = \Sum_i arr_i^power * weights_i
-    
-    Parameters
-    ----------
-    arr : np.ndarray
-        Array to calculate the average of.
-    weights : np.ndarray or None, optional
-        Weights. If None, all weights=1. The default is None.
-    power : np.ndarray, or float, or None, optional
-        Power for averaging. If None, power=1. The default is None.
-    axis : None or int or tuple of ints, optional
-        See np.average. The default is None.
-
-    Returns
-    -------
-    np.ndarray or float
-        Averaged array.
-
-    """
-    if power is None:
-        power = 1.
-        
-    return (np.sum(arr**power * weights, axis=axis) / 
-            np.sum(weights, axis=axis))**(1. / power)
 
 
 """ #!!!
