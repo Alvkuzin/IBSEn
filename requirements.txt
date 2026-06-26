@@ -6,5 +6,5 @@ joblib
 xarray
 imageio
 imageio-ffmpeg
-naima
+naima @ git+https://github.com/zblz/naima.git
 PySide6

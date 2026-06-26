@@ -2,7 +2,7 @@
 import numpy as np
 from numpy import pi, sin, cos
 from scipy.optimize import brentq#, least_squares
-from scipy.integrate import solve_ivp
+from scipy.integrate import solve_ivp, cumulative_trapezoid
 from scipy.interpolate import interp1d
 from astropy import constants as const
 from ibsen.get_obs_data import get_parameters, known_names
@@ -408,7 +408,7 @@ class OpticalStar: #!!!
         u_dens = SIGMA_BOLTZ * self.Topt**4 / C_LIGHT * factor # checked!
         return u_dens
         
-    def _delta_eff(self, true_an=0.):
+    def _delta_eff_novec(self, true_an=0.):
         h_mult = enhanche_jump(t = true_an, # enhanceent along true anomaly
                                t1_disk=-pi/2. + self.alpha_disk, 
                                t2_disk=pi/2. + self.alpha_disk,
@@ -416,13 +416,23 @@ class OpticalStar: #!!!
                                param_to_enh=self.h_enh)
         return self.delta * h_mult
     
-    def _f_d_eff(self, true_an=0.):
+    def _delta_eff(self, true_an=0.):
+        true_an = np.atleast_1d(true_an)
+        res = np.array([self._delta_eff_novec(_nu) for _nu in true_an])
+        return res.item() if res.size == 1 else res
+    
+    def _f_d_eff_novec(self, true_an=0.):
         p_mult = enhanche_jump(t = true_an, # enhanceent along true anomaly
                                t1_disk=-pi/2. + self.alpha_disk, 
                                t2_disk=pi/2. + self.alpha_disk,
                                times_enh=self.p_enh_true_an, 
                                param_to_enh=self.p_enh)
         return self.f_d * p_mult
+    
+    def _f_d_eff(self, true_an=0.):
+        true_an = np.atleast_1d(true_an)
+        res = np.array([self._f_d_eff_novec(_nu) for _nu in true_an])
+        return res.item() if res.size == 1 else res
     
     def disk_height(self, r, true_an=0.):
         """
@@ -615,7 +625,7 @@ class Winds: # !!!
         if t_precalculate is not None:
             self.t_precalculate = t_precalculate
         else:
-            self.t_precalculate = self.orbit.t_from_true_an(np.linspace(-np.pi, np.pi, 501))
+            self.t_precalculate = self.orbit.t_from_true_an(np.linspace(-np.pi, np.pi, 201))
         self.k_time = k_time
         self.alpha_interaction = alpha_interaction
         
@@ -705,82 +715,36 @@ class Winds: # !!!
             _t_ev = self.orbit.t_from_true_an(nu = np.linspace(-0.75*pi, 0.75*pi))
         else:
             _t_ev = np.asarray(_t_ev)
-        # def _rhs(t, f_add, k_time, eps1, return_rpe=False):
-        #     r_sp = self.orbit.r(t)
-        #     t_kepl = self.orbit.kepl_period(t)
-        #     r_sp_vec = self.orbit.vector_sp(t)
-        #     _nu = self.orbit.true_an(t)
-        #     nwind = n_from_v(r_sp_vec) # unit vector from S to P
-        #     pres_p = lambda r_se: self.pulsar.wind_pressure(r_from_p = np.abs(r_sp - r_se))
-        #     pres_ext = lambda r_se: (self.star.polar_wind_pressure(r_from_s = r_se) + 
-        #                              self.star.decr_disk_pressure(vec_r_from_s = nwind * r_se, true_an=_nu) )
-        #     to_solve = lambda r_se: pres_ext(r_se) + f_add - pres_p(r_se)
-        #     # rse = brentq(to_solve, self.star.Ropt, r_sp*(1-1e-8), rtol=1e-7)
-        #     try:
-        #         rse = brentq(to_solve, r_sp*0.01, r_sp*(1-1e-6), rtol=1e-7)
-        #     except:
-        #         print(to_solve(r_sp*0.5), to_solve(r_sp*0.8), to_solve(r_sp*(1-1e-6)))
-        #         print(f_add)
-        #         print(t / DAY)
-        #     rse = max(self.star.Ropt, rse)
-        #     char_outer_p = pres_ext(r_se = r_sp)
-        #     rpe = np.abs(r_sp - rse)
-        #     if return_rpe:
-        #         return rpe
-        #     if f_add <= 0.0:
-        #         return 0.
-        #     return (
-        #             (-(f_add - 1e-5*char_outer_p) / k_time +
-        #             eps1 * pres_ext(rse) * (rpe / self.orbit.r_periastr)**(-3)
-        #             )  / (t_kepl)
-        #             )
-        
-        def _rhs(t, f_add, k_time, eps1, return_rpe=False):
-            # r_sp = self.orbit.r(t)
-            # t_kepl = self.orbit.kepl_period(t)
-            # r_sp_vec = self.orbit.vector_sp(t)
-            _nu = self.orbit.true_an(t)
-            # nwind = n_from_v(r_sp_vec) # unit vector from S to P
-            # pres_p = lambda r_se: self.pulsar.wind_pressure(r_from_p = np.abs(r_sp - r_se))
-            vec_sp = self.orbit.vector_sp(t)
-            r_sp = absv(vec_sp)
-            pres_ext = lambda r_se: (self.star.polar_wind_pressure(r_se) + 
-                                     self.star.decr_disk_pressure(vec_r_from_s = n_from_v(vec_sp)*r_se, true_an=_nu) )
-            pres_p = lambda r_se: self.pulsar.wind_pressure(r_from_p = np.abs(r_sp - r_se))
-            if return_rpe:
-                to_solve = lambda r_se: pres_ext(r_se) + f_add - pres_p(r_se)
-                rse = brentq(to_solve, self.star.Ropt, r_sp*(1-1e-8), rtol=1e-7)
-                try:
-                    rse = brentq(to_solve, r_sp*0.49, r_sp*(1-1e-6), rtol=1e-7)
-                except:
-                    print(to_solve(r_sp*0.5), to_solve(r_sp*0.8), to_solve(r_sp*(1-1e-6)))
-                    print(f_add)
-                    print(t / DAY)
-                rse = max(self.star.Ropt, rse)
-                rpe = np.abs(r_sp - rse)
-                return rpe
-            if f_add <= 0.0:
-                return 0.
-            t_kepl = self.orbit.kepl_period(t)
-            t_kepl = 10.*DAY
-            char_outer_p = pres_ext(r_se = r_sp)
-            return (
-                    (-(f_add - 1e-5*char_outer_p) +
-                    eps1 * pres_ext(r_sp) * (self.orbit.r_periastr/r_sp)**3
-                    )  / (t_kepl * k_time)
-                    )
-        
-        t_i = _t_ev.min()
-        t_f = _t_ev.max()
 
-
-        sol = solve_ivp(fun = _rhs, t_span = [t_i, t_f], y0 = (1e-17,), dense_output=True,
-                        args=(self.k_time, self.alpha_interaction, False), atol=1e-10, rtol=1e-6, )
-        f_adds = sol.sol(_t_ev)[0]
+        pres_ext_t = lambda t_pr: (self.star.polar_wind_pressure(self.orbit.r(t_pr)) + 
+                                 self.star.decr_disk_pressure(vec_r_from_s = self.orbit.vector_sp(t_pr).T,
+                                                              true_an=self.orbit.true_an(t_pr)) 
+                                 )
+        
+        t_ch = 10.*DAY * self.k_time
+        _exp = np.exp(_t_ev/t_ch)
+        integrand = pres_ext_t(_t_ev) * np.where(_exp<1e-5, 0.0, _exp) * (self.orbit.r_periastr/self.orbit.r(_t_ev))**3
+        q_ = cumulative_trapezoid(integrand, _t_ev, initial=0.0)
+        f_adds = self.alpha_interaction * np.exp(-_t_ev/t_ch)/t_ch * q_
         rpes_new = np.empty(f_adds.shape)
         for (i, f), t in zip(enumerate(f_adds), _t_ev):
-            rpes_new[i] = _rhs(t=t, f_add=f, k_time=self.k_time,
-                               eps1=self.alpha_interaction, return_rpe=True)
+            _vec_sp = self.orbit.vector_sp(t)
+            r_sp = absv(_vec_sp)
+            _nu = self.orbit.true_an(t)
+            pres_ext_se = lambda r_se: (self.star.polar_wind_pressure(r_se) + 
+                                     self.star.decr_disk_pressure(vec_r_from_s = n_from_v(_vec_sp)*r_se, 
+                                                                  true_an=_nu))
+            pres_p = lambda r_se: self.pulsar.wind_pressure(r_from_p = np.abs(r_sp - r_se))
+            to_solve = lambda r_se: pres_ext_se(r_se) + f - pres_p(r_se)
+            try:
+                rpes_new[i] = r_sp-brentq(to_solve, r_sp*0.49, r_sp*(1-1e-6))
+            except:
+                print(to_solve(r_sp*0.5), to_solve(r_sp*0.8), to_solve(r_sp*(1-1e-6)))
+                print(f)
+                print(t / DAY)
+                raise ValueError("Fail of brentq in winds-hyst")
+                
+
         self.rpes_hyst = rpes_new
         
 
