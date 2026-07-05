@@ -548,3 +548,67 @@ def fit_norm_here( x_obs, y_obs, dy_obs,
 
     # transpose list of tuples into tuple of lists or whatever
     return tuple(map(list, zip(*results)))
+
+def confidence_band(model, x, result, eps=None, alpha=1.0):
+    """
+    Calculate the linearized confidence band for a least_squares fit.
+
+    Parameters
+    ----------
+    model : callable
+        model(x, *params) -> y
+    x : ndarray
+        Grid on which to evaluate the confidence band.
+    result : scipy.optimize.OptimizeResult
+        Output of scipy.optimize.least_squares.
+    eps : float or ndarray, optional
+        Relative finite-difference step(s). Default is sqrt(machine eps).
+    alpha : float
+        Number of sigma (1 -> 68%, 2 -> 95%, etc.)
+
+    Returns
+    -------
+    y_best : ndarray
+        Best-fit model.
+    y_low : ndarray
+        Lower confidence band.
+    y_high : ndarray
+        Upper confidence band.
+    sigma_y : ndarray
+        One-sigma uncertainty.
+    """
+
+    p = np.asarray(result.x)
+    npar = len(p)
+
+    if eps is None:
+        eps = np.sqrt(np.finfo(float).eps)
+
+    eps = np.broadcast_to(eps, npar)
+
+    # Parameter covariance
+    J = result.jac
+    ndof = len(result.fun) - npar
+    s2 = 2 * result.cost / ndof
+    pcov = s2 * np.linalg.pinv(J.T @ J)
+
+    # Best-fit model
+    y_best = model(x, *p)
+
+    # Jacobian of the model
+    G = np.empty((len(x), npar))
+
+    for i in range(npar):
+        step = eps[i] * max(abs(p[i]), 1.0)
+
+        p1 = p.copy()
+        p2 = p.copy()
+
+        p1[i] += step
+        p2[i] -= step
+
+        G[:, i] = (model(x, *p1) - model(x, *p2)) / (2 * step)
+
+    sigma = np.sqrt(np.einsum("ij,jk,ik->i", G, pcov, G))
+
+    return y_best, y_best - alpha * sigma, y_best + alpha * sigma, sigma

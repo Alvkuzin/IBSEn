@@ -65,6 +65,15 @@ default_params = { "sys_name": "psrb",
               }
 
 def lc_from_g(g0, fd, d0, times=None, parall=True, ncores=None, **add_kwargs):
+    """
+    Initializes class `LightCurve` and applies the `calculate` method.
+    
+    g0, fd, d0, times, parall, ncores --- explicit arguments for arguments 'gamma_max', 'f_d',
+    'delta', 'times', 'to_parall', 'n_cores'.
+    
+    add_kwargs --- the rest of the arguments for initializing LightCurve.
+    
+    """
     if parall:
         if ncores is None:
             ncores = 10
@@ -88,6 +97,35 @@ def lc_xray_fitter(t_xray, f_xray, df_xray,
                    additive_c_tev=False,
                    parall=True, ncores=None,
                    **add_kwargs):
+    """
+    Fits observational light curve to a model, obtaining  best-fit 
+    gamma_max, f_d, delta.
+
+    Parameters
+    ----------
+    t_xray, f_xray, df_xray : 1d np.arrays of the same length, or lists of 
+        arrays. Observational data for X-rays.
+    g0, f0, d0 --- initial guesses for gamma_max, f_d, delta.
+    use_tevs : bool. Whether to calculate TeVs in the model and add them to the
+        residuals which are being minimized. If False, only synchrotron mechanism 
+        is used. 
+    t_h, f_h, df_h : obs. data for TeVs. Same structure as for X-rays.
+    relative_tev_importance : the total residuals is defined as a concatenated
+        array of (1-relative_tev_importance) * x-ray residuals AND
+        relative_tev_importance * TeV residuals.
+    eps : Passed to `least_squares`.
+    additive_c_xray, additive_c_tev : bools. Whether to assume that the obs.
+        data has a constant shift relative to the model.
+    parall. ncores : for the LightCurve's 'to_parall' and 'n_cores'.
+    **add_kwargs : dict. All additional arguments for `LightCurve`.
+
+    Returns
+    -------
+    tuple: (if fit was successful (bool), 
+            gamma_max best (float), f_d best (float), delta best (float), 
+            final dict of parameters.)
+
+    """
   
     if not use_tevs:
         try:
@@ -151,7 +189,7 @@ def lc_xray_fitter(t_xray, f_xray, df_xray,
         
     
     sol = least_squares(fun = _residuals, x0 = (np.log10(g0-1.), np.log10(f0), d0),
-                        bounds = ([-2., 1.0, 0.001], [0.4, 4.5, 0.15]), 
+                        bounds = ([-2., 0.0, 0.001], [0.4, 4.5, 0.15]), 
                                                 xtol=eps,
                                                 ftol=eps,
                                                 gtol=eps,
@@ -166,6 +204,205 @@ def lc_xray_fitter(t_xray, f_xray, df_xray,
         return True, g_sol, f_sol, d_sol, _params_output
     else:
         return False, g0, f0, d0, _params_output
+    
+PARAMS = {
+    "gamma_max": {
+        "forward": lambda x: np.log10(x - 1.0),
+        "inverse": lambda x: 1.0 + 10**x,
+        "bounds": (-2.0, 0.4),
+    },
+    "f_d": {
+        "forward": np.log10,
+        "inverse": lambda x: 10**x,
+        "bounds": (0.0, 5.5),
+        # "bounds": (3.0, 7.5), #!!!
+        
+    },
+    "delta": {
+        "forward": lambda x: x,
+        "inverse": lambda x: x,
+        "bounds": (0.001, 0.15),
+    },
+    "alpha_disk_deg": {
+        "forward": lambda x: x,
+        "inverse": lambda x: x,
+        "bounds": (5.0, 25.0),
+    },
+    "incl_disk_deg": {
+        "forward": lambda x: x,
+        "inverse": lambda x: x,
+        "bounds": (-70.0, -10.0),
+    },
+    
+}
+
+
+def make_lc(times, parall=True, ncores=None, **params):
+    """
+    Build and calculate a LightCurve.
+    """
+
+    if parall:
+        if ncores is None:
+            ncores = 10
+        else:
+            ncores = None
+
+    params = params.copy()
+    params["to_parall"] = parall
+    params["n_cores"] = ncores
+
+    lc = LightCurve(times=times, **params)
+    lc.calculate()
+    return lc
+
+
+def lc_xray_fitter_gen(
+    t_xray, f_xray, df_xray,
+    to_fit, init_guess,
+    use_tevs=False, t_h=None, f_h=None, df_h=None,
+    relative_tev_importance=0.5,
+    eps=1e-3,
+    additive_c_xray=False, additive_c_tev=False,
+    parall=True, ncores=None,
+    return_least_sq_res=False,
+    **fixed_params,
+):
+
+    try:
+        t_all_x = np.concatenate(t_xray) * DAY
+    except ValueError:
+        t_all_x = t_xray * DAY
+
+    if use_tevs:
+        try:
+            t_all_h = np.concatenate(t_h) * DAY
+        except ValueError:
+            t_all_h = t_h * DAY
+
+        t_grid = build_timegrid_psrb(
+            np.sort(np.concatenate((t_all_x, t_all_h)))
+        )
+    else:
+        t_grid = build_timegrid_psrb(t_all_x)
+
+
+    if use_tevs:
+        bands = [[3e2, 1e4], [4e11, 1e13]]
+        mechanisms = ["s", "i"]
+    else:
+        bands = [[3e2, 1e4]]
+        mechanisms = ["s"]
+
+    params_here = fixed_params.copy()
+    params_here["bands"] = bands
+    params_here["mechanisms"] = mechanisms
+
+    x0 = []
+    lower = []
+    upper = []
+
+    for name in to_fit:
+        spec = PARAMS[name]
+        x0.append(spec["forward"](init_guess[name]))
+        lo, hi = spec["bounds"]
+        lower.append(lo)
+        upper.append(hi)
+
+    def _residuals(x):
+
+        params = params_here.copy()
+
+        for name, val in zip(to_fit, x):
+            params[name] = PARAMS[name]["inverse"](val)
+
+        lc = make_lc(
+            times=t_grid,
+            parall=parall,
+            ncores=ncores,
+            **params,
+        )
+
+        ################ X-rays ################
+
+        xray_model = lc.fluxes[:, 0]
+
+        *_, xray_norm = fit_norm_here(
+            x_obs=t_xray,
+            y_obs=f_xray,
+            dy_obs=df_xray,
+            x_model=t_grid / DAY,
+            y_model=xray_model,
+            norm_init=Norm0,
+            grid_scale="lin",
+            add_const=additive_c_xray,
+            c_init=0.0,
+        )
+
+        resid_x = residuals_multi(
+            t_xray,
+            f_xray,
+            df_xray,
+            t_grid / DAY,
+            xray_norm,
+            "linear",
+            add_dy_multi=0.1,
+        )
+
+        if not use_tevs:
+            return resid_x
+
+        ################ TeV ################
+
+        tev_model = lc.fluxes[:, 1]
+
+        *_, tev_norm = fit_norm_here(
+            x_obs=t_h,
+            y_obs=f_h,
+            dy_obs=df_h,
+            x_model=t_grid / DAY,
+            y_model=tev_model,
+            norm_init=Norm0,
+            grid_scale="lin",
+            add_const=additive_c_tev,
+            c_init=0.0,
+        )
+
+        resid_h = residuals_multi(
+            t_h,
+            f_h,
+            df_h,
+            t_grid / DAY,
+            tev_norm,
+            "linear",
+            add_dy_multi=0.1,
+        )
+
+        return np.concatenate([
+            (1 - relative_tev_importance) * resid_x,
+            relative_tev_importance * resid_h,
+        ])
+
+
+    sol = least_squares(
+        _residuals,
+        x0=x0,
+        bounds=(lower, upper),
+        method="trf",
+        xtol=eps,
+        ftol=eps,
+        gtol=eps,
+    )
+
+
+    best_params = fixed_params.copy()
+
+    for name, val in zip(to_fit, sol.x):
+        best_params[name] = PARAMS[name]["inverse"](val)
+    if return_least_sq_res:
+        sol.success, best_params, sol
+        
+    return sol.success, best_params
 
 
 def simple_optimizer(init_guess=None, eps=1e-2, **add_kwargs):

@@ -184,7 +184,7 @@ full_spec : bool, optional
         Source distance (cm); if None and a named system is used, taken from
         system defaults.
     delta_power : float, optional
-        Doppler weight exponent (segment integration). Default 3.
+        Doppler weight exponent (segment integration). Default 4.
     lorentz_boost : bool, optional
         Apply comoving-frame treatment/boosting. Default True.
     simple : bool, optional
@@ -315,7 +315,7 @@ class LightCurve: # !!!
                 opt_b_model = 'linear', opt_b_ref = 0, opt_r_ref = 1e12,
                              
                              
-                delta_power=3, lorentz_boost=True, method='full',          # spec
+                delta_power=4, lorentz_boost=True, method='full',          # spec
                 abs_photoel=True, abs_gg=False, abs_gg_filename=None, nh_tbabs=0.8,
                 ic_ani=False, mechanisms=['syn', 'ic'],
                 mode='int',

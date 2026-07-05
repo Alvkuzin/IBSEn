@@ -47,7 +47,8 @@ def test_func(method='simple', ibs_ndims=(2, ), coolings=('stat_ibs',)):
             print('tot number of e on IBS = ', elev.ntot)
                 
             spec = SpectrumIBS(sys_name='psrb', abs_photoel=True, abs_gg=abs_gg,
-                               els=elev, method=method, mechanisms=['syn', 'ic'])
+                               els=elev, method=method, mechanisms=['syn', 'ic'],
+                               delta_power=3.)
             e_calc = np.concatenate(((loggrid(3e2/1.2, 1e4*1.2, 37)), loggrid(4e11/1.2, 1e13*1.2, 37)))
             spec.calculate(e_ph = e_calc)
             print('from spec, flux 0.3-10 keV = ', spec.flux(300, 1e4, epow=1))
@@ -60,6 +61,7 @@ def test_func(method='simple', ibs_ndims=(2, ), coolings=('stat_ibs',)):
                             cooling=cooling,
                             f_d=f_d,  eta_a=1, 
                             abs_photoel=True,
+                            delta_power=3.,
                             puls_b_ref=puls_b_ref, puls_r_ref=1e13, abs_gg=abs_gg,
                             ibs_ndim=ibs_ndim,
                             method=method, mechanisms=['syn', 'ic'])

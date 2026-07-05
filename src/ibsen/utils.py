@@ -795,7 +795,7 @@ def lor_trans_Teff_iso(Teff_iso, gamma): # assuming u ~ T^4
 
 def lor_trans_vec(vec_n, vec_beta, eps=1e-5):
     """
-    Lorentz tranformes a spatial unit vector vec_n (in lab frame) into \
+    Lorentz tranformes a spatial unit vector vec_n (in lab frame) into 
     a system moving with vec_beta. Everywhere where |beta| < eps, the vector
     is left the same.
     
@@ -1553,7 +1553,9 @@ import matplotlib.pyplot as plt
 
 def plot_with_gradient(fig, ax, xdata, ydata, some_param, colorbar=False, lw=2,
                        ls='-', colorbar_label='grad', minimum=None, maximum=None,
-                       scatter=False, marker='o', s=20, alpha=1.0, cmap='coolwarm'):
+                       scatter=False, marker='o', s=20, alpha=1.0, cmap='coolwarm',
+                       loglog=False,
+                       setlims=True):
     """
     Draw (xdata, ydata) colored by some_param.
     If scatter=True -> per-point scatter; else -> continuous line with gradient.
@@ -1591,11 +1593,17 @@ def plot_with_gradient(fig, ax, xdata, ydata, some_param, colorbar=False, lw=2,
             lc.set_alpha(alpha)
             line = ax.add_collection(lc)
             mappable = line
-    range_x = np.max(xdata) - np.min(xdata)
-    range_y = np.max(ydata) - np.min(ydata)
     
-    ax.set_xlim(np.min(xdata) - 0.1 * range_x, np.max(xdata) + 0.1 * range_x)
-    ax.set_ylim(np.min(ydata) - 0.1 * range_y, np.max(ydata) + 0.1 * range_y)
+    if setlims:
+        range_x = np.max(xdata) - np.min(xdata)
+        range_y = np.max(ydata) - np.min(ydata)
+        
+        ax.set_xlim(np.min(xdata) - 0.1 * range_x, np.max(xdata) + 0.1 * range_x)
+        ax.set_ylim(np.min(ydata) - 0.1 * range_y, np.max(ydata) + 0.1 * range_y)
+    if loglog:
+        ax.set_xscale('log')
+        ax.set_yscale('log')
+        
 
     if colorbar:
         fig.colorbar(mappable, ax=ax, label=colorbar_label)

@@ -402,8 +402,8 @@ class OpticalStar: #!!!
               distance r_from_s [erg / cm^3].
 
         """
-        # factor = 2. * (1. - (1. - (r_star / r_from_s)**2)**0.5 ) # checked!
-        factor = (self.Ropt / r_from_s)**2 # checked!
+        factor = 2. * (1. - (1. - (self.Ropt / r_from_s)**2)**0.5 ) # checked!
+        # factor = (self.Ropt / r_from_s)**2 # checked!
         
         u_dens = SIGMA_BOLTZ * self.Topt**4 / C_LIGHT * factor # checked!
         return u_dens

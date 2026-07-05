@@ -269,7 +269,7 @@ docstr_specibs =  f"""
         given explicitly or be in `sys_name`.
     delta_power : float, optional
         Exponent of the Doppler weight for SEDs used when summing up segments,
-        i.e. weight \propto \delta^{{delta_power}}. Default 3. 
+        i.e. weight \propto \delta^{{delta_power}}. Default 4. 
     lorentz_boost : bool, optional
         If True, transform fields and electron spectra to the comoving frame
         before radiation calculation and use comoving scattering angles for
@@ -371,7 +371,7 @@ class SpectrumIBS: #!!!
                  method='full',
                  ic_ani=False, 
                  sys_name=None, sys_params=None,
-                 delta_power=3, lorentz_boost=True,
+                 delta_power=4, lorentz_boost=True,
                  abs_photoel=False, abs_gg=False, 
                  nh_tbabs=0.8, 
                  distance = None,
