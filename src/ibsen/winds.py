@@ -21,6 +21,19 @@ M_SOLAR = float(const.M_sun.cgs.value)
 PARSEC = float(const.pc.cgs.value)
 DAY = 86400
 
+def add_arrow(ax, x, y, i, span=5, **kwargs):
+    ax.annotate(
+        "",
+        xy=(x[i+span], y[i+span]),
+        xytext=(x[i-span], y[i-span]),
+        arrowprops=dict(
+            arrowstyle="-|>",
+            shrinkA=0,
+            shrinkB=0,
+            **kwargs
+        ),
+    )
+
 pulsar_docstring =     """
     Defines dependencies of the pulsar magnetic field and winds on
     distance.
@@ -625,7 +638,7 @@ class Winds: # !!!
         if t_precalculate is not None:
             self.t_precalculate = t_precalculate
         else:
-            self.t_precalculate = self.orbit.t_from_true_an(np.linspace(-np.pi, np.pi, 201))
+            self.t_precalculate = self.orbit.t_from_true_an(np.linspace(-np.pi-1e-3, np.pi+1e-3, 201))
         self.k_time = k_time
         self.alpha_interaction = alpha_interaction
         
@@ -1103,7 +1116,9 @@ class Winds: # !!!
     def peek(self, ax=None,
              showtime = None,
              plot_rs = True,
-             t_forwinds=0.):
+             t_forwinds=0.,
+             special_contours=None,
+             kwargs_special_contours={}):
         """
         Quick look at the orbit, disk plane, and pressures.
 
@@ -1176,12 +1191,17 @@ class Winds: # !!!
         xx2, yy2, zz2 = vec_disk2                                                 
         ax0.plot([xx1, xx2], [yy1, yy2], color='orange', ls='--', lw=2)    
         
+        add_arrow(ax0, orb_x, orb_y, 20, span=2,  color='C0', lw=1.5)
+        add_arrow(ax0, orb_x, orb_y, 60, span=2,  color='C0', lw=1.5)
+        add_arrow(ax0, orb_x, orb_y, 96, span=2,  color='C0', lw=1.5)
+        add_arrow(ax0, orb_x, orb_y, 136, span=2,  color='C0', lw=1.5)
+        
+        ###### ------------ tabulating pressure values ------------------ #####
+        
         Nx = 301
         Ny = 201
         x_forp = np.linspace(np.min(orb_x)*3, np.max(orb_x)*4, Nx)
         y_forp = np.linspace(np.min(orb_y)*2, np.max(orb_y)*2, Ny)
-        
-        ###### ------------ tabulating pressure values ------------------ #####
 
         XX, YY = np.meshgrid(x_forp, y_forp, indexing='ij')
         disk_ps = np.zeros((x_forp.size, y_forp.size))
@@ -1208,7 +1228,9 @@ class Winds: # !!!
         disk_ps[disk_ps < np.nanmax(disk_ps)-4.5] = np.nan
         ax0.contourf(XX, YY, disk_ps, levels=n_levels, cmap=custom_cmap)          
         
-        # ax0.contour(XX, YY, pres_diff,  levels=[0], colors='k')
+        if special_contours is not None:
+            ax0.contour(XX, YY, disk_ps, levels=special_contours, 
+                        **kwargs_special_contours)
 
         ax0.set_xlim(-1.2*x_scale, 1.2*min(x_scale, self.orbit.r_periastr) )
         ax0.set_ylim(-1.2*y_scale, 1.2*y_scale) 

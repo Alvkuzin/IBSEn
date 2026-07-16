@@ -28,10 +28,26 @@ _tabdata = _here / "absorp_tab"
 ### ----------------- For photoelectric absorption ------------------------ ###
 file_phel = _tabdata / 'sgm_tbabs_new.txt'
 da_phel = np.genfromtxt(file_phel, skip_header=1, delimiter = ', ')
-_e, _sgm = da_phel[:, 0], 10**da_phel[:, 1]
+_e, _sgm = da_phel[:, 0], 10**da_phel[:, 1] # e in keV; sigma in Mbarn
 per_ = np.argsort(_e)
 _e, _sgm = _e[per_], _sgm[per_]
 spl_phel = interp1d(np.log10(_e), np.log10(_sgm), 'linear')
+
+file_phe_sol = _tabdata / 'tbabs_se3_solar.txt'
+da_phe_sol = np.genfromtxt(file_phe_sol, skip_header=1, delimiter = ', ')
+_e_sol, _sgm_sol = da_phe_sol[:, 0], da_phe_sol[:, 1] / da_phe_sol[:, 0]**3 / 1e6 # e in keV; sigma in Mbarn
+per_sol = np.argsort(_e_sol)
+_e_sol, _sgm_sol = _e_sol[per_sol], _sgm_sol[per_sol]
+spl_phe_sol = interp1d(np.log10(_e_sol), np.log10(_sgm_sol), 'linear')
+
+file_phe_wilm = _tabdata / 'tbabs_se3_wilm.txt'
+da_phe_wilm = np.genfromtxt(file_phe_wilm, skip_header=1, delimiter = ', ')
+_e_wilm, _sgm_wilm = da_phe_wilm[:, 0], da_phe_wilm[:, 1] / da_phe_wilm[:, 0]**3 / 1e6  # e in keV; sigma in Mbarn
+per_wilm = np.argsort(_e_wilm)
+_e_wilm, _sgm_wilm = _e_wilm[per_wilm], _sgm_wilm[per_wilm]
+spl_phe_wilm = interp1d(np.log10(_e_wilm), np.log10(_sgm_wilm), 'linear')
+
+
 
 ### ----------------- For gg-absorption PSR B1259-63 ----------------------- ###
 name_gg_psrb = _tabdata / "gg_abs_psrb.nc"
@@ -66,7 +82,7 @@ def sigma_gg(e_star, e_g, mu):
 
 
 
-def abs_photoel(E, Nh): 
+def abs_photoel(E, Nh, abund='wilm'): 
     """    
     Photoelectric absorption TBabs: https://arxiv.org/pdf/astro-ph/0008425
     Parameters
@@ -75,36 +91,55 @@ def abs_photoel(E, Nh):
         Photon energy [eV].
     Nh : float
         Hydrogen column densiry as in XSPEC [10^22 g cm^-2].
+    abuns : str
+        Which element abundance to use. Use 'wilm' for the `ISM` abundance from
+        the cited paper from tab. B2; 'solar' for the solar abundance from 
+        there.
 
     Returns
     -------
     Dimentionless multiplicative absorption coef = exp(-tau):  0 < coef < 1.
 
     """
-
-    e_min, e_max = np.min(_e), np.max(_e)
-    E_kev = E / 1e3 #/ 1.6e-9
-    if isinstance(E_kev, np.ndarray):
-        E_low = E_kev[E_kev <= e_min]
-        E_good = E_kev[np.logical_and(E_kev < e_max, E_kev > e_min)]
-        E_high = E_kev[E_kev > e_max]
-        # sgm_sm = 10**spl_sgm(np.log10(E_good)) * 1e6 * 1e-24 # in cm^2
-        sgm_sm = 10**spl_phel(np.log10(E_good)) * 1e6 * 1e-24 # in cm^2
+    abund = abund.lower()
+    if abund == 'old':
+        e_use, logsgm_spl_use = _e, spl_phel
+    elif abund in ('wilm', 'wilms', 'ism'):
+        e_use, logsgm_spl_use = _e_wilm, spl_phe_wilm
+    elif abund in ('sol', 'solar'):
+        e_use, logsgm_spl_use = _e_sol, spl_phe_sol
+        
+    e_min, e_max = np.min(e_use), np.max(e_use)
+    E_kev = np.asarray(E) / 1e3 
+    absorp = np.where(E_kev < e_min, 0.0, 1.0)
+    where_defined = (E_kev >= e_min) & (E_kev <= e_max)
+    
+    if np.any(where_defined):
+        sgm_sm = 10**logsgm_spl_use(np.log10(E_kev[where_defined])) * 1e6 * 1e-24
+        absorp[where_defined] = np.exp(-sgm_sm * Nh * 1e22)
+    
+    return absorp.item() if np.ndim(E_kev) == 0 else absorp
+    
+    # if isinstance(E_kev, np.ndarray):
+    #     E_low = E_kev[E_kev <= e_min]
+    #     E_good = E_kev[np.logical_and(E_kev < e_max, E_kev > e_min)]
+    #     E_high = E_kev[E_kev > e_max]
+    #     sgm_sm = 10**logsgm_spl_use(np.log10(E_good)) * 1e6 * 1e-24 # in cm^2
         
     
-        a_low = np.zeros(E_low.size)
-        a_good = np.exp(-sgm_sm * Nh * 1e22)
-        a_high = np.zeros(E_high.size) + 1
-        absorp = np.concatenate((a_low, a_good, a_high))
-    else:
-        if E_kev < e_min:
-            absorp = 0
-        elif E_kev > e_max:
-            absorp = 1
-        else:
-            sgm_sm = 10**spl_phel(np.log10(E_good)) * 1e6 * 1e-24 # in cm^2
-            absorp = np.exp(-sgm_sm * Nh * 1e22)
-    return absorp
+    #     a_low = np.zeros(E_low.size)
+    #     a_good = np.exp(-sgm_sm * Nh * 1e22)
+    #     a_high = np.zeros(E_high.size) + 1
+    #     absorp = np.concatenate((a_low, a_good, a_high))
+    # else:
+    #     if E_kev < e_min:
+    #         absorp = 0
+    #     elif E_kev > e_max:
+    #         absorp = 1
+    #     else:
+    #         sgm_sm = 10**logsgm_spl_use(np.log10(E_good)) * 1e6 * 1e-24 # in cm^2
+    #         absorp = np.exp(-sgm_sm * Nh * 1e22)
+    # return absorp
 
 def f_helper(mu0, d0):
     """
@@ -228,21 +263,21 @@ def tau_gg_iso_2d(eg, x, y, R_star, T_star, incl_los, nu_los, fast=False):
     n_init = n_from_v(vec_init)
     n_los = n_from_v(rotated_vector(alpha=nu_los, incl=incl_los))
     mu_init = mydot(n_init, n_los)
-    dist_to_s = lambda l_: np.sqrt(r_init**2 + l_**2 + 2 * r_init * l_ * mu_init) 
+    dist_to_s = lambda l_: np.sqrt(r_init**2 + l_**2 + 2. * r_init * l_ * mu_init) 
     exp_ = lambda e_: np.exp(-MC2E * e_ / K_BOLTZ / T_star)
     n_ph_here_reduced = lambda e_: (
          e_**2 *
         exp_(e_) / (1 - exp_(e_)) 
         )
     mu_imp = lambda l_: np.sqrt(1.0 - r_init**2 / dist_to_s(l_)**2 *
-                                (1 - mu_init**2)
+                                (1. - mu_init**2)
                                 )
                                     
     sigma_here = lambda e_, l_: (
         sigma_gg(e_star = e_ , e_g = eg, mu = mu_imp(l_))
                                       )
     
-    overall_coef = 2*pi * (MC2E / H_PLANCK / C_LIGHT)**3
+    overall_coef = 2. * pi * (MC2E / H_PLANCK / C_LIGHT)**3
     under_int = lambda e_, l_: ( n_ph_here_reduced(e_) *
                                      sigma_here(e_, l_) *
                                      (1 - mu_imp(l_)) * 
@@ -251,7 +286,7 @@ def tau_gg_iso_2d(eg, x, y, R_star, T_star, incl_los, nu_los, fast=False):
 
     low_inner = lambda l_: 2 / eg / (1 - mu_imp(l_)) #* (1 + 1e-6)
     # hi_inner = lambda l_: low_inner(l_) * 1e3
-    res = 0
+    res = 0.0
     ### improving integration by refining the grid over e and l
     if not fast:
         for dist_edges in ((0., 1.), (1., 10.), (10., 100.)):
@@ -264,7 +299,7 @@ def tau_gg_iso_2d(eg, x, y, R_star, T_star, incl_los, nu_los, fast=False):
                 res += dblquad( under_int, d_l * r_init, d_u * r_init,
                  low_l, up_l, epsrel = 1e-3)[0] * overall_coef
     if fast: ### accuracy of about 20%
-        res = dblquad( under_int, 0, 100 * r_init,
+        res = dblquad( under_int, 0., 100. * r_init,
          low_inner, lambda l_: low_inner(l_)*1e3, epsrel = 1e-3)[0] * overall_coef
     return res
 

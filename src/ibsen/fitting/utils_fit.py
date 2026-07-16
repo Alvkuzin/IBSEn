@@ -549,7 +549,104 @@ def fit_norm_here( x_obs, y_obs, dy_obs,
     # transpose list of tuples into tuple of lists or whatever
     return tuple(map(list, zip(*results)))
 
-def confidence_band(model, x, result, eps=None, alpha=1.0):
+def confidence_band_samples(model, x, samples,
+                            conf=0.68,
+                            nsamples=None,
+                            rng=None):
+    """
+    Compute a confidence band from posterior samples.
+
+    Parameters
+    ----------
+    model : callable
+        model(x, *pars)
+    x : ndarray
+        X grid.
+    samples : (Nsamples, Npar) ndarray
+        Posterior samples.
+    conf : float
+        Credible interval (0.68, 0.95, ...).
+    nsamples : int or None
+        Number of samples to use. If None, use all.
+    rng : int or np.random.Generator
+
+    Returns
+    -------
+    ymed : ndarray
+        Posterior median model.
+    ylow : ndarray
+        Lower credible band.
+    yhi : ndarray
+        Upper credible band.
+    """
+
+    samples = np.asarray(samples)
+
+    if nsamples is not None and nsamples < len(samples):
+        rng = np.random.default_rng(rng)
+        ind = rng.choice(len(samples), nsamples, replace=False)
+        samples = samples[ind]
+
+    models = np.asarray([
+        model(x, *pars)
+        for pars in samples
+    ])
+
+    alpha = 100 * (1 - conf) / 2
+
+    ymed = np.percentile(models, 50, axis=0)
+    ylow = np.percentile(models, alpha, axis=0)
+    yhi = np.percentile(models, 100 - alpha, axis=0)
+
+    return ymed, ylow, yhi
+
+def confidence_band_linear(model, x, popt, perr, sigma=1.0, rel_step=1e-6):
+    """
+    Linear error propagation using finite differences.
+
+    Parameters
+    ----------
+    model : callable
+        model(x, *pars)
+    x : array_like
+        Points at which to evaluate the model.
+    popt : (N,) array
+        Best-fit parameters.
+    perr : (N,) array
+        1-sigma uncertainties (assumed independent).
+    sigma : float
+        Width of the confidence interval in units of sigma.
+    rel_step : float
+        Relative finite-difference step.
+
+    Returns
+    -------
+    ylow, yhi : ndarray
+    """
+
+    popt = np.asarray(popt, float)
+    perr = np.asarray(perr, float)
+
+    y0 = np.asarray(model(x, *popt))
+    var = np.zeros_like(y0, dtype=float)
+
+    for i in range(len(popt)):
+        dp = rel_step * max(abs(popt[i]), 1.0)
+
+        p1 = popt.copy()
+        p2 = popt.copy()
+        p1[i] += dp
+        p2[i] -= dp
+
+        dydpi = (model(x, *p1) - model(x, *p2)) / (2 * dp)
+
+        var += (dydpi * perr[i])**2
+
+    dy = sigma * np.sqrt(var)
+
+    return y0 - dy, y0 + dy
+
+def confidence_band_from_scipy(model, x, result, eps=None, alpha=1.0):
     """
     Calculate the linearized confidence band for a least_squares fit.
 

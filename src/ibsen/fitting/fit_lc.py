@@ -231,7 +231,7 @@ PARAMS = {
     "incl_disk_deg": {
         "forward": lambda x: x,
         "inverse": lambda x: x,
-        "bounds": (-70.0, -10.0),
+        "bounds": (-120, -10.0),
     },
     
 }
@@ -400,7 +400,7 @@ def lc_xray_fitter_gen(
     for name, val in zip(to_fit, sol.x):
         best_params[name] = PARAMS[name]["inverse"](val)
     if return_least_sq_res:
-        sol.success, best_params, sol
+        return sol.success, best_params, sol
         
     return sol.success, best_params
 
