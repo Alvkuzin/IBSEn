@@ -29,6 +29,8 @@ def residuals_multi(xobs, yobs, dyobs, xtheor, ytheor, grid_type='linear',
     """
     Uses the 'residuals' above, but xobs, yobs, dyobs, ytheor all can be arrays
     OR lists of arrays.
+    
+    Returns: np.array of ALL concatenated residuals.
     """
     if isinstance(xobs, np.ndarray):
         resid_x = residuals(xobs, yobs, dyobs, xtheor, ytheor, grid_type,
@@ -87,25 +89,31 @@ def yamlify(obj):
 
     return obj
 
-def min_gap_psrb(t_obs):
+def min_gap_psrb(t_obs, in_days=False, extend_bins=1.0):
+    if in_days:
+        multi = 1.0
+    else:
+        multi = DAY
     t_obs = np.asarray(t_obs)
     res = np.zeros(t_obs.shape)
-    cond_way_before = (t_obs < 120. * DAY)
-    cond_before = (t_obs >= 120. * DAY) & (t_obs < -50. * DAY) 
-    cond_first_peak = (t_obs >= -50. * DAY) & (t_obs < -10 * DAY)
-    cond_between = (t_obs >= -10. * DAY) & (t_obs < 8. * DAY)
-    cond_second_peak = (t_obs >= 8. * DAY) & (t_obs < 25. * DAY)
-    cond_third_peak = (t_obs >= 25. * DAY) & (t_obs < 50. * DAY)
-    cond_after = (t_obs >= 50. * DAY) & (t_obs < 120. * DAY)
-    cond_way_after = (t_obs > 120. * DAY)
-    res[cond_way_before] = 50. * DAY
-    res[cond_before] = 15. * DAY
-    res[cond_first_peak] = 1. * DAY
-    res[cond_between] = 2.5 * DAY
-    res[cond_second_peak] = 1. * DAY
-    res[cond_third_peak] = 3. * DAY
-    res[cond_after] = 10. * DAY
-    res[cond_way_after] = 50. * DAY
+    cond_way_before = (t_obs < 120. * multi)
+    cond_before = (t_obs >= 120. * multi) & (t_obs < -60. * multi) 
+    cond_before_intermid = (t_obs >= -60. * multi) & (t_obs < -30. * multi) 
+    cond_first_peak = (t_obs >= -30. * multi) & (t_obs < -5. * multi)
+    cond_between = (t_obs >= -5. * multi) & (t_obs < 10. * multi)
+    cond_second_peak = (t_obs >= 10. * multi) & (t_obs < 25. * multi)
+    cond_third_peak = (t_obs >= 25. * multi) & (t_obs < 50. * multi)
+    cond_after = (t_obs >= 50. * multi) & (t_obs < 120. * multi)
+    cond_way_after = (t_obs > 120. * multi)
+    res[cond_way_before] = 50. * multi * extend_bins
+    res[cond_before] = 15. * multi * extend_bins
+    res[cond_before_intermid] = 3. * multi * extend_bins
+    res[cond_first_peak] = 1.5 * multi * extend_bins
+    res[cond_between] = 2.5 * multi * extend_bins
+    res[cond_second_peak] = 1. * multi * extend_bins
+    res[cond_third_peak] = 3. * multi * extend_bins
+    res[cond_after] = 10. * multi * extend_bins
+    res[cond_way_after] = 50. * multi * extend_bins
     return res.item() if np.ndim(t_obs) == 0 else res
     
 
@@ -118,6 +126,100 @@ def build_timegrid_psrb(t_obs):
     res.append(t_obs[-1])
     res = np.array(res)
     return np.unique(res)
+
+def adaptive_rebin(t, f, df, width_func, **width_func_kwargs):
+    """
+    Adaptive rebinning of a folded light curve.
+
+    Parameters
+    ----------
+    t, f, df : array-like
+        Times, fluxes and statistical errors.
+    width_func : callable
+        Function returning desired bin width (same units as t).
+
+    Returns
+    -------
+    tbin : ndarray
+        Mean time in each bin.
+    fbin : ndarray
+        Mean (unweighted) flux.
+    dfbin : ndarray
+        Systematic scatter in each bin.
+    dfbin : ndarray
+        Time error of the bin calculated as the half edges difference.    
+    edges : ndarray, shape (Nbins, 2)
+        Left/right edges of every bin.
+    counts : ndarray
+        Number of points in each bin.
+    """
+
+    t, f, df = [np.asarray(_a) for _a in (t, f, df)]
+
+    order = np.argsort(t)
+    t, f, df = [_a[order] for _a in (t, f, df)]
+
+    tbin, fbin, dfbin, dtbin, edges, counts = [], [], [], [], [], []
+
+    i = 0
+    n = len(t)
+
+    while i < n:
+    
+        center = t[i]
+        half_width = width_func(center, **width_func_kwargs) / 2.
+    
+        left = center - half_width
+        right = center + half_width
+    
+        # first point that belongs to the bin
+        start = i
+        while start > 0 and t[start - 1] >= left:
+            start -= 1
+    
+        # only keep points that haven't already been used
+        start = max(start, i)
+    
+        end = i
+        while end + 1 < n and t[end + 1] <= right:
+            end += 1
+    
+        sl = slice(start, end + 1)
+    
+        tt, ff, dfdf = [_a[sl] for _a in (t, f, df)]
+    
+        mean_flux = np.mean(ff)
+    
+        if len(ff) > 1:
+            # scatter = np.std(ff, ddof=1)
+            # an estimation of a statistical error:
+            estim_stat_err = np.sqrt(1. / np.sum(1. / dfdf**2))
+            # an estimation of a systematic error:
+            scatter = 1.4826 * np.median(np.abs(ff - np.median(ff)))
+            scatter = np.sqrt(scatter**2 + estim_stat_err**2)
+
+        else:
+            scatter = dfdf[0]
+        
+        _left = max(left, np.min(tt))
+        _right = min(right, np.max(tt))
+        _t, _dt = 0.5*(_right + _left), 0.5*(_right - _left)
+        
+        tbin.append(_t)
+        fbin.append(mean_flux)
+        dfbin.append(scatter)
+        dtbin.append(_dt)
+        edges.append((_left, _right))
+        counts.append(len(tt))
+    
+        i = end + 1
+
+    return (np.asarray(tbin),
+            np.asarray(fbin),
+            np.asarray(dfbin),
+            np.asarray(dtbin),
+            np.asarray(edges),
+            np.asarray(counts))
 
         
 def linear_slope(x, y):

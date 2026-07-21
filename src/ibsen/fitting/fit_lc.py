@@ -61,6 +61,7 @@ default_params = { "sys_name": "psrb",
               "abs_gg": True,
               "ic_ani": True, "bands": [[3e2, 1e4], [4e11, 1e13]], 
               "to_parall": True, "n_cores": 10,
+              'epows': 1.,
               
               }
 
@@ -266,6 +267,7 @@ def lc_xray_fitter_gen(
     additive_c_xray=False, additive_c_tev=False,
     parall=True, ncores=None,
     return_least_sq_res=False,
+    cheating_coefs=None,
     **fixed_params,
 ):
 
@@ -290,13 +292,16 @@ def lc_xray_fitter_gen(
     if use_tevs:
         bands = [[3e2, 1e4], [4e11, 1e13]]
         mechanisms = ["s", "i"]
+        epows = [1., 0.]
     else:
         bands = [[3e2, 1e4]]
         mechanisms = ["s"]
-
+        epows = [1.,]
     params_here = fixed_params.copy()
     params_here["bands"] = bands
     params_here["mechanisms"] = mechanisms
+    params_here["epows"] = epows
+    
 
     x0 = []
     lower = []
@@ -348,6 +353,12 @@ def lc_xray_fitter_gen(
             "linear",
             add_dy_multi=0.1,
         )
+        
+        if cheating_coefs is not None:
+            for timebin, coef in cheating_coefs:
+                ti, tf = timebin
+                _here = (t_xray > ti) & (t_xray <= tf)
+                resid_x[_here] = resid_x[_here] * coef 
 
         if not use_tevs:
             return resid_x
@@ -377,12 +388,22 @@ def lc_xray_fitter_gen(
             "linear",
             add_dy_multi=0.1,
         )
-
-        return np.concatenate([
+        
+        if cheating_coefs is not None:
+            for timebin, coef in cheating_coefs:
+                ti, tf = timebin
+                _here = (t_h > ti) & (t_h <= tf)
+                resid_h[_here] = resid_h[_here] * coef 
+                
+        fin_res = np.concatenate([
             (1 - relative_tev_importance) * resid_x,
             relative_tev_importance * resid_h,
         ])
 
+        return fin_res
+    
+
+            
 
     sol = least_squares(
         _residuals,
@@ -392,6 +413,9 @@ def lc_xray_fitter_gen(
         xtol=eps,
         ftol=eps,
         gtol=eps,
+        loss='soft_l1',
+        # loss='huber',
+        
     )
 
 

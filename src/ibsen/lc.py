@@ -61,9 +61,10 @@ bands_ind : iterable of (float, float), optional
     Energy bands (eV) for photon-index fits. Default ``([3e3, 1e4],)``. Note that
     the absorbed photon spectrum is fitted.
 epows : None | scalar | iterable, optional
-    Moment order(s) for band flux integrals (see :meth:`SpectrumIBS.fluxes`).
-    If None, epow=1 is used for all bands. If scalar, the same epow is used
-    for all; if iterable, must match ``len(bands)``.
+    Moment order(s) for band flux integrals (see `SpectrumIBS.fluxes`)
+    (the result will be in [erg^epow_i / s / cm2]).
+    If None, epow=1 is used for all bands. 
+    If scalar, the same epow is used for all; if iterable, must match ``len(bands)``.
 to_parall : bool, optional
     If True, compute times in parallel with joblib. Default False.
 n_cores : int, or 'all', or None, optional
