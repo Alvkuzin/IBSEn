@@ -227,14 +227,23 @@ PARAMS = {
     "alpha_disk_deg": {
         "forward": lambda x: x,
         "inverse": lambda x: x,
-        "bounds": (5.0, 25.0),
+        "bounds": (-5.0, 25.0),
     },
     "incl_disk_deg": {
         "forward": lambda x: x,
         "inverse": lambda x: x,
-        "bounds": (-120, -10.0),
+        "bounds": (-120., 0.0),
     },
-    
+    "k_time": {
+        "forward": np.log10,
+        "inverse": lambda x: 10**x,
+        "bounds": (-1.0, 1.0),        
+    },
+    "alpha_interaction":{
+        "forward": lambda x: x,
+        "inverse": lambda x: x,
+        "bounds": (0.0, 3.0),
+    },
 }
 
 

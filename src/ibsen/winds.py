@@ -733,12 +733,13 @@ class Winds: # !!!
                                  self.star.decr_disk_pressure(vec_r_from_s = self.orbit.vector_sp(t_pr).T,
                                                               true_an=self.orbit.true_an(t_pr)) 
                                  )
-        
-        t_ch = 10.*DAY * self.k_time
-        _exp = np.exp(_t_ev/t_ch)
-        integrand = pres_ext_t(_t_ev) * np.where(_exp<1e-5, 0.0, _exp) * (self.orbit.r_periastr/self.orbit.r(_t_ev))**3
+        T0_char = 10.*DAY
+        # t_ch =  * self.k_time
+        _exp = np.exp(_t_ev * self.k_time / T0_char)
+        r_char = self.orbit.r(self.orbit.t_from_true_an(-np.pi / 2.))
+        integrand = pres_ext_t(_t_ev) * np.where(_exp<1e-5, 0.0, _exp) * (r_char / self.orbit.r(_t_ev))**3
         q_ = cumulative_trapezoid(integrand, _t_ev, initial=0.0)
-        f_adds = self.alpha_interaction * np.exp(-_t_ev/t_ch)/t_ch * q_
+        f_adds = self.alpha_interaction * np.exp(-_t_ev * self.k_time / T0_char) / T0_char * q_
         rpes_new = np.empty(f_adds.shape)
         for (i, f), t in zip(enumerate(f_adds), _t_ev):
             _vec_sp = self.orbit.vector_sp(t)
@@ -757,7 +758,7 @@ class Winds: # !!!
                 print(t / DAY)
                 raise ValueError("Fail of brentq in winds-hyst")
                 
-
+        self.f_adds = f_adds
         self.rpes_hyst = rpes_new
         
 
@@ -879,6 +880,29 @@ class Winds: # !!!
         p_p = self.pulsar.wind_pressure(r_from_p=absv(vec_pe)) * n_from_v(vec_pe)
         return p_p
     
+    def vec_addit_pressure(self, t):
+        """
+        Vector of an additoinal pressure arising when `hyst=True`.
+        Set to be:
+            --- In absolute units, equal to self.f_adds calculated in
+            `_precalculate_dist_pe_hyst`, and interpolated at time `t`.
+           --- In direction, opposite to the pulsar orbital velocity. 
+           
+        Assumed, formally, to be independent of distances (even though it is
+            of course localized around the IBS apex).
+        """
+        v_orbital_pulsar =self.orbit.vector_v(t)
+        if self.hyst:
+            _spl = interp1d(x = self.t_precalculate, 
+                            y=self.f_adds,
+                            bounds_error=True)
+            abs_v = _spl(t)
+        else:
+            abs_v = 0.0 * t
+        
+        return -n_from_v(v_orbital_pulsar) * abs_v
+        
+    
     
     def make_vec_(self, r, theta, phi):
         """
@@ -893,10 +917,13 @@ class Winds: # !!!
         _nu = self.orbit.true_an(t)
         pw = self.star.polar_wind_pressure(absv(vec_se))        
         pd = self.star.decr_disk_pressure(vec_se, true_an=_nu)
-        totp = pw+pd
+        vec_addit_zero = self.vec_addit_pressure(t)
+        padd = absv(vec_addit_zero)
+        totp = pw + pd + padd
         vec_pw_zero = (pw+1e-3*totp) * n_from_v(self.u_polar_w_pulsar_frame(t, vec_se, 'se'))
         vec_pd_zero = (pd+1e-3*totp) * n_from_v(self.u_disk_w_pulsar_frame(t, vec_se, 'se'))
-        tot_ext_at_p = -vec_pw_zero - vec_pd_zero
+        
+        tot_ext_at_p = -vec_pw_zero - vec_pd_zero - vec_addit_zero
         init_direction = n_from_v(tot_ext_at_p)
         return init_direction
     
