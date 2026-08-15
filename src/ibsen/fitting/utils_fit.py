@@ -412,8 +412,8 @@ def fit_norm(ydata, dy_data, y0_normalized, return_err=False, addit_const=False)
 
 def index_simple(dnde, e):
     """
-    Finds a powerlaw index: dnde \propto e^\ind. Fitted as a linear function
-    analytically, assuming equal weights for all datapoints. 
+    Finds a powerlaw index: dnde \propto e^-\ind. Fitted as a linear function
+    in log-log coords analytically, assuming equal weights for all datapoints. 
 
     Parameters
     ----------

@@ -823,7 +823,7 @@ class Winds: # !!!
         v_orbital_pulsar =self.orbit.vector_v(t)
         vec_pe, vec_se = self._vecs(t, vec, which)
         v_wind = self.star.u_polar_w_lab_frame(vec_se = vec_se)
-        relative_v_wind = v_wind - v_orbital_pulsar[..., :]
+        relative_v_wind = v_wind# - v_orbital_pulsar[..., :]
         return relative_v_wind
     
     def vec_polar_w(self, t, vec, which='pe'):
@@ -849,7 +849,7 @@ class Winds: # !!!
         v_orbital_pulsar =self.orbit.vector_v(t) # (3,)
         vec_pe, vec_se = self._vecs(t, vec, which)
         v_disc = self.star.u_disk_w_lab_frame(vec_se=vec_se) 
-        relative_v_disc = v_disc - v_orbital_pulsar
+        relative_v_disc = v_disc# - v_orbital_pulsar
         return relative_v_disc
     
     def vec_disk_w(self, t, vec, which='pe'):
@@ -913,7 +913,10 @@ class Winds: # !!!
         return r * rotated_vector(phi, theta)
     
     def _ext_wind_direction(self, t, vec, which='pe'):
-        vec_pe, vec_se = self._vecs(t, vec, which)
+        """
+        The direction of winds (p_i * v_i) at time t and at the position 'vec'.
+        """
+        _, vec_se = self._vecs(t, vec, which)
         _nu = self.orbit.true_an(t)
         pw = self.star.polar_wind_pressure(absv(vec_se))        
         pd = self.star.decr_disk_pressure(vec_se, true_an=_nu)
@@ -923,7 +926,8 @@ class Winds: # !!!
         vec_pw_zero = (pw+1e-3*totp) * n_from_v(self.u_polar_w_pulsar_frame(t, vec_se, 'se'))
         vec_pd_zero = (pd+1e-3*totp) * n_from_v(self.u_disk_w_pulsar_frame(t, vec_se, 'se'))
         
-        tot_ext_at_p = -vec_pw_zero - vec_pd_zero - vec_addit_zero
+        
+        tot_ext_at_p = vec_pw_zero + vec_pd_zero + vec_addit_zero
         init_direction = n_from_v(tot_ext_at_p)
         return init_direction
     
@@ -941,90 +945,24 @@ class Winds: # !!!
         r_pe_1d = rsp - r_se_1d
 
         effective_se = vec_sp*r_se_1d/rsp 
-        init_direction = self._ext_wind_direction(t, vec = effective_se, which='se')
+        init_direction = -self._ext_wind_direction(t, vec = effective_se, which='se')
 
         return r_pe_1d * init_direction
-    
-    def _r_in_direction(self, t, ndir, lims=None):
-        def to_solve(r):
-            vec_pe = r * ndir
-            _res = (mydot(self.vec_disk_w(t, vec_pe), ndir) 
-                    + mydot(self.vec_polar_w(t, vec_pe), ndir) 
-                    - mydot(self.vec_pulsar_p(t, vec_pe), ndir))
-            return _res
-        _r = self.orbit.r(t)
-        if lims is None:
-            lo, hi = _r/1e3, _r
-        if lims is not None:
-            lo, hi = lims
-            if lo is None:
-                lo = _r/1e3
-            if hi is None:
-                hi = _r 
-        return brentq(to_solve, lo, hi)
-        
-         
-    
+
     def _vec_pe_3d_novec_full(self, t, eps=1e-3):
         """
         A vector from the pulsar to the emission zone calculated in 3d. 
         
         t should be float [s]
         """            
-        # # a and i --- relative to the pulsar
-        # vec_pe_0_app = self._vec_pe_3d_novec(t, eps)
-        # a_old, i_old = angles_from_vec(vec_pe_0_app)
-        # r_old = absv(vec_pe_0_app)
-        # r_new = self._r_in_direction(t, ndir = n_from_v(vec_pe_0_app))
-        # # dir_1 = self._ext_wind_direction(t, vec = r_new * rotated_vector(a_old, i_old), which='pe')
-        # dir_1 = self._ext_wind_direction(t, vec = self.orbit.vector_sp(t), which='se')
-        # a_new, i_new = angles_from_vec(dir_1)
-        
         vec_sp = self.orbit.vector_sp(t)
         rsp = absv(vec_sp)
             
         r_se_1d = self.dist_se_1d(t) # zero approximation
         r_pe_1d = rsp - r_se_1d
         ndir = self._ext_wind_direction(t, vec_sp, which='se')
-        # r_new = self._r_in_direction(t, ndir = ndir)
         return r_pe_1d * ndir
-        # return r_new * ndir
 
-    
-        
-        # rel_err = (absv(r_new*rotated_vector(a_new, i_new) -
-        #                r_old*rotated_vector(a_old, i_old)) / absv(r_new*rotated_vector(a_new, i_new)))
-        # count = 1
-        # while (rel_err > eps):
-        #     r_old, a_old, i_old = (r_new, a_new, i_new)
-        #     r_new = self._r_in_direction(t, ndir = rotated_vector(a_new, i_new),
-        #                                  #lims=(r_old/2., None)
-        #                                  )
-        #     dir_new = self._ext_wind_direction(t, vec = r_new * rotated_vector(a_new, i_new), which='pe')
-        #     a_new, i_new = angles_from_vec(dir_new)
-        #     rel_err = (absv(r_new*rotated_vector(a_new, i_new) -
-        #                    r_old*rotated_vector(a_old, i_old)) / absv(r_new*rotated_vector(a_new, i_new)))
-        #     count += 1
-        #     if count > 30:
-        #         print('count > 30!')
-        #         break
-        # print(count)
-        # return r_new*rotated_vector(a_new, i_new)
-        
-        # def resid(popt):
-        #     r, a, i = popt
-        #     n = rotated_vector(a, i)
-        #     vec_pe = r * n
-        #     _res = self.vec_disk_w(t, vec_pe) + self.vec_polar_w(t, vec_pe) - self.vec_pulsar_p(t, vec_pe)
-        #     return _res
-        
-        # sol = least_squares(resid, x0 = (r0, a0, i0),
-        #                        ftol=eps,
-        #                        gtol=eps)
-        # (r, a, i) = sol.x
-        # return r * rotated_vector(a, i)
-    
-    
 
     def vec_pe_3d(self, t, eps=1e-3, orientation='flow'): 
         """

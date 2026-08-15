@@ -274,6 +274,9 @@ docstr_specibs =  f"""
         If True, transform fields and electron spectra to the comoving frame
         before radiation calculation and use comoving scattering angles for
         anisotropic IC. Default True. 
+    ani_lorentz_boost : bool, optional
+        Whether to use the anisotropic approximations for the Lorentz transformations
+        of u_g and Teff. Default True.
 
     abs_photoel : bool, optional
         Apply photoelectric absorption (TBabs-like) to the final SED. Default False.
@@ -372,6 +375,7 @@ class SpectrumIBS: #!!!
                  ic_ani=False, 
                  sys_name=None, sys_params=None,
                  delta_power=4, lorentz_boost=True,
+                 ani_lorentz_boost=True,
                  abs_photoel=False, abs_gg=False, 
                  nh_tbabs=0.8, 
                  distance = None,
@@ -390,6 +394,7 @@ class SpectrumIBS: #!!!
         self.ic_ani = ic_ani
         self.delta_power = delta_power
         self.lorentz_boost = lorentz_boost
+        self.ani_lorentz_boost = ani_lorentz_boost
         self.abs_photoel = abs_photoel
         self.abs_gg = abs_gg
         
@@ -433,12 +438,16 @@ class SpectrumIBS: #!!!
         ##### ---------- extended zone props, incl dNe_de ----------- ####
         if self.lorentz_boost:
             b_2horns = self._ibs.b_mid_comov
-            u_2horns = self._ibs.ug_mid_comov
-            temp_2horns = self._ibs.T_opt_eff_mid_comov
             scat_ang_2horns = self._ibs.scattering_angle_mid_comov
             e_vals = self.els.e_vals_comov
             dne_de_mid = self.els.dNe_de_mid_comov
             ne_i_mid = self.els.n_i_mid_comov
+            if not self.ani_lorentz_boost:
+                u_2horns = self._ibs.ug_mid_comov_iso
+                temp_2horns = self._ibs.T_opt_eff_mid_comov_iso
+            else:
+                u_2horns = self._ibs.ug_mid_comov_ani
+                temp_2horns = self._ibs.T_opt_eff_mid_comov_ani
 
         else:
             b_2horns = self._ibs.b_mid

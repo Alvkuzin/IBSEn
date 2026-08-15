@@ -59,9 +59,9 @@ default_params = { "sys_name": "psrb",
               "method" : "simple",
               # 'method': 'apex', # !!!
               "abs_gg": True,
-              "ic_ani": True, "bands": [[3e2, 1e4], [4e11, 1e13]], 
+              "ic_ani": True, "bands": [[1e3, 1e4], [4e11, 1e13]], 
               "to_parall": True, "n_cores": 10,
-              'epows': 1.,
+              'epows': [1., 0.],
               
               }
 
@@ -210,7 +210,7 @@ PARAMS = {
     "gamma_max": {
         "forward": lambda x: np.log10(x - 1.0),
         "inverse": lambda x: 1.0 + 10**x,
-        "bounds": (-2.0, 0.4),
+        "bounds": (-2.0, 0.6),
     },
     "f_d": {
         "forward": np.log10,
@@ -243,6 +243,11 @@ PARAMS = {
         "forward": lambda x: x,
         "inverse": lambda x: x,
         "bounds": (0.0, 3.0),
+    },
+    "puls_b_ref": {
+        "forward": np.log10,
+        "inverse": lambda x: 10**x,
+        "bounds": (-1.3, 1.3),        
     },
 }
 
@@ -310,6 +315,10 @@ def lc_xray_fitter_gen(
     params_here["bands"] = bands
     params_here["mechanisms"] = mechanisms
     params_here["epows"] = epows
+    if 'puls_b_ref' in to_fit:
+        same_normalization = True
+    else:
+        same_normalization = False
     
 
     x0 = []
@@ -375,18 +384,20 @@ def lc_xray_fitter_gen(
         ################ TeV ################
 
         tev_model = lc.fluxes[:, 1]
-
-        *_, tev_norm = fit_norm_here(
-            x_obs=t_h,
-            y_obs=f_h,
-            dy_obs=df_h,
-            x_model=t_grid / DAY,
-            y_model=tev_model,
-            norm_init=Norm0,
-            grid_scale="lin",
-            add_const=additive_c_tev,
-            c_init=0.0,
-        )
+        if not same_normalization:
+            *_, tev_norm = fit_norm_here(
+                x_obs=t_h,
+                y_obs=f_h,
+                dy_obs=df_h,
+                x_model=t_grid / DAY,
+                y_model=tev_model,
+                norm_init=Norm0,
+                grid_scale="lin",
+                add_const=additive_c_tev,
+                c_init=0.0,
+            )
+        else:
+            tev_norm = tev_model * np.average(xray_norm / xray_model)
 
         resid_h = residuals_multi(
             t_h,

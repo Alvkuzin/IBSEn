@@ -666,309 +666,6 @@ def enhanche_jump(t, t1_disk, t2_disk, times_enh, param_to_enh):
     current_H_enh = thresh_crit(t, t_enh_final, param_to_enh)
     return current_H_enh
 
-
-""" #!!!
--------------------------------------------------------------------------------
--------- #####  special relativity, Lorentz transformations  ##### ------------
--------------------------------------------------------------------------------
-
-"""
-
-
-def g_from_beta(beta_vel):
-    """
-    Lorentz factor Gamma from the dimentionless velosity beta_vel.
-    """
-    return 1. / np.sqrt(1. - beta_vel**2)
-
-def beta_from_g(g_vel):
-    """
-    Dimentionless velosity beta_vel from Lorentz factor Gamma.
-    """
-    
-    if isinstance(g_vel, np.ndarray):
-        res = np.zeros_like(g_vel)
-        cond = (g_vel > 1.0 + 1e-7) 
-        res[cond] = ((g_vel[cond]-1.0) * (g_vel[cond]+1.0))**0.5 / g_vel[cond]
-    else:
-        if g_vel > 1.0 + 1e-7:
-            res =  ((g_vel-1.0) * (g_vel+1.0))**0.5 / g_vel
-        else:
-            res = 0.0
-    return res 
-
-def doppler_delta(gamma, angle):
-    _beta = beta_from_g(gamma)
-    return 1. / gamma / (1. - _beta * np.cos(angle))
-
-def lor_trans_angle(angle, gamma):
-    """
-    Lorentz transformed angle (between the direction of the frame
-                with lorentz-factor gamma and the direction of interest)
-
-    Parameters
-    ----------
-    angle : np.ndarray
-        angle in radians between some direction and moving frame. 
-        Should be non-negative value, between 0 and pi.
-    gamma : np.ndarray
-        lorentz-factor of the moving frame.
-
-    Returns
-    -------
-    np.ndarray or float
-        Lorentz-transformed angle in radians.
-
-    """
-    angle = np.asarray(angle)
-    gamma = np.asarray(gamma)
-    if isinstance(angle, float):
-        if angle < 0 or angle > np.pi:
-            raise ValueError("angle should be between 0 and pi")
-    if isinstance(angle, np.ndarray):
-        if not np.all( (angle >= 0.0) & (angle <= np.pi) ):
-            raise ValueError("All angles should be between 0 and pi")
-    _betas = beta_from_g(gamma)
-    _mu = np.cos(angle)
-    _mu_prime = (_mu - _betas) / (1.0 - _mu * _betas)
-    _mu_prime = np.clip(_mu_prime, -1.0, 1.0)
-    return np.arccos(_mu_prime)
-
-
-def lor_trans_b_iso(B_iso, gamma):
-    """
-    Lorentz-transforms a value of a module of an isotropic magnetic 
-    field B_iso into a coordinate frame co-moving with a lorentz-factor gamma.
-    
-
-    Parameters
-    ----------
-    B_iso : float | np.ndarray of size gamma
-        Absolute value of an isotropic magnetic field strength in a lab frame.
-    gamma : float | np.ndarray of size B_iso
-        A lorentz factor of a coordinate frame to transform to.
-
-    Returns
-    -------
-    float | np.ndarray of size gamma/B_iso
-        Absolute value of a non-isotropic magnetic field strength in a 
-        co-moving frame.
-
-    """
-    # bx, by, bz = B_iso / 3**0.5, B_iso / 3**0.5, B_iso / 3**0.5
-    # bx_comov = bx
-    # by_comov, bz_comov = by * gamma, bz * gamma
-    # return (bx_comov**2 + by_comov**2 + bz_comov**2)**0.5
-    return B_iso * np.sqrt( (1.0 + 2.0 * gamma**2) / 3. )
-
-def lor_trans_ug_iso(ug_iso, gamma): # Relativistic jets... eq. (2.57)
-    """
-    Lorentz-transforms a value of a module of an isotropic photon 
-    field ug_iso into a coordinate frame co-moving with a lorentz-factor gamma.
-    Uses eq. (2.57) from Relativistic Jets from Active Galactic Nuclei Edited
-    by Markus Böttcher, Daniel E. Harris, and Henric Krawczynski.
-
-    Parameters
-    ----------
-    ug_iso : float | np.ndarray of size gamma
-        Absolute value of an isotropic photon field energy density in a lab
-        frame.
-    gamma : float | np.ndarray of size B_iso
-        A lorentz factor of a coordinate frame to transform to.
-
-    Returns
-    -------
-    float | np.ndarray of size gamma/ug_iso
-        Absolute value of a non-isotropic photon field energy density in a 
-        co-moving frame.
-
-    """
-    return ug_iso * gamma**2 * (3. + beta_from_g(gamma)) / 3.
-
-def lor_trans_Teff_iso(Teff_iso, gamma): # assuming u ~ T^4
-    """
-    Transforms an effective temperature of a photon field into the co-moving 
-    system. Fully analogous to lor_trans_ug_iso. Assumes T \propto u^{1/4}
-    """
-    return Teff_iso * (gamma**2 * (3. + beta_from_g(gamma)) / 3.)**0.25
-
-
-def lor_trans_vec(vec_n, vec_beta, eps=1e-5):
-    """
-    Lorentz tranformes a spatial unit vector vec_n (in lab frame) into 
-    a system moving with vec_beta. Everywhere where |beta| < eps, the vector
-    is left the same.
-    
-
-    Parameters
-    ----------
-    vec_n : np.ndarray or shape (3,) or (..., 3)
-        Unit vectors in lab frame to transform. 
-    vec_beta : np.array either of shape (3,) OR of the same shape as vec_n.
-        A vector beta = v/c of the co-moving system in lab frame. Either 
-        one vector to define the transformation for all vectors from vec_n, 
-        or an array of vectors for each vector from vec_n.
-    eps : float, optional
-        A lower threshold for |beta|, below which the transformation is not
-        applied (needed because formulas contain division by 0).
-
-    Returns
-    -------
-    np.ndarray of the same shape as the input vec_n.
-
-    """
-
-    n0 = _asvec(vec_n)
-    b0 = _asvec(vec_beta)
-
-    n0 = n_from_v(n0)
-    n, beta = np.broadcast_arrays(n0, b0)
-
-    beta_mag = np.linalg.norm(beta, axis=-1)
-    mask = beta_mag >= eps
-
-    out = n.copy()
-
-    if not np.any(mask):
-        return out
-
-    n_m = n[mask]           # (K,3)
-    b_m = beta[mask]        # (K,3)
-    bmag_m = beta_mag[mask] # (K,)
-
-    gamma_m = np.asarray(g_from_beta(bmag_m))  # (K,)
-    nbeta_m = np.sum(n_m * b_m, axis=-1)       # dot product, (K,)
-
-    n_par = (nbeta_m / (bmag_m**2))[:, None] * b_m
-    n_perp = n_m - n_par
-
-    denom = (1.0 - nbeta_m)  # (K,)
-
-    n_par_prime  = (n_par - b_m) / denom[:, None]
-    n_perp_prime = n_perp / (gamma_m * denom)[:, None]
-
-    n_prime = n_par_prime + n_perp_prime
-
-    out[mask] = n_prime
-    return out
-
-
-def vector_angle(n1, n2, vec_beta=np.zeros(3), lor_trans=False):
-    """
-    Calculates the angle between two UNIT vectors either in lab system, where \
-        they are given, or in a system co-moving with velosity vec_beta.
-
-    Parameters
-    ----------
-    n1 : my vector 
-        1st vector in a lab system.
-    n2 : my vector 
-        2nd vector in a lab system.
-    vec_beta : my vector, optional
-        Vector of the beta (=v/c) of the other lorentz frame where you want to 
-        calculate an angle. The default is np.zeros(3).
-    lor_trans : bool, optional
-        Whether to perform a lorentz boost (True) or to calculate in a lab
-        frame (False). The default is False.
-
-    Returns
-    -------
-    float
-        Angle between vectors (always 0 <= angle <= pi).
-
-    """
-    ###### making sure they are indeed unit vectors. If not, well, you should
-    ###### have read the documentation.
-    n1_ = n_from_v(n1)
-    n2_ = n_from_v(n2)
-    if np.all(vec_beta == 0) or (not lor_trans):
-        return np.arccos( mydot(n1_, n2_) )
-    else:    
-        n1_prime = n_from_v(lor_trans_vec(n1_, vec_beta))
-        n2_prime = n_from_v(lor_trans_vec(n2_, vec_beta))
-        return np.arccos( mydot(n1_prime, n2_prime))
-
-def lor_trans_e_spec_iso(E_lab, dN_dE_lab, gamma, E_comov=None, n_mu=51, 
-                         mode=None):
-    """
-    Returns (E_comov, dN_dE_comov), the angle-averaged spectrum in the co-moving
-    ('cloud') frame.
-
-    Steps:
-      1. Build an interpolator for the lab spectrum (zero outside input range).
-      2. Define a grid of cosines mu' in [-1,1].
-      3. For each E' in E_comov, compute the Doppler-shifted lab energies
-         E = Γ (E' + β p' c mu'), then sample the lab spectrum there,
-         weight by the Jacobian J = 1/[Γ(1+β mu')], and integrate over μ'.
-         Currently assumes that all particles are ultra-relativistic.
-         
-    Parameters
-    ----------
-    E_lab : np.ndarray
-        1D array of lab-frame energies (must be sorted ascending).
-    dN_dE_lab : np.ndarray
-        1D array of dN/dE in lab frame, same shape as E_lab.
-    gamma : float
-        bulk Lorentz factor of the cloud.
-    E_comov : np.ndarray, optional
-        optional 1D array of desired comoving energies; if None, will use a 
-        grid spanning from min(E_lab) * Gamma * (1-beta) to 
-        max(E_lab) * Gamma * (1+beta). The default is None.
-    n_mu : int, optional
-        number of mu samples for angle-average (must be odd for symmetry). The
-        real number is calculated as int(n_mu * gamma**2).
-        The default is 51.
-
-    Returns
-    -------
-    E_comov : np.ndarray
-        1D array of comoving energies.
-    dN_dE_comov : ndarray
-        1D array of angle-averaged dN'/dE' in comoving frame.
-
-    """
-    beta_v = beta_from_g(gamma)
-    n_mu = int(n_mu * gamma)
-
-    if E_comov is None:
-        Emi = E_lab.min()
-        Ema = E_lab.max()
-        Emi_co = Emi * gamma * (1.0 - beta_v)
-        Ema_co = Ema * gamma * (1.0 + beta_v)
-        needed_len = int(len(E_lab) * np.log10(Ema_co / Emi_co) / 
-                         np.log10(Ema / Emi))
-        E_comov = np.geomspace(Emi_co, Ema_co, needed_len)
-
-    # set up lab-spectrum interpolator, zero outside
-    lab_interp = interp1d(
-        E_lab, dN_dE_lab,
-        kind='linear',
-        bounds_error=False,
-        fill_value=0.0
-    )
-    
-    mode = 'g' if gamma > 1.2 else 'mu'
-
-    if mode == 'mu':
-        mu_prime = np.linspace(-1., 1., int(n_mu * gamma))
-        dN_dE_comov = np.zeros_like(E_comov)
-        Ep = E_comov[:,None]
-        E_shift = gamma * Ep * (1. + beta_v * mu_prime[None,:])
-        J = 1. / (gamma * (1. + beta_v * mu_prime))[None,:]
-        F_lab_at_E = lab_interp(E_shift)
-        integrand = J * F_lab_at_E
-        dN_dE_comov = 2. * np.pi * trapezoid(integrand, mu_prime, axis=1) / 4. / np.pi 
-    else:
-        eta = np.geomspace(gamma * (1. - beta_v), gamma * (1. + beta_v), int(n_mu))
-        dN_dE_comov = np.zeros_like(E_comov)
-        Ep = E_comov[:, None]
-        E_shift = Ep * eta[None, :]
-        J = 1. / eta[None, :]
-        F_lab_at_E = lab_interp(E_shift)
-        integrand = J * F_lab_at_E
-        dN_dE_comov = 0.5 * trapz_loglog(integrand, eta, axis=1) / beta_v / gamma
-    return E_comov, dN_dE_comov
-
 """ #!!!
 -------------------------------------------------------------------------------
 --------- #####  manipulations with grids and interpolation  ##### ------------
@@ -1007,7 +704,7 @@ def loggrid(x1, x2, n_dec):
     n_points = max(int( np.log10(x2 / x1) * n_dec) + 1, 2)
     return np.geomspace(x1, x2, n_points)
 
-def logrep(xdata, ydata):
+def logrep(xdata, ydata, **kwargs):
     """
     Creates a logarithmic interpolator for the data (xdata, ydata).
 
@@ -1017,6 +714,7 @@ def logrep(xdata, ydata):
         1D array of x-coordinates.
     ydata : np.ndarray
         1D array of y-coordinates.
+    **kwargs : keyword args for `interp1d'
 
     Returns
     -------
@@ -1031,7 +729,9 @@ def logrep(xdata, ydata):
     """
     asc = np.argsort(xdata)
     xdata, ydata = xdata[asc], ydata[asc] 
-    return interp1d(np.log10(xdata), np.log10(ydata))
+    good = (xdata > 0) & (ydata > 0) & np.isfinite(xdata) & np.isfinite(ydata)
+    xdata, ydata = xdata[good], ydata[good]
+    return interp1d(np.log10(xdata), np.log10(ydata), **kwargs)
 
 def logev(x, logspl):
     """
@@ -1074,6 +774,8 @@ def interplg(x, xdata, ydata, **kwargs):
     """
     asc = np.argsort(xdata)
     xdata, ydata = xdata[asc], ydata[asc] 
+    good = (xdata > 0) & (ydata > 0) & np.isfinite(xdata) & np.isfinite(ydata)
+    xdata, ydata = xdata[good], ydata[good]
     spl_ = interp1d(np.log10(xdata), np.log10(ydata), **kwargs)
     return 10.**( spl_( np.log10(x) ) )
 
@@ -1291,6 +993,323 @@ def make_grid(x_grid, grid_kind, n_grid, per_decade=True):
     else:
         raise ValueError(f"Unknown grid_kind: {grid_kind}")
         
+
+""" #!!!
+-------------------------------------------------------------------------------
+-------- #####  special relativity, Lorentz transformations  ##### ------------
+-------------------------------------------------------------------------------
+
+"""
+
+
+def g_from_beta(beta_vel):
+    """
+    Lorentz factor Gamma from the dimentionless velosity beta_vel.
+    """
+    return 1. / np.sqrt(1. - beta_vel**2)
+
+def beta_from_g(g_vel):
+    """
+    Dimentionless velosity beta_vel from Lorentz factor Gamma.
+    """
+    
+    if isinstance(g_vel, np.ndarray):
+        res = np.zeros_like(g_vel)
+        cond = (g_vel > 1.0 + 1e-7) 
+        res[cond] = ((g_vel[cond]-1.0) * (g_vel[cond]+1.0))**0.5 / g_vel[cond]
+    else:
+        if g_vel > 1.0 + 1e-7:
+            res =  ((g_vel-1.0) * (g_vel+1.0))**0.5 / g_vel
+        else:
+            res = 0.0
+    return res 
+
+def doppler_delta(gamma, angle):
+    _beta = beta_from_g(gamma)
+    return 1. / gamma / (1. - _beta * np.cos(angle))
+
+def lor_trans_angle(angle, gamma):
+    """
+    Lorentz transformed angle (between the direction of the frame
+                with lorentz-factor gamma and the direction of interest)
+
+    Parameters
+    ----------
+    angle : np.ndarray
+        angle in radians between some direction and moving frame. 
+        Should be non-negative value, between 0 and pi.
+    gamma : np.ndarray
+        lorentz-factor of the moving frame.
+
+    Returns
+    -------
+    np.ndarray or float
+        Lorentz-transformed angle in radians.
+
+    """
+    angle = np.asarray(angle)
+    gamma = np.asarray(gamma)
+    if isinstance(angle, float):
+        if angle < 0 or angle > np.pi:
+            raise ValueError("angle should be between 0 and pi")
+    if isinstance(angle, np.ndarray):
+        if not np.all( (angle >= 0.0) & (angle <= np.pi) ):
+            raise ValueError("All angles should be between 0 and pi")
+    _betas = beta_from_g(gamma)
+    _mu = np.cos(angle)
+    _mu_prime = (_mu - _betas) / (1.0 - _mu * _betas)
+    _mu_prime = np.clip(_mu_prime, -1.0, 1.0)
+    return np.arccos(_mu_prime)
+
+
+def lor_trans_b_iso(B_iso, gamma):
+    """
+    Lorentz-transforms a value of a module of an isotropic magnetic 
+    field B_iso into a coordinate frame co-moving with a lorentz-factor gamma.
+    
+
+    Parameters
+    ----------
+    B_iso : float | np.ndarray of size gamma
+        Absolute value of an isotropic magnetic field strength in a lab frame.
+    gamma : float | np.ndarray of size B_iso
+        A lorentz factor of a coordinate frame to transform to.
+
+    Returns
+    -------
+    float | np.ndarray of size gamma/B_iso
+        Absolute value of a non-isotropic magnetic field strength in a 
+        co-moving frame.
+
+    """
+    # bx, by, bz = B_iso / 3**0.5, B_iso / 3**0.5, B_iso / 3**0.5
+    # bx_comov = bx
+    # by_comov, bz_comov = by * gamma, bz * gamma
+    # return (bx_comov**2 + by_comov**2 + bz_comov**2)**0.5
+    return B_iso * np.sqrt( (1.0 + 2.0 * gamma**2) / 3. )
+
+def lor_trans_ug_iso(ug_iso, gamma): # Relativistic jets... eq. (2.57)
+    """
+    Lorentz-transforms a value of a module of an isotropic photon 
+    field ug_iso into a coordinate frame co-moving with a lorentz-factor gamma.
+    Uses eq. (2.57) from Relativistic Jets from Active Galactic Nuclei Edited
+    by Markus Böttcher, Daniel E. Harris, and Henric Krawczynski.
+
+    Parameters
+    ----------
+    ug_iso : float | np.ndarray of size gamma
+        Absolute value of an isotropic photon field energy density in a lab
+        frame.
+    gamma : float | np.ndarray of size B_iso
+        A lorentz factor of a coordinate frame to transform to.
+
+    Returns
+    -------
+    float | np.ndarray of size gamma/ug_iso
+        Absolute value of a non-isotropic photon field energy density in a 
+        co-moving frame.
+
+    """
+    return ug_iso * gamma**2 * (3. + beta_from_g(gamma)) / 3.
+
+def lor_trans_Teff_iso(Teff_iso, gamma): # assuming u ~ T^4
+    """
+    Transforms an effective temperature of a photon field into the co-moving 
+    system. Fully analogous to lor_trans_ug_iso. Assumes T \propto u^{1/4}
+    """
+    return Teff_iso * (gamma**2 * (3. + beta_from_g(gamma)) / 3.)**0.25
+
+
+def lor_trans_vec(vec_n, vec_beta, eps=1e-5):
+    """
+    Lorentz tranformes a spatial unit vector vec_n (in lab frame) into 
+    a system moving with vec_beta. Everywhere where |beta| < eps, the vector
+    is left the same.
+    
+
+    Parameters
+    ----------
+    vec_n : np.ndarray or shape (3,) or (..., 3)
+        Unit vectors in lab frame to transform. 
+    vec_beta : np.array either of shape (3,) OR of the same shape as vec_n.
+        A vector beta = v/c of the co-moving system in lab frame. Either 
+        one vector to define the transformation for all vectors from vec_n, 
+        or an array of vectors for each vector from vec_n.
+    eps : float, optional
+        A lower threshold for |beta|, below which the transformation is not
+        applied (needed because formulas contain division by 0).
+
+    Returns
+    -------
+    np.ndarray of the same shape as the input vec_n.
+
+    """
+
+    n0 = _asvec(vec_n)
+    b0 = _asvec(vec_beta)
+
+    n0 = n_from_v(n0)
+    n, beta = np.broadcast_arrays(n0, b0)
+
+    beta_mag = np.linalg.norm(beta, axis=-1)
+    mask = beta_mag >= eps
+
+    out = n.copy()
+
+    if not np.any(mask):
+        return out
+
+    n_m = n[mask]           # (K,3)
+    b_m = beta[mask]        # (K,3)
+    bmag_m = beta_mag[mask] # (K,)
+
+    gamma_m = np.asarray(g_from_beta(bmag_m))  # (K,)
+    nbeta_m = np.sum(n_m * b_m, axis=-1)       # dot product, (K,)
+
+    n_par = (nbeta_m / (bmag_m**2))[:, None] * b_m
+    n_perp = n_m - n_par
+
+    denom = (1.0 - nbeta_m)  # (K,)
+
+    n_par_prime  = (n_par - b_m) / denom[:, None]
+    n_perp_prime = n_perp / (gamma_m * denom)[:, None]
+
+    n_prime = n_par_prime + n_perp_prime
+
+    out[mask] = n_prime
+    return out
+
+
+def vector_angle(n1, n2, vec_beta=np.zeros(3), lor_trans=False):
+    """
+    Calculates the angle between two    UNIT vectors either in lab system, where \
+        they are given, or in a system co-moving with velosity vec_beta.
+
+    Parameters
+    ----------
+    n1 : my vector 
+        1st vector in a lab system.
+    n2 : my vector 
+        2nd vector in a lab system.
+    vec_beta : my vector, optional
+        Vector of the beta (=v/c) of the other lorentz frame where you want to 
+        calculate an angle. The default is np.zeros(3).
+    lor_trans : bool, optional
+        Whether to perform a lorentz boost (True) or to calculate in a lab
+        frame (False). The default is False.
+
+    Returns
+    -------
+    float
+        Angle between vectors (always 0 <= angle <= pi).
+
+    """
+    ###### making sure they are indeed unit vectors.
+    ######  If not, well, you should have read the documentation.
+    n1_ = n_from_v(n1)
+    n2_ = n_from_v(n2)
+    if np.all(vec_beta == 0) or (not lor_trans):
+        return np.arccos( mydot(n1_, n2_) )
+    else:    
+        n1_prime = n_from_v(lor_trans_vec(n1_, vec_beta))
+        n2_prime = n_from_v(lor_trans_vec(n2_, vec_beta))
+        return np.arccos( mydot(n1_prime, n2_prime))
+
+def lor_trans_e_spec_iso(E_lab, dN_dE_lab, gamma, E_comov=None, n_mu=51, 
+                         mode=None, inv_jac=False):
+    """
+    Returns (E_comov, dN_dE_comov), the angle-averaged spectrum in the co-moving
+    ('cloud') frame.
+
+    Steps:
+      1. Build an interpolator for the lab spectrum (zero outside input range).
+      2. Define a grid of cosines mu' in [-1,1].
+      3. For each E' in E_comov, compute the Doppler-shifted lab energies
+         E = E' Γ (1 + beta mu'), then sample the lab spectrum there,
+         weight by the Jacobian J = Γ(1 + beta mu'), and integrate over mu'.
+         Currently assumes that all particles are ultra-relativistic.
+         
+    Parameters
+    ----------
+    E_lab : np.ndarray
+        1D array of lab-frame energies (must be sorted ascending).
+    dN_dE_lab : np.ndarray
+        1D array of dN/dE in lab frame, same shape as E_lab.
+    gamma : float
+        bulk Lorentz factor of the cloud.
+    E_comov : np.ndarray, optional
+        optional 1D array of desired comoving energies; if None, will use a 
+        grid spanning from min(E_lab) * Gamma * (1-beta) to 
+        max(E_lab) * Gamma * (1+beta). The default is None.
+    n_mu : int, optional
+        number of mu samples for angle-average (must be odd for symmetry). The
+        real number is calculated as int(n_mu * gamma**2).
+        The default is 51.
+
+    Returns
+    -------
+    E_comov : np.ndarray
+        1D array of comoving energies.
+    dN_dE_comov : ndarray
+        1D array of angle-averaged dN'/dE' in comoving frame.
+
+    """
+    beta_v = beta_from_g(gamma)
+    n_mu = int(n_mu * gamma)
+
+    if E_comov is None:
+        Emi = E_lab.min()
+        Ema = E_lab.max()
+        Emi_co = Emi * gamma * (1.0 - beta_v)
+        Ema_co = Ema * gamma * (1.0 + beta_v)
+        needed_len = int(len(E_lab) * np.log10(Ema_co / Emi_co) / 
+                         np.log10(Ema / Emi))
+        E_comov = np.geomspace(Emi_co, Ema_co, needed_len)
+
+    # set up lab-spectrum interpolator, zero outside
+    # lab_interp = interp1d(
+    #     E_lab, dN_dE_lab,
+    #     kind='linear',
+    #     bounds_error=False,
+    #     fill_value=0.0
+    # )
+    
+    log_lab_interp = logrep(
+        E_lab, dN_dE_lab,
+        kind='linear',
+        bounds_error=False,
+        fill_value=-np.inf,
+    )
+    
+    
+    mode = 'g' if gamma > 1.2 else 'mu'
+
+    if mode == 'mu':
+        mu_prime = np.linspace(-1., 1., int(n_mu * gamma))
+        dN_dE_comov = np.zeros_like(E_comov)
+        Ep = E_comov[:,None]
+        E_shift = gamma * Ep * (1. + beta_v * mu_prime[None,:])
+        J = (gamma * (1. + beta_v * mu_prime))[None,:]
+        if inv_jac:
+            J = 1. / J
+        # F_lab_at_E = lab_interp(E_shift)
+        F_lab_at_E = logev(E_shift, log_lab_interp)
+        
+        integrand = J * F_lab_at_E
+        dN_dE_comov = 0.5 * trapezoid(integrand, mu_prime, axis=1) 
+    else:
+        eta = np.geomspace(gamma * (1. - beta_v), gamma * (1. + beta_v), int(n_mu))
+        dN_dE_comov = np.zeros_like(E_comov)
+        Ep = E_comov[:, None]
+        E_shift = Ep * eta[None, :]
+        J = eta[None, :]
+        if inv_jac:
+            J = 1. / J
+        # F_lab_at_E = lab_interp(E_shift)
+        F_lab_at_E = logev(E_shift, log_lab_interp)
+        integrand = J * F_lab_at_E
+        dN_dE_comov = 0.5 * trapz_loglog(integrand, eta, axis=1) / beta_v / gamma
+    return E_comov, dN_dE_comov
         
 """ #!!!
 -------------------------------------------------------------------------------

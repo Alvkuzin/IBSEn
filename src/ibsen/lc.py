@@ -188,6 +188,9 @@ full_spec : bool, optional
         Doppler weight exponent (segment integration). Default 4.
     lorentz_boost : bool, optional
         Apply comoving-frame treatment/boosting. Default True.
+    ani_lorentz_boost : bool, optional
+        Whether to use the anisotropic approximations for the Lorentz transformations
+        of u_g and Teff. Default True.
     simple : bool, optional
         Use apex SED + scaling instead of per-segment radiation. Default False.
     abs_photoel : bool, optional
@@ -317,6 +320,7 @@ class LightCurve: # !!!
                              
                              
                 delta_power=4, lorentz_boost=True, method='full',          # spec
+                ani_lorentz_boost=True,
                 abs_photoel=True, abs_gg=False, abs_gg_filename=None, nh_tbabs=0.8,
                 ic_ani=False, mechanisms=['syn', 'ic'],
                 mode='int',
@@ -423,6 +427,7 @@ class LightCurve: # !!!
         ################ ---- arguments from spec ----- #######################
         self.delta_power = delta_power
         self.lorentz_boost = lorentz_boost
+        self.ani_lorentz_boost = ani_lorentz_boost
         self.method = method
         self.abs_photoel = abs_photoel
         self.abs_gg = abs_gg
@@ -597,6 +602,7 @@ class LightCurve: # !!!
         spec_now = SpectrumIBS(els=els_now,
                                 delta_power = self.delta_power,
                                 lorentz_boost = self.lorentz_boost,
+                                ani_lorentz_boost=self.ani_lorentz_boost,
                                 method = self.method,
                                 abs_photoel = self.abs_photoel,
                                 abs_gg = self.abs_gg,

@@ -829,11 +829,16 @@ class IBS3D: #!!!
         self.dopl_apex_eff = doppler_delta(self.gamma_max,
                         vector_angle(self.winds.orbit.unit_los, self.symm_ax))
         
+        self.r_from_s = absv(self.r_vec)
+        self.r_from_s_mid = absv(self.r_vec_mid)
+        
+        
+        
     
     def rescale_gamma(self):
-        pdisk = self.winds.star.decr_disk_pressure(self.r1_vec)
-        ppolar = self.winds.star.polar_wind_pressure(absv(self.r1_vec))
-        ppulsar = self.winds.pulsar.wind_pressure(absv(self.r_vec))
+        pdisk = self.winds.star.decr_disk_pressure(self.r_vec)
+        ppolar = self.winds.star.polar_wind_pressure(absv(self.r_vec))
+        ppulsar = self.winds.pulsar.wind_pressure(self.r)
         dispers_out = np.std((pdisk + ppolar) / ppulsar )
         self.ibs_n.gamma_max = gamma_test(self.gamma_max, dispers_out, self.coef_quench)
     
@@ -881,6 +886,20 @@ class IBS3D: #!!!
     def g_mid(self):
         """Bulk Lorentz factor along the IBS-mid"""
         return self.gma(s = self.s_mid)
+    
+    @property
+    def dopl_star(self):
+        """Doppler-factor at the IBS for the direction to the star"""
+        return doppler_delta(self.g,
+                vector_angle(self.unit_beta, -n_from_v(self.r_vec))
+                )
+    
+    @property
+    def dopl_star_mid(self):
+        """Doppler-factor at the IBS-mid for the direction to the star"""
+        return doppler_delta(self.g_mid,
+                vector_angle(self.unit_beta_mid, -n_from_v(self.r_vec_mid))
+                )
     
     def gg_abs(self, e_phot, analyt=False, what_return='abs'):
         """ gamma-gamma absorption coefficient (as e^-tau) in every point of
@@ -1047,7 +1066,7 @@ class IBS3D: #!!!
     @property
     def ug(self):
         """Photon field energy density on the IBS [erg/cm^3]."""
-        _u = self.winds.star.u_g_density(r_from_s = self.r1)
+        _u = self.winds.star.u_g_density(r_from_s = self.r_from_s)
         if self.shield_star == 0.:
             return _u
         return _u * self.soft_ph_abs
@@ -1055,22 +1074,35 @@ class IBS3D: #!!!
     @property
     def ug_mid(self):
         """Photon field energy density on the IBS_mid [erg/cm^3]."""
-        _u = self.winds.star.u_g_density(r_from_s = self.r1_mid)
+        _u = self.winds.star.u_g_density(r_from_s = self.r_from_s_mid)
         if self.shield_star == 0.:
             return _u
         return _u * self.soft_ph_abs_mid
     
     @property
-    def ug_comov(self):
-        """Photon field energy density on the IBS in the comoving frame [erg/cm^3]."""
+    def ug_comov_iso(self):
+        """Photon field energy density on the IBS in the comoving frame [erg/cm^3].
+        Isotropc approximation."""
         return lor_trans_ug_iso(ug_iso = self.ug, gamma=self.g)
       
     @property
-    def ug_mid_comov(self):
-        """Photon field energy density on the IBS_mid in the comoving frame [erg/cm^3]."""          
+    def ug_mid_comov_iso(self):
+        """Photon field energy density on the IBS_mid in the comoving frame [erg/cm^3].
+        Isotropc approximation."""          
         return lor_trans_ug_iso(ug_iso = self.ug_mid, gamma=self.g_mid)
       
-        
+    @property
+    def ug_comov_ani(self):
+        """Photon field energy density on the IBS in the comoving frame [erg/cm^3].
+        Anisotropc approximation."""
+        return self.ug / self.dopl_star**2
+      
+    @property
+    def ug_mid_comov_ani(self):
+        """Photon field energy density on the IBS_mid in the comoving frame [erg/cm^3].
+        Anisotropc approximation."""          
+        return self.ug_mid / self.dopl_star_mid**2     
+    
     ###########################################################################
     @property
     def b_pulsar(self):
@@ -1097,12 +1129,12 @@ class IBS3D: #!!!
     @property
     def b_opt(self):
         """Optical star-originating magnetic field on the IBS [G]."""
-        return self.winds.star.b(r_to_s = self.r1)
+        return self.winds.star.b(r_to_s = absv(self.r_vec))
     
     @property
     def b_opt_mid(self):
         """Optical star-originating magnetic field on the IBS_mid [G]."""
-        return self.winds.star.b(r_to_s = self.r1_mid)
+        return self.winds.star.b(r_to_s = absv(self.r_vec_mid))
     
     @property
     def b_opt_comov(self):
@@ -1149,26 +1181,40 @@ class IBS3D: #!!!
         return self.winds.star.Topt * np.ones(self.r_mid.shape)
     
     @property
-    def T_opt_eff_comov(self):
-        """Optical star effective temperature on the IBS in the comoving frame [K]."""
+    def T_opt_eff_comov_iso(self):
+        """Optical star effective temperature on the IBS in the comoving frame [K].
+        Isotropc approximation."""
         return lor_trans_Teff_iso(Teff_iso = self.T_opt_eff, gamma=self.g)
     
     @property
-    def T_opt_eff_mid_comov(self):
-        """Optical star effective temperature on the IBS_mid in the comoving frame [K]."""
+    def T_opt_eff_mid_comov_iso(self):
+        """Optical star effective temperature on the IBS_mid in the comoving frame [K].
+        Isotropc approximation."""
         return lor_trans_Teff_iso(Teff_iso = self.T_opt_eff_mid, gamma=self.g_mid)
+    
+    @property
+    def T_opt_eff_comov_ani(self):
+        """Optical star effective temperature on the IBS in the comoving frame [K].
+        Anisotropc approximation."""
+        return self.T_opt_eff / self.dopl_star
+    
+    @property
+    def T_opt_eff_mid_comov_ani(self):
+        """Optical star effective temperature on the IBS_mid in the comoving frame [K].
+        Anisotropc approximation."""
+        return self.T_opt_eff_mid / self.dopl_star_mid
     
     
     @property
     def disk_pressure(self):
         """Decretion disk pressure calculated on the IBS."""
-        return self.winds.star.decr_disk_pressure(vec_r_from_s = self.r1_vec)
+        return self.winds.star.decr_disk_pressure(vec_r_from_s = self.r_vec)
     
     
     @property
     def polar_pressure(self):
         """Polar wind pressure calculated on the IBS."""
-        return self.winds.star.polar_wind_pressure(r_from_s = absv(self.r1_vec))
+        return self.winds.star.polar_wind_pressure(r_from_s = absv(self.r_vec))
     
     @property
     def tot_external_pressure(self):

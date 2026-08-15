@@ -484,7 +484,7 @@ class Orbit:
     
     def dz(self, t):
         """Time derivative of an z-coordinate: \dot{z}. """
-        return t * 0
+        return t * 0.
     
     def vector_v(self, t):
         """ Vector of the pulsar velocity."""
@@ -498,7 +498,7 @@ class Orbit:
 
         """
         _E_tab = np.linspace(-2.5 * pi, 2.5 * pi, int(self.n))
-        t_tab = self.T/ (2 * pi) * (_E_tab - self.e * sin(_E_tab))
+        t_tab = self.T / (2. * pi) * (_E_tab - self.e * sin(_E_tab))
         self.xtab = self.x( t_tab)
         self.ytab = self.y( t_tab)
         self.ztab = self.z( t_tab)    

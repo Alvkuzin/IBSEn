@@ -6,6 +6,8 @@ IBSEn: **I**ntra**B**inary **S**hock **E**mission **n**-**n**ot-mea**n**i**n**g-
 ## Installation & Requirements 
 ### Installation
 
+**This version may be unstable. Gonna push the latest one soon.**
+
 Clone and install manually. Normal installation:
 
 ```bash
@@ -41,10 +43,10 @@ pip install -r requirements.txt
 
 Scripts now are mainly not suited for running from the command line... And I don't have proper tests yet, so to find out if the installation works, try running a very basic python script that simply initializes a lot of classes with more or less default parameters and stores the output in a file:
 ```bash
-python test_ibsen.py --testall True --ndim -1 > ibsen_test_out.txt
+python test_ibsen.py --testall True --ndim 3 > my_ibsen_test.txt
 
 ```
-Compare the output with the file `ibsen_test_results_0_5_9.txt`
+Compare the output with the file `ibsen_test_results_0_5_10.txt`
 
 ## Usage
 There is a poor attempt at the graphical interface: run it with
