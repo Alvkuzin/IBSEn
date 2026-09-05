@@ -119,27 +119,6 @@ def abs_photoel(E, Nh, abund='wilm'):
         absorp[where_defined] = np.exp(-sgm_sm * Nh * 1e22)
     
     return absorp.item() if np.ndim(E_kev) == 0 else absorp
-    
-    # if isinstance(E_kev, np.ndarray):
-    #     E_low = E_kev[E_kev <= e_min]
-    #     E_good = E_kev[np.logical_and(E_kev < e_max, E_kev > e_min)]
-    #     E_high = E_kev[E_kev > e_max]
-    #     sgm_sm = 10**logsgm_spl_use(np.log10(E_good)) * 1e6 * 1e-24 # in cm^2
-        
-    
-    #     a_low = np.zeros(E_low.size)
-    #     a_good = np.exp(-sgm_sm * Nh * 1e22)
-    #     a_high = np.zeros(E_high.size) + 1
-    #     absorp = np.concatenate((a_low, a_good, a_high))
-    # else:
-    #     if E_kev < e_min:
-    #         absorp = 0
-    #     elif E_kev > e_max:
-    #         absorp = 1
-    #     else:
-    #         sgm_sm = 10**logsgm_spl_use(np.log10(E_good)) * 1e6 * 1e-24 # in cm^2
-    #         absorp = np.exp(-sgm_sm * Nh * 1e22)
-    # return absorp
 
 def f_helper(mu0, d0):
     """
@@ -224,11 +203,12 @@ def gg_analyt(eg, x, y, R_star, T_star, nu_los, incl_los):
                   )
     
 
-def tau_gg_iso_2d(eg, x, y, R_star, T_star, incl_los, nu_los, fast=False):
+def tau_gg_iso_2d(eg, x, y, R_star, T_star, incl_los, nu_los, fast=False, z=0.):
     """
     Optical depth due to gamma-gamma pair production for a photon of energy
-    eg (in units of electron rest-energy) emitted from the position (x, y)
-    in the pulsar orbit plane. X-axis is directed from the optical star to
+    eg (in units of electron rest-energy) emitted from the position (x, y, z)
+    in the pulsar orbit plane (z=0; however you can specify arbitrary z). 
+    X-axis is directed from the optical star to
     the periastron of the pulsar. Z-axis is aligned with the direction of pulsar 
     orbital velosity; Y-axis is chosen so that [e_X x e_Y] = e_Z.
     
@@ -250,6 +230,10 @@ def tau_gg_iso_2d(eg, x, y, R_star, T_star, incl_los, nu_los, fast=False):
     nu_los : float
         The angle between the direction of X-axis and the projection of the
         LoS onto the orbital plane.
+    fast : bool, optional
+        Whether to calculate fast or properly. Default False
+    z : float, optional
+        The z-coordinate of the emission point. Default 0 
         
 
     Returns
@@ -258,7 +242,7 @@ def tau_gg_iso_2d(eg, x, y, R_star, T_star, incl_los, nu_los, fast=False):
         Optical depth at energy eg.
 
     """
-    vec_init = np.array([x, y, 0])
+    vec_init = np.array([x, y, z])
     r_init = absv(vec_init)
     n_init = n_from_v(vec_init)
     n_los = n_from_v(rotated_vector(alpha=nu_los, incl=incl_los))

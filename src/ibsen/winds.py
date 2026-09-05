@@ -570,8 +570,11 @@ winds_docstring = """
         chosen as to cover the -T/4 < t < T/4 part of the orbit. Default None
     k_time : float, optional
         Decay time constant for hysteresis calculation. Default 1.0
-    alpha_interaction float, optional
+    alpha_interaction : float, optional
         Coupling constant for hysteresis calculation. Default 1.0
+    incl_puls_vel : bool, optional
+        Whether to calculate the the winds direction for the IBS orientation
+        in the pulsar frame (incl_puls_vel==True) or not. Default False
 
 
     Attributes
@@ -625,6 +628,7 @@ class Winds: # !!!
                  t_precalculate = None,
                  k_time = 1.0,
                  alpha_interaction = 1.0,
+                 incl_puls_vel = False,
                  ):
         self.orbit = orbit
         self.star = star
@@ -633,6 +637,7 @@ class Winds: # !!!
         self.t1_pass = t1_
         self.t2_pass = t2_
         self.sys_name = star.sys_name
+        self.incl_puls_vel = incl_puls_vel
         
         self.hyst = hyst
         if t_precalculate is not None:
@@ -823,7 +828,10 @@ class Winds: # !!!
         v_orbital_pulsar =self.orbit.vector_v(t)
         vec_pe, vec_se = self._vecs(t, vec, which)
         v_wind = self.star.u_polar_w_lab_frame(vec_se = vec_se)
-        relative_v_wind = v_wind# - v_orbital_pulsar[..., :]
+        if self.incl_puls_vel:
+            relative_v_wind = v_wind - v_orbital_pulsar[..., :] # plus?
+        else:
+            relative_v_wind = v_wind
         return relative_v_wind
     
     def vec_polar_w(self, t, vec, which='pe'):
@@ -837,7 +845,9 @@ class Winds: # !!!
         n_pe = n_from_v(vec_pe)
         relative_v_wind = self.u_polar_w_pulsar_frame(t=t, vec=vec, which=which)
         n_v_w = n_from_v(relative_v_wind)
-        p_w = self.star.polar_wind_pressure(absv(vec_se)) * mydot(n_v_w, n_pe) * n_v_w
+        p_w = (self.star.polar_wind_pressure(absv(vec_se)) 
+               # * mydot(n_v_w, n_pe) 
+               * n_v_w)
         return p_w
     
     def u_disk_w_pulsar_frame(self, t, vec, which='pe'):
@@ -849,7 +859,10 @@ class Winds: # !!!
         v_orbital_pulsar =self.orbit.vector_v(t) # (3,)
         vec_pe, vec_se = self._vecs(t, vec, which)
         v_disc = self.star.u_disk_w_lab_frame(vec_se=vec_se) 
-        relative_v_disc = v_disc# - v_orbital_pulsar
+        if self.incl_puls_vel:
+            relative_v_disc = v_disc - v_orbital_pulsar # !!! plus?
+        else:
+            relative_v_disc = v_disc
         return relative_v_disc
     
     def vec_disk_w(self, t, vec, which='pe'):
@@ -866,7 +879,8 @@ class Winds: # !!!
         relative_v_disc = self.u_disk_w_pulsar_frame(t=t, vec=vec, which=which)
         n_v_d = n_from_v(relative_v_disc)
         p_d = (self.star.decr_disk_pressure(vec_se, true_an=self.orbit.true_an(t)) 
-               * mydot(n_v_d, n_pe) * n_v_d )
+               # * mydot(n_v_d, n_pe) 
+               * n_v_d )
         return p_d
     
     def vec_pulsar_p(self, t, vec, which='pe'):
@@ -920,7 +934,10 @@ class Winds: # !!!
         _nu = self.orbit.true_an(t)
         pw = self.star.polar_wind_pressure(absv(vec_se))        
         pd = self.star.decr_disk_pressure(vec_se, true_an=_nu)
-        vec_addit_zero = self.vec_addit_pressure(t)
+        if self.hyst:
+            vec_addit_zero = self.vec_addit_pressure(t)
+        else:
+            vec_addit_zero = np.zeros(3)
         padd = absv(vec_addit_zero)
         totp = pw + pd + padd
         vec_pw_zero = (pw+1e-3*totp) * n_from_v(self.u_polar_w_pulsar_frame(t, vec_se, 'se'))
@@ -960,7 +977,7 @@ class Winds: # !!!
             
         r_se_1d = self.dist_se_1d(t) # zero approximation
         r_pe_1d = rsp - r_se_1d
-        ndir = self._ext_wind_direction(t, vec_sp, which='se')
+        ndir = -self._ext_wind_direction(t, vec_sp, which='se')
         return r_pe_1d * ndir
 
 
@@ -1132,7 +1149,7 @@ class Winds: # !!!
         vec_disk1, vec_disk2 = self.vectors_of_disk_passage
         _r_scale = absv(vec_disk1)
         
-        orb_x, orb_y = self.orbit.xtab[show_cond], self.orbit.ytab[show_cond]
+        orb_x, orb_y = self.orbit.xtab_p[show_cond], self.orbit.ytab_p[show_cond]
         x_scale = np.max(np.array([
             np.abs(np.min(orb_x)), np.abs(np.max(orb_x)), 1.5*_r_scale,
             ]))
@@ -1156,10 +1173,11 @@ class Winds: # !!!
         xx2, yy2, zz2 = vec_disk2                                                 
         ax0.plot([xx1, xx2], [yy1, yy2], color='orange', ls='--', lw=2)    
         
-        add_arrow(ax0, orb_x, orb_y, 20, span=2,  color='C0', lw=1.5)
-        add_arrow(ax0, orb_x, orb_y, 60, span=2,  color='C0', lw=1.5)
-        add_arrow(ax0, orb_x, orb_y, 96, span=2,  color='C0', lw=1.5)
-        add_arrow(ax0, orb_x, orb_y, 136, span=2,  color='C0', lw=1.5)
+        ntot_orb_left = orb_x.size
+        add_arrow(ax0, orb_x, orb_y, int(ntot_orb_left/9.), span=2,  color='C0', lw=1.5)
+        add_arrow(ax0, orb_x, orb_y, int(3.*ntot_orb_left/9.), span=2,  color='C0', lw=1.5)
+        add_arrow(ax0, orb_x, orb_y, int(6.*ntot_orb_left/9.), span=2,  color='C0', lw=1.5)
+        add_arrow(ax0, orb_x, orb_y, int(8.*ntot_orb_left/9.), span=2,  color='C0', lw=1.5)
         
         ###### ------------ tabulating pressure values ------------------ #####
         

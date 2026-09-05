@@ -217,6 +217,8 @@ def calculate_sed_1zone_naima(e_photon, sed_function, dne_de, e_el, distance,
     ok = (dne_de > 0) & np.isfinite(dne_de)
     if e_el[ok].size < 2:
         raise ValueError("Less than 2 OK e-energies for Naima")
+    if np.all(dne_de == 0.):
+        return e_photon * 0.
     e_spec_for_naima = naima.models.TableModel(e_el[ok]*u.eV,
                                                (dne_de[ok])/u.eV )
     sed_object = sed_function(e_spec_for_naima, **sed_function_kwargs)
@@ -381,6 +383,7 @@ class SpectrumIBS: #!!!
                  distance = None,
                  mode='int',
                  ne_mult=0.7,
+                 ic_approx='KN',
                  nEed_syn = None,
                  nEed_ic = None):
         self.calculated = False
@@ -407,6 +410,7 @@ class SpectrumIBS: #!!!
                                D=distance)
         self.distance = _dist
         self.mode = mode
+        self.ic_approx = ic_approx
         self.ne_mult = ne_mult
         self.nEed_syn = nEed_syn if nEed_syn is not None else 51
         self.nEed_ic = nEed_ic if nEed_ic is not None else 171
@@ -569,7 +573,7 @@ class SpectrumIBS: #!!!
                                     **kwargs)
         return sed_apex # shape (e_ext.size, )
     
-    def sed_nonboosted_simple(self, e_ext, emiss_mechanism):
+    def sed_nonboosted_simple(self, e_ext, emiss_mechanism, ic_approx='KN'):
         """
         Calculates a non-boosted SED using effective values of fields
         and the total electron population summed over the whole IBS. The
@@ -613,45 +617,84 @@ class SpectrumIBS: #!!!
         dne_de_tot = np.sum(self.dne_de, axis=tuple(range(self.dne_de.ndim-1)))
         
         _pow = 0.5*(self.pe_default+1.)
-        _b_avg = np.sqrt(np.average(self.b**1.5))
+        _b_avg = np.sqrt(np.average(self.b**2)) # !!!
         _e_soft_avg = np.average( (self.temp_eff * K_BOLTZ * u.erg).to('eV').value)
-        e_el_sy = e_syn_el(e_ph=3e4, b=_b_avg, return_dim='eV')
-        e_el_ic = e_ic_el(e_ph=3e12, e_soft=_e_soft_avg, return_dim='eV', numerical_coef=4.0)
-        pe_b = index(dne_de_tot, self.e_el, e_el_sy/5, e_el_sy*5)
-        pe_u = index(dne_de_tot, self.e_el, e_el_ic/5, e_el_ic*5)
+        # e_el_sy = e_syn_el(e_ph=3e4, b=_b_avg, return_dim='eV')
+        # e_el_ic = e_ic_el(e_ph=3e12, e_soft=_e_soft_avg, return_dim='eV', numerical_coef=1.0)
+        e_el_sy_low, e_el_sy_high = (e_syn_el(e_ph=1e3, b=_b_avg, return_dim='eV'),
+                                     e_syn_el(e_ph=1e4, b=_b_avg, return_dim='eV'))
+        e_el_ic_low, e_el_ic_high = (e_ic_el(e_ph=1e12, e_soft=_e_soft_avg, return_dim='eV', numerical_coef=1.0),
+                                     e_ic_el(e_ph=1e13, e_soft=_e_soft_avg, return_dim='eV', numerical_coef=1.0))
+        # pe_b = index(dne_de_tot, self.e_el, e_el_sy/5, e_el_sy*5)
+        # 1pe_u = index(dne_de_tot, self.e_el, e_el_ic/5, e_el_ic*5)
+        pe_b = index(dne_de_tot, self.e_el, e_el_sy_low, e_el_sy_high)
+        pe_u = index(dne_de_tot, self.e_el, e_el_ic_low, e_el_ic_high)
+        if ic_approx.lower() == 'kn':
+            T_pow = 2.0
+            sed_ic_slope = pe_u - 1.
+        elif ic_approx.lower() in ('t', 'th', 'thompson'):
+            T_pow = 0.5*(pe_u+5.)
+            sed_ic_slope = (pe_u - 3.) / 2.
+        else:
+            raise ValueError("ic_approx should be either KN or Thompson.")
         
-        _pow_b = 0.5*(pe_b+1) if not np.isnan(pe_b) else _pow
-        _pow_u = 0.5*(pe_u+1) if not np.isnan(pe_u) else _pow
-        sy_r = (self.e_el > e_el_sy/5)  & (self.e_el < e_el_sy*5)
-        n_i_syn = trapz_loglog(self.dne_de[..., sy_r], self.e_el[sy_r], axis=-1)
-        ic_r = (self.e_el > e_el_ic/5)  & (self.e_el < e_el_ic*5)
-        n_i_ic = trapz_loglog(self.dne_de[..., ic_r], self.e_el[ic_r], axis=-1)
         
+        _pow_b = 0.5*(pe_b+1.) if not np.isnan(pe_b) else _pow
+        # _pow_u = 0.25*(pe_u+1.) if not np.isnan(pe_u) else _pow # !!!
+        # _pow_u = 0.5*(pe_u+5.) if not np.isnan(pe_u) else _pow # !!!
+        
+        _pow_u = 1.
+        
+        sy_r = (self.e_el > e_el_sy_low)  & (self.e_el < e_el_sy_high)
+        n_i_syn = trapz_loglog(self.dne_de[..., sy_r]*self.e_el[sy_r], self.e_el[sy_r], axis=-1)
+        ic_r = (self.e_el > e_el_ic_low)  & (self.e_el < e_el_ic_high)
+        n_i_ic = trapz_loglog(self.dne_de[..., ic_r]*self.e_el[ic_r], self.e_el[ic_r], axis=-1)
+            
+        # n_sum_syn =  np.sum(n_i_syn)
+        # n_sum_ic = np.sum(n_i_ic)
+        # if n_sum_syn
         n_norm_sy = n_i_syn / np.sum(n_i_syn) 
         n_norm_ic = n_i_ic / np.sum(n_i_ic) 
         
+        # abs_avg = np.average(self.abs_tot, axis=-1)
+        abs_avg = 1.0
+        
         
         if emiss_mechanism == 'syn':
+            sed_slope = (pe_b - 3.) / 2.
             emiss_function = Synchrotron
-            b_eff = avg(self.b, power=_pow_b, weights=self.dopls**self.delta_power  * n_i_syn)
+            b_eff = avg(self.b, power=_pow_b, weights=self.dopls**(self.delta_power + sed_slope-1.)  * n_i_syn)
             kwargs = dict(B = b_eff * u.G, nEed=self.nEed_syn)
             rescale_coef = (self.b / b_eff) ** _pow_b * n_norm_sy
             
-        if emiss_mechanism in ('ic', 'ic_ani'):
+        if emiss_mechanism in ('ic', ):
             emiss_function = InverseCompton
-            u_eff = avg(self.u, power=_pow_u, weights=self.dopls**self.delta_power  * n_i_ic)
-            temp_eff_eff = avg(self.temp_eff, power=_pow_u, weights=self.dopls**self.delta_power )
-            rescale_coef = (self.u / u_eff) ** _pow_u * n_norm_ic
-            
-        if emiss_mechanism == 'ic':
+            w_ic = self.dopls**(self.delta_power + sed_ic_slope-1.) * n_i_ic
+            temp_eff_eff = avg(self.temp_eff, power=T_pow, weights=w_ic) # !!!
+            u_eff = avg(self.u, power=0.25 * T_pow, weights=w_ic)
+            rescale_coef = (self.temp_eff / temp_eff_eff) ** T_pow * n_norm_ic    
             kwargs = dict(seed_photon_fields=[['star',
                                 temp_eff_eff * u.K,
                                 u_eff * u.erg / u.cm**3]],
                           nEed=self.nEed_ic)
             
         if emiss_mechanism == 'ic_ani':
-            scat_ang_eff = avg(self.scat_ang, power=_pow_u, 
-                               weights=self.dopls**self.delta_power * n_i_ic)
+            emiss_function = InverseCompton
+            w_ic_a = self.dopls**(self.delta_power + sed_ic_slope-1.) * n_i_ic * (1. - np.cos(self.scat_ang))
+
+            temp_eff_eff = avg(self.temp_eff, power=T_pow, weights=w_ic_a) # !!!
+            u_eff = avg(self.u, power=0.25 * T_pow, weights=w_ic_a)
+            rescale_coef = (self.temp_eff / temp_eff_eff) ** T_pow * n_norm_ic    
+            one_minus_cos_psi_eff = avg((1. - np.cos(self.scat_ang)),
+                                         power=None, 
+                                         weights=w_ic_a,
+                                        )
+            scat_ang_eff = np.arccos(1. - one_minus_cos_psi_eff)
+            if np.abs(one_minus_cos_psi_eff) < 1e-3:
+                rescale_coef *= (1. - np.cos(self.scat_ang) + 1e-3) / (one_minus_cos_psi_eff + 1e-3)
+            else:
+                rescale_coef *= (1. - np.cos(self.scat_ang)) / one_minus_cos_psi_eff
+            
             
             kwargs = dict(seed_photon_fields=[['star',
                                 temp_eff_eff * u.K,
@@ -815,6 +858,7 @@ class SpectrumIBS: #!!!
         # -------------------------------------------------------------------------
         e_ext = self._extended_photon_energies(e_ph=e_ph)
         sed_tot = np.zeros(e_ph.size)
+        sed_s_notabs = np.zeros(self.spatial_shape + (e_ph.size,))
         sed_s_ = np.zeros(self.spatial_shape + (e_ph.size,))
 
         for mechanism in self.mechanisms:
@@ -832,7 +876,8 @@ class SpectrumIBS: #!!!
                 absorb_to_use = self.abs_tot
                 if self.method == 'simple':
                     sed_s_nonboosted = self.sed_nonboosted_simple(e_ext=e_ext,
-                                                    emiss_mechanism=emiss_key)
+                                                    emiss_mechanism=emiss_key,
+                                                    ic_approx=self.ic_approx)
                 if self.method == 'full':
                     sed_s_nonboosted = self.sed_nonboosted_full(e_ext=e_ext,
                                                 emiss_mechanism=emiss_key,
@@ -855,6 +900,7 @@ class SpectrumIBS: #!!!
 
             sed_tot += sed_here
             sed_s_ += sed_s_here 
+            sed_s_notabs += sed_s_nonabs_boosted
            
             if emiss_key == 'syn':
                 self.sed_sy = sed_here
@@ -898,6 +944,8 @@ class SpectrumIBS: #!!!
         
         _mask = np.logical_and(self.e_ph >= e1/1.2, self.e_ph <= e2*1.2)
         _good = _mask & np.isfinite(self.sed)
+        if np.all(self.sed[_good] == 0.):
+            return 0.
         # Below, there's the interpolation. Without `fill_value`, the interpolation sed_here 
         # later in this funcion sometimes raises an error saying that e1, e2 are out of
         # interpolation bands. That should not happen, but apparently IS happening 
@@ -972,6 +1020,8 @@ class SpectrumIBS: #!!!
             
         _mask = np.logical_and(self.e_ph >= e1/1.2, self.e_ph <= e2*1.2)
         _good = _mask & np.isfinite(self.sed)
+        if np.all(self.sed[_good] == 0.):
+            return np.nan
         ind_ = index_simple(self.sed[_good] / self.e_ph[_good]**2,
                             self.e_ph[_good])
         return ind_

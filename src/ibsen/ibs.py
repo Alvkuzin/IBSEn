@@ -6,7 +6,8 @@ from ibsen.winds import Winds
 from ibsen.ibs_norm import IBS_norm, IBS_norm3D
 from ibsen.utils import plot_with_gradient, \
  lor_trans_ug_iso, lor_trans_b_iso, lor_trans_Teff_iso, rotated_vector, absv, \
-     plot_surface_quads, vector_angle, n_from_v, vec_between, trapz_loglog, doppler_delta
+     plot_surface_quads, vector_angle, n_from_v, vec_between, trapz_loglog, doppler_delta,\
+         project_point_for_gg
 from ibsen.absorption.absorption import gg_analyt, gg_tab
 from ibsen.get_obs_data import known_names
 
@@ -214,13 +215,15 @@ class IBS: #!!!
         The tangent is added pi + nu_tr to (at the stage of 'IBS.rotate').
         To the x and y - coordinates of the IBS there is also added the
         vector of the real s-p distance at the moment (in cm).
-        Yes, read this terrible English sentence which I translated from 
-        Russian in my head. Suffer.
         ---
         Returns new rescaled ibs_resc:IBS
         """
         _r_sp = self.winds.orbit.r(self.t_forbeta)
         _x_sp, _y_sp = self.winds.orbit.x(self.t_forbeta), self.winds.orbit.y(self.t_forbeta)
+        _x_p, _y_p = self.winds.orbit.x_p(self.t_forbeta), self.winds.orbit.y_p(self.t_forbeta)
+        _x_s, _y_s = self.winds.orbit.x_opt(self.t_forbeta), self.winds.orbit.y_opt(self.t_forbeta)
+        
+        
         _nu_tr = self.winds.orbit.true_an(self.t_forbeta)
         x_sh, y_sh = self.ibs_n.x, self.ibs_n.y
         x_sh_mid, y_sh_mid = self.ibs_n.x_mid, self.ibs_n.y_mid
@@ -228,10 +231,10 @@ class IBS: #!!!
         x_sh, y_sh = x_sh * _r_sp, y_sh * _r_sp
         x_sh_mid, y_sh_mid = x_sh_mid * _r_sp, y_sh_mid * _r_sp
         
-        x_sh += _r_sp * cos(_nu_tr)
-        y_sh += _r_sp * sin(_nu_tr)
-        x_sh_mid += _r_sp * cos(_nu_tr)
-        y_sh_mid += _r_sp * sin(_nu_tr)
+        x_sh = x_sh + _x_p[None]
+        y_sh = y_sh + _y_p[None]
+        x_sh_mid = x_sh + _x_p[None]
+        y_sh_mid = y_sh + _y_p[None]
         
         self.x = x_sh
         self.y = y_sh
@@ -243,29 +246,35 @@ class IBS: #!!!
             setattr(self, name, _r_sp * getattr(self.ibs_n, name))
    
         
-        self.r1_mid = np.sqrt(x_sh_mid**2 + y_sh_mid**2)
-        self.r_mid = np.sqrt( (x_sh_mid-_x_sp)**2
-                              + (y_sh_mid - _y_sp)**2)
+        self.r1_mid = np.sqrt((x_sh_mid - _x_s)**2 + (y_sh_mid - _y_s)**2) # star-to-IBS
+        self.r_mid = np.sqrt( (x_sh_mid-_x_p)**2
+                              + (y_sh_mid - _y_p)**2) # pulsar-to-IBS
         
-        self.x_apex_coord = self.r_se/self.r_sp * self.winds.orbit.x(self.t_forbeta)
-        self.y_apex_coord = self.r_se/self.r_sp * self.winds.orbit.y(self.t_forbeta)
+        self.x_apex_coord = self.r_se/self.r_sp * self.winds.orbit.x(self.t_forbeta) + self.winds.orbit.x_opt(self.t_forbeta)
+        self.y_apex_coord = self.r_se/self.r_sp * self.winds.orbit.y(self.t_forbeta) + self.winds.orbit.y_opt(self.t_forbeta)
         self.symm_ax = n_from_v(np.array([self.x_apex_coord, self.y_apex_coord, 0.]))
         self.scatter_angle_apex = vector_angle(self.winds.orbit.vector_sp(self.t_forbeta),
                                                self.unit_los)
         self.dopl_apex_eff = doppler_delta(self.gamma_max,
                         vector_angle(self.winds.orbit.unit_los, self.symm_ax))
+        self.r_vec = np.array([np.array([_x, _y, 0.]) for _x, _y in zip(self.x, self.y)])
+        self.r_vec_mid = np.array([np.array([_x, _y, 0.]) for _x, _y in zip(self.x_mid, self.y_mid)])
+        
 
         
     def rescale_gamma(self):
-        r_pIBS = np.array([np.array([_x, _y, 0.]) for _x, _y in zip(self.x, self.y)])
-        r_sp = self.winds.orbit.vector_sp(self.t_forbeta)
-        r_sIBS = r_pIBS + r_sp[None, :]
-        pdisk = self.winds.star.decr_disk_pressure(r_sIBS)
-        ppolar = self.winds.star.polar_wind_pressure(absv(r_sIBS))
-        ppulsar = self.winds.pulsar.wind_pressure(absv(r_pIBS))
+        # r_pIBS = np.array([np.array([_x, _y, 0.]) for _x, _y in zip(self.x, self.y)])
+        vec_sp = self.winds.orbit.vector_sp(self.t_forbeta)
+        vec_sIBS = self.r_vec
+        vec_pIBS = -(vec_sp[None, :] - vec_sIBS)
+        # r_sIBS = r_pIBS + r_sp[None, :]
+        pdisk = self.winds.star.decr_disk_pressure(vec_sIBS)
+        ppolar = self.winds.star.polar_wind_pressure(absv(vec_sIBS))
+        ppulsar = self.winds.pulsar.wind_pressure(absv(vec_pIBS))
         dispers_out = np.std((pdisk + ppolar) / ppulsar )
         self.ibs_n.gamma_max = gamma_test(self.gamma_max, dispers_out, self.coef_quench)
         
+    
         
     
     def s_interp(self, s_, what):
@@ -310,6 +319,20 @@ class IBS: #!!!
     def g_mid(self):
         """Bulk Lorentz factor along the IBS-mid"""
         return self.gma(s = self.s_mid)
+    
+    @property
+    def dopl_star(self):
+        """Doppler-factor at the IBS for the direction to the star"""
+        return doppler_delta(self.g,
+                vector_angle(self.unit_beta, n_from_v(self.r_vec))
+                )
+    
+    @property
+    def dopl_star_mid(self):
+        """Doppler-factor at the IBS-mid for the direction to the star"""
+        return doppler_delta(self.g_mid,
+                vector_angle(self.unit_beta_mid, n_from_v(self.r_vec_mid))
+                )
     
     
     def gg_abs(self, e_phot, analyt=False, what_return='abs'):
@@ -446,16 +469,38 @@ class IBS: #!!!
         """Photon field energy density on the IBS_mid [erg/cm^3]."""
         return self.winds.star.u_g_density(r_from_s = self.r1_mid)
     
+    # @property
+    # def ug_comov(self):
+    #     """Photon field energy density on the IBS in the comoving frame [erg/cm^3]."""
+    #     return lor_trans_ug_iso(ug_iso = self.ug, gamma=self.g)
+      
+    # @property
+    # def ug_mid_comov(self):
+    #     """Photon field energy density on the IBS_mid in the comoving frame [erg/cm^3]."""          
+    #     return lor_trans_ug_iso(ug_iso = self.ug_mid, gamma=self.g_mid)
     @property
-    def ug_comov(self):
-        """Photon field energy density on the IBS in the comoving frame [erg/cm^3]."""
+    def ug_comov_iso(self):
+        """Photon field energy density on the IBS in the comoving frame [erg/cm^3].
+        Isotropc approximation."""
         return lor_trans_ug_iso(ug_iso = self.ug, gamma=self.g)
       
     @property
-    def ug_mid_comov(self):
-        """Photon field energy density on the IBS_mid in the comoving frame [erg/cm^3]."""          
+    def ug_mid_comov_iso(self):
+        """Photon field energy density on the IBS_mid in the comoving frame [erg/cm^3].
+        Isotropc approximation."""          
         return lor_trans_ug_iso(ug_iso = self.ug_mid, gamma=self.g_mid)
       
+    @property
+    def ug_comov_ani(self):
+        """Photon field energy density on the IBS in the comoving frame [erg/cm^3].
+        Anisotropc approximation."""
+        return self.ug / self.dopl_star**2
+      
+    @property
+    def ug_mid_comov_ani(self):
+        """Photon field energy density on the IBS_mid in the comoving frame [erg/cm^3].
+        Anisotropc approximation."""          
+        return self.ug_mid / self.dopl_star_mid**2 
         
     ###########################################################################
     @property
@@ -534,15 +579,39 @@ class IBS: #!!!
         Simply the star temperature everywhere."""
         return self.winds.star.Topt * np.ones(self.r_mid.size)
     
+    # @property
+    # def T_opt_eff_comov(self):
+    #     """Optical star effective temperature on the IBS in the comoving frame [K]."""
+    #     return lor_trans_Teff_iso(Teff_iso = self.T_opt_eff, gamma=self.g)
+    
+    # @property
+    # def T_opt_eff_mid_comov(self):
+    #     """Optical star effective temperature on the IBS_mid in the comoving frame [K]."""
+    #     return lor_trans_Teff_iso(Teff_iso = self.T_opt_eff_mid, gamma=self.g_mid)
+    
     @property
-    def T_opt_eff_comov(self):
-        """Optical star effective temperature on the IBS in the comoving frame [K]."""
+    def T_opt_eff_comov_iso(self):
+        """Optical star effective temperature on the IBS in the comoving frame [K].
+        Isotropc approximation."""
         return lor_trans_Teff_iso(Teff_iso = self.T_opt_eff, gamma=self.g)
     
     @property
-    def T_opt_eff_mid_comov(self):
-        """Optical star effective temperature on the IBS_mid in the comoving frame [K]."""
+    def T_opt_eff_mid_comov_iso(self):
+        """Optical star effective temperature on the IBS_mid in the comoving frame [K].
+        Isotropc approximation."""
         return lor_trans_Teff_iso(Teff_iso = self.T_opt_eff_mid, gamma=self.g_mid)
+    
+    @property
+    def T_opt_eff_comov_ani(self):
+        """Optical star effective temperature on the IBS in the comoving frame [K].
+        Anisotropc approximation."""
+        return self.T_opt_eff / self.dopl_star
+    
+    @property
+    def T_opt_eff_mid_comov_ani(self):
+        """Optical star effective temperature on the IBS_mid in the comoving frame [K].
+        Anisotropc approximation."""
+        return self.T_opt_eff_mid / self.dopl_star_mid
 
     
     peek_docs = f"""
@@ -583,7 +652,13 @@ class IBS: #!!!
     """
     def peek(self, fig=None, ax=None, show_winds=False,
              ibs_color='k', to_label=True,
-             showtime=None, E_for_gg=1e12):
+             showtime=None, E_for_gg=1e12,
+             special_contours_winds=None, kwargs_special_contours_winds={},
+             min_param=None, max_param=None,
+             label_colorbar=None,
+             colorbar_kwargs={},
+             plot_puls_pos=True,
+             plot_line_to_puls=True):
         import matplotlib.colors as mcolors
         
 
@@ -617,10 +692,13 @@ class IBS: #!!!
                 if not hasattr(self, ibs_color):
                     raise AttributeError(f"No attribute '{ibs_color}' in {type(self).__name__}")
                 color_param = getattr(self, ibs_color)
-
+            
+            if label_colorbar is None:
+                label_colorbar = ibs_color
             line_ = plot_with_gradient(fig=fig, ax=ax, xdata=self.x, ydata=self.y,
                             some_param=color_param, colorbar=to_label, lw=2, ls='-',
-                            colorbar_label=ibs_color)
+                            colorbar_label=label_colorbar, minimum=min_param, maximum=max_param,
+                            colorbar_kwargs=colorbar_kwargs)
 
         elif mcolors.is_color_like(ibs_color):
             line_ = ax.plot(self.x, self.y, color=ibs_color, label = label)     
@@ -632,21 +710,24 @@ class IBS: #!!!
             if not isinstance(self.winds, Winds):
                 raise ValueError("You should provide winds:Winds to show the winds.")
             self.winds.peek(ax=ax, showtime=showtime,
-                            plot_rs=False)
+                            plot_rs=False, special_contours=special_contours_winds,
+                            kwargs_special_contours=kwargs_special_contours_winds)
 
         # if rescaled:
-        puls_vector = self.winds.orbit.vector_sp(self.t_forbeta)
+        puls_vector = self.winds.orbit.vector_p(self.t_forbeta)
         _xp, _yp = puls_vector[0], puls_vector[1]
-        ax.scatter(_xp, _yp, color='b') # pulsaR
+        if plot_puls_pos:
+            ax.scatter(_xp, _yp, color='b') # pulsaR
         # ...and the star was alreay plotted in the winds.peek()
-        ax.plot( [0, 1.5*_xp], [0, 1.5*_yp], color='k', alpha=0.3, ls='--',)
+        if plot_line_to_puls:
+            ax.plot( [0, 1.5*_xp], [0, 1.5*_yp], color='k', alpha=0.3, ls='--',)
 
         ##################################################################################
         if showtime is None:
             showtime = [-self.winds.orbit.T/2, self.winds.orbit.T/2]
         show_cond  = np.logical_and(self.winds.orbit.ttab > showtime[0], 
                                     self.winds.orbit.ttab < showtime[1])
-        orb_x, orb_y = self.winds.orbit.xtab[show_cond], self.winds.orbit.ytab[show_cond]
+        orb_x, orb_y = self.winds.orbit.xtab_p[show_cond], self.winds.orbit.ytab_p[show_cond]
         x_scale = np.max(np.array([
             np.abs(np.min(orb_x)), np.abs(np.max(orb_x))
             ]))
@@ -658,7 +739,7 @@ class IBS: #!!!
         ax.set_ylim(-1.2*y_scale, 1.2*y_scale) 
         
             
-        ax.legend()
+        # ax.legend()
         return line_ 
     peek.__doc__ = peek_docs
 
@@ -771,10 +852,12 @@ class IBS3D: #!!!
         if self.orientation is None:
             self.beta = self.winds.beta_eff(self.t_forbeta)
             self.r_se = self.winds.dist_se_1d(self.t_forbeta)
+            self.r_pe = self.r_sp - self.r_se
             self.symm_ax = n_from_v(self.winds.orbit.vector_sp(self.t_forbeta))
         else:
             vec_pe_3d = self.winds.vec_pe_3d(self.t_forbeta) 
             # r_pe = absv(vec_pe_3d)
+            self.r_pe = absv(vec_pe_3d)
             self.r_se = absv(vec_pe_3d + vec_sp)
             self.symm_ax = -n_from_v(vec_pe_3d)
             self.beta = self.winds.beta_eff(self.t_forbeta, orientation=self.orientation)
@@ -801,16 +884,25 @@ class IBS3D: #!!!
         Returns new rescaled ibs_resc:IBS
         """
         r_sp_vec = self.winds.orbit.vector_sp(self.t_forbeta)
+        r_p_vec = self.winds.orbit.vector_p(self.t_forbeta)
+        r_s_vec = self.winds.orbit.vector_opt(self.t_forbeta)
+        
         self.vec_sp = r_sp_vec
+        self.vec_p = r_p_vec
+        self.vec_s = r_s_vec
+        
         _r_sp = absv(r_sp_vec)
-        ### rescale ans shift vector stuff:
+        ### rescale and shift vector stuff:
         for name in ("r_vec", "r1_vec"):
             for suffix in ("", "_mid"):
                 norm_vec = getattr(self.ibs_n, name+suffix)
                 rescaled_vec = _r_sp * norm_vec
-                shifted_rotated_vec = rescaled_vec + r_sp_vec[None, None, :]
+                shifted_rotated_vec = rescaled_vec + r_p_vec[None, None, :]
                 setattr(self, name+suffix, shifted_rotated_vec)
-                
+        
+        self.vec_sIBS = -r_s_vec[None, None, :] + self.r_vec
+        self.vec_sIBS_mid = -r_s_vec[None, None, :] + self.r_vec_mid
+        
 
         for name, i in zip(("x", "y", "z"), (0, 1, 2)):
             for suffix in ("", "_mid"):
@@ -821,23 +913,24 @@ class IBS3D: #!!!
                      "s_m", "s_p", "s_mid", "ds", "dx", "dy", "s_max_cm"):
             setattr(self, name, _r_sp * getattr(self.ibs_n, name))
    
+        vec_apex = self.winds.orbit.vector_p(self.t_forbeta) + (-self.symm_ax) * self.r_pe 
+        self.x_apex_coord = vec_apex[0]
+        self.y_apex_coord = vec_apex[1]
+        vec_s_apex = (-r_s_vec) + vec_apex
         
-        self.x_apex_coord = self.r_se/self.r_sp * self.winds.orbit.x(self.t_forbeta)
-        self.y_apex_coord = self.r_se/self.r_sp * self.winds.orbit.y(self.t_forbeta)
-        self.scatter_angle_apex = vector_angle(self.winds.orbit.vector_sp(self.t_forbeta),
-                                               self.unit_los)
+        # self.x_apex_coord = self.r_se/self.r_sp * self.winds.orbit.x(self.t_forbeta) + self.winds.orbit.x_opt(self.t_forbeta)
+        # self.y_apex_coord = self.r_se/self.r_sp * self.winds.orbit.y(self.t_forbeta) + self.winds.orbit.y_opt(self.t_forbeta)
+        self.scatter_angle_apex = vector_angle(vec_s_apex, self.unit_los)
         self.dopl_apex_eff = doppler_delta(self.gamma_max,
                         vector_angle(self.winds.orbit.unit_los, self.symm_ax))
         
-        self.r_from_s = absv(self.r_vec)
-        self.r_from_s_mid = absv(self.r_vec_mid)
+        self.r_from_s = absv(self.vec_sIBS)
+        self.r_from_s_mid = absv(self.vec_sIBS_mid)
         
         
-        
-    
     def rescale_gamma(self):
-        pdisk = self.winds.star.decr_disk_pressure(self.r_vec)
-        ppolar = self.winds.star.polar_wind_pressure(absv(self.r_vec))
+        pdisk = self.winds.star.decr_disk_pressure(self.vec_sIBS)
+        ppolar = self.winds.star.polar_wind_pressure(absv(self.vec_sIBS))
         ppulsar = self.winds.pulsar.wind_pressure(self.r)
         dispers_out = np.std((pdisk + ppolar) / ppulsar )
         self.ibs_n.gamma_max = gamma_test(self.gamma_max, dispers_out, self.coef_quench)
@@ -891,14 +984,14 @@ class IBS3D: #!!!
     def dopl_star(self):
         """Doppler-factor at the IBS for the direction to the star"""
         return doppler_delta(self.g,
-                vector_angle(self.unit_beta, -n_from_v(self.r_vec))
+                vector_angle(self.unit_beta, n_from_v(self.vec_sIBS))
                 )
     
     @property
     def dopl_star_mid(self):
         """Doppler-factor at the IBS-mid for the direction to the star"""
         return doppler_delta(self.g_mid,
-                vector_angle(self.unit_beta_mid, -n_from_v(self.r_vec_mid))
+                vector_angle(self.unit_beta_mid, n_from_v(self.vec_sIBS_mid))
                 )
     
     def gg_abs(self, e_phot, analyt=False, what_return='abs'):
@@ -934,12 +1027,23 @@ class IBS3D: #!!!
                          R_star=self.winds.star.Ropt, T_star = self.winds.star.Topt,
                          nu_los=self.winds.orbit.nu_los,
                          incl_los=self.winds.orbit.incl_los)
-                           for _x, _y in zip(self.x[0, :], self.y[0, :])])
+                           for _x, _y in zip(self.vec_sIBS[0, :, 0], self.vec_sIBS[0, :, 1])])
+            gg_res = np.array([gg_res_1horn for _i in range(self.n_phi)])
         else:
-            gg_res_1horn = gg_tab(E=e_phot, x=self.x[0, :], y=self.y[0, :], 
+            proj_vecs = project_point_for_gg(self.vec_sIBS, self.winds.orbit.unit_los)
+            # xproj, yproj = project_point_for_gg(self.r_vec_mid, self.winds.orbit.unit_los)
+            # xproj, yproj = self.x, self.y
+            # gg_res = np.empty((self.n_phi, self.n, e_phot.size))
+            # for i_phi in range(self.n_phi):
+            #     gg_res[i_phi] = gg_tab(E=e_phot, x=xproj[i_phi, :], y=yproj[i_phi, :], 
+            #                     orb=self.winds.orbit,
+            #                     filename=filename, what_return=what_return)
+            xproj, yproj = np.average(proj_vecs[..., 0], axis=0), np.average(proj_vecs[..., 1], axis=0)
+            gg_res_1horn = gg_tab(E=e_phot, x=xproj, y=yproj, 
                             orb=self.winds.orbit,
                             filename=filename, what_return=what_return)
-        gg_res = np.array([gg_res_1horn for _i in range(self.n_phi)])
+            gg_res = np.array([gg_res_1horn for _i in range(self.n_phi)])
+        
         return gg_res
     
     
@@ -973,12 +1077,22 @@ class IBS3D: #!!!
                          R_star=self.winds.star.Ropt, T_star = self.winds.star.Topt,
                          nu_los=self.winds.orbit.nu_los,
                          incl_los=self.winds.orbit.incl_los)
-                           for _x, _y in zip(self.x_mid[0, :], self.y_mid[0, :])])
+                           for _x, _y in zip(self.vec_sIBS_mid[0, :, 0], self.vec_sIBS_mid[0, :, 1])])
+            gg_res = np.array([gg_res_1horn for _i in range(self.n_phi)])
         else:
-            gg_res_1horn = gg_tab(E=e_phot, x=self.x_mid[0, :], y=self.y_mid[0, :], 
+            proj_vecs_mid = project_point_for_gg(self.vec_sIBS_mid, self.winds.orbit.unit_los)
+            # xproj, yproj = project_point_for_gg(self.r_vec_mid, self.winds.orbit.unit_los)
+            # xproj, yproj = np.average(self.x_mid, axis=0), np.average(self.y_mid, axis=0)
+            xproj, yproj = np.average(proj_vecs_mid[..., 0], axis=0), np.average(proj_vecs_mid[..., 1], axis=0)
+            gg_res_1horn = gg_tab(E=e_phot, x=xproj, y=yproj, 
                             orb=self.winds.orbit,
                             filename=filename, what_return=what_return)
-        gg_res = np.array([gg_res_1horn for _i in range(self.n_phi)])
+            gg_res = np.array([gg_res_1horn for _i in range(self.n_phi)])
+        # else:
+        #     gg_res_1horn = gg_tab(E=e_phot, x=self.x_mid[0, :], y=self.y_mid[0, :], 
+        #                     orb=self.winds.orbit,
+        #                     filename=filename, what_return=what_return)
+        # gg_res = np.array([gg_res_1horn for _i in range(self.n_phi)])
         return gg_res
     
     def gg_abs_apex(self, e_phot, analyt=False, what_return='abs'):
@@ -1012,14 +1126,19 @@ class IBS3D: #!!!
 
         if analyt:
             gg_res = gg_analyt(eg = e_phot / 5.11e5,
-                         x = self.x_apex, y = self.y_apex,
-                         R_star=self.winds.star.Ropt, T_star = self.winds.star.Topt,
+                         x = self.x_apex - self.vec_s[0],
+                         y = self.y_apex - self.vec_s[1],
+                         R_star=self.winds.star.Ropt,
+                         T_star = self.winds.star.Topt,
                          nu_los=self.winds.orrbit.nu_los,
                          incl_los=self.winds.orbit.incl_los)
         else:
-            gg_res = gg_tab(E=e_phot, x=self.x_apex_coord, y=self.y_apex_coord,
+            gg_res = gg_tab(E=e_phot, 
+                            x=self.x_apex_coord - self.vec_s[0],
+                            y=self.y_apex_coord - self.vec_s[1],
                             orb=self.winds.orbit,
-                            filename=filename, what_return=what_return)
+                            filename=filename, 
+                            what_return=what_return)
         return gg_res
     
     @property
@@ -1031,7 +1150,7 @@ class IBS3D: #!!!
         returns : integrated p, shape of (Nphi, N)
         """
         param = np.geomspace(1e-3, 1., 27)
-        vecs_s_ibs = vec_between(vec_i = np.zeros((3,)), vec_f = self.r_vec, param=param)
+        vecs_s_ibs = vec_between(vec_i = np.zeros((3,)), vec_f = self.vec_sIBS, param=param)
         ps = (self.winds.star.polar_wind_pressure(r_from_s=absv(vecs_s_ibs)) + 
              self.winds.star.decr_disk_pressure(vec_r_from_s=vecs_s_ibs))
         ps[absv(vecs_s_ibs) < self.winds.star.Ropt] = 1e-100
@@ -1047,7 +1166,7 @@ class IBS3D: #!!!
         returns : integrated p, shape of (Nphi, N-1)
         """
         param = np.geomspace(1e-3, 1., 27)
-        vecs_s_ibs = vec_between(vec_i = np.zeros((3,)), vec_f = self.r_vec_mid, param=param)
+        vecs_s_ibs = vec_between(vec_i = np.zeros((3,)), vec_f = self.vec_sIBS, param=param)
         ps = (self.winds.star.polar_wind_pressure(r_from_s=absv(vecs_s_ibs)) + 
              self.winds.star.decr_disk_pressure(vec_r_from_s=vecs_s_ibs))
         ps[absv(vecs_s_ibs) < self.winds.star.Ropt] = 1e-100
@@ -1356,7 +1475,7 @@ class IBS3D: #!!!
         # ax.set_zlim(-2, 2)
         xlos_, ylos_, zlos_ = self.unit_los * x_scale
         ax.quiver(0, 0, 0, 1.*xlos_, 1.*ylos_, 1.*zlos_, arrow_length_ratio=0.12, linewidth=2, color='g')
-        ax.legend()
+        # ax.legend()
         # return line_ 
         return ax
 

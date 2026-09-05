@@ -503,8 +503,8 @@ def avg(arr, weights=None, power=None, axis=None):
 
     """
     if power is None:
-        power = 1.
-        
+        return (np.sum(arr * weights, axis=axis) / 
+                np.sum(weights, axis=axis))
     return (np.sum(arr**power * weights, axis=axis) / 
             np.sum(weights, axis=axis))**(1. / power)
 

@@ -1558,6 +1558,9 @@ class ElectronsOnIBS: #!!!
         if self.ibs.ndim == 2:
             dNe_de_mid_comov= np.zeros((self.ibs.s_mid.size, e_comov.size))
             for i_s, gamma in zip( range(self.ibs.s_mid.size), self.ibs.g_mid ):
+                # if (self.e_vals.size<2) or (self.dNe_de_mid[i_s, :].size<2):
+                #     raise ValueError(f'in e-trans, e-size={self.e_vals.size}, dnde size={self.dNe_de_mid[i_s, :].size}')
+                # print(self.e_vals.size, self.dNe_de_mid[i_s, :].size)    
                 e_, dn_comov_ = lor_trans_e_spec_iso(E_lab=self.e_vals,
                                                      dN_dE_lab=self.dNe_de_mid[i_s, :],
                                                      gamma=gamma,

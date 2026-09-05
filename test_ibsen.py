@@ -42,7 +42,7 @@ def test_func(method='simple', ibs_ndims=(2, ), coolings=('stat_ibs',)):
         for cooling in coolings:
             print(f"----- using the cooling law: {cooling} -----")
             
-            elev = ElectronsOnIBS(ibs=ibs, cooling=cooling, eta_a=1)
+            elev = ElectronsOnIBS(ibs=ibs, cooling=cooling, eta_a=1.)
             elev.calculate()
             print('tot number of e on IBS = ', elev.ntot)
                 
@@ -51,15 +51,15 @@ def test_func(method='simple', ibs_ndims=(2, ), coolings=('stat_ibs',)):
                                delta_power=3.)
             e_calc = np.concatenate(((loggrid(3e2/1.2, 1e4*1.2, 37)), loggrid(4e11/1.2, 1e13*1.2, 37)))
             spec.calculate(e_ph = e_calc)
-            print('from spec, flux 0.3-10 keV = ', spec.flux(300, 1e4, epow=1))
-            print('from spec, flux 0.4-10 TeV = ', spec.flux(4e11, 1e13, epow=1))
+            print('from spec, flux 0.3-10 keV = ', spec.flux(300, 1e4, epow=1.))
+            print('from spec, flux 0.4-10 TeV = ', spec.flux(4e11, 1e13, epow=1.))
             
                 
             lc = LightCurve(times = np.array([t]), sys_name='psrb',
-                            bands = ([300, 1e4], [4e11, 1e13]),
-                            epows=(1, 1),
+                            bands = ([300., 1e4], [4e11, 1e13]),
+                            epows=(1., 1.),
                             cooling=cooling,
-                            f_d=f_d,  eta_a=1, 
+                            f_d=f_d,  eta_a=1., 
                             abs_photoel=True,
                             delta_power=3.,
                             puls_b_ref=puls_b_ref, puls_r_ref=1e13, abs_gg=abs_gg,

@@ -123,6 +123,9 @@ full_spec : bool, optional
     hyst, k_time, alpha_interaction : bool or float, optional
         For the stand-off point calculation with hysteresis, see docs for 
         `Winds`.
+    incl_puls_vel : bool, optional
+        Whether to calculate the the winds direction for the IBS orientation
+        in the pulsar frame (incl_puls_vel==True) or not. Default False
     puls_b_model, puls_b_ref, puls_r_ref, puls_L_spindown, puls_sigma_magn
         Pulsar magnetic-field model and parameters (see :class:`Pulsar`).
     opt_b_model, opt_b_ref, opt_r_ref
@@ -142,6 +145,7 @@ full_spec : bool, optional
         Sampling points (per horn/arch) for IBS construction. Default 31.
     n_phi : int, optional
         Sampling points over azimuth for 3D IBS construction. Default 17    
+
     
 # Electrons on IBS
     cooling : {'no','stat_apex','stat_ibs','stat_mimic',
@@ -296,7 +300,7 @@ class LightCurve: # !!!
                  h_enh = [1, ], h_enh_times = [0, ],
                  height_exp = 0.5,
                  rad_prof = 'pl', r_trunk = None, np_disk_in=None,
-                 vert_prof='gauss',
+                 vert_prof='gauss', incl_puls_vel=False,
                  
                  hyst=False,  k_time=1.0, alpha_interaction=0.0,
                  
@@ -382,7 +386,8 @@ class LightCurve: # !!!
         self.hyst = hyst
         self.k_time = k_time
         self.alpha_interaction = alpha_interaction
-        ####### --------- also from winds, about magn fields --------- ########
+        self.incl_puls_vel = incl_puls_vel
+        ####### ---------  about magn fields --------- ########
         self.puls_b_model = puls_b_model
         self.puls_b_ref = puls_b_ref
         self.puls_r_ref = puls_r_ref
@@ -506,7 +511,8 @@ class LightCurve: # !!!
                       hyst=self.hyst, 
                       # t_precalculate=wrap_grid(x=self.t, frac=0.03, num_points=self.t.size+2),
                       k_time=self.k_time, 
-                      alpha_interaction=self.alpha_interaction)
+                      alpha_interaction=self.alpha_interaction,
+                      incl_puls_vel=self.incl_puls_vel)
         self.winds = winds
         
 

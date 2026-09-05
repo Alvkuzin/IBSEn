@@ -2,7 +2,7 @@
 import numpy as np
 from scipy.interpolate import interp1d
 from scipy.integrate import trapezoid
-from scipy.optimize import minimize_scalar
+from scipy.optimize import minimize_scalar, brentq
 
 from numpy import pi, sin, cos, exp
 import warnings
@@ -1206,9 +1206,11 @@ def vector_angle(n1, n2, vec_beta=np.zeros(3), lor_trans=False):
     """
     ###### making sure they are indeed unit vectors.
     ######  If not, well, you should have read the documentation.
-    n1_ = n_from_v(n1)
-    n2_ = n_from_v(n2)
+    n1_ = n_from_v(n1, eps=1e-10)
+    n2_ = n_from_v(n2, eps=1e-10)
     if np.all(vec_beta == 0) or (not lor_trans):
+        # if np.all(n1_ == 0.) or np.all(n2_ == 0.):
+            # return np.arccos( mydot(n1_*0., n2_*0.) )
         return np.arccos( mydot(n1_, n2_) )
     else:    
         n1_prime = n_from_v(lor_trans_vec(n1_, vec_beta))
@@ -1254,6 +1256,7 @@ def lor_trans_e_spec_iso(E_lab, dN_dE_lab, gamma, E_comov=None, n_mu=51,
         1D array of angle-averaged dN'/dE' in comoving frame.
 
     """
+
     beta_v = beta_from_g(gamma)
     n_mu = int(n_mu * gamma)
 
@@ -1265,6 +1268,8 @@ def lor_trans_e_spec_iso(E_lab, dN_dE_lab, gamma, E_comov=None, n_mu=51,
         needed_len = int(len(E_lab) * np.log10(Ema_co / Emi_co) / 
                          np.log10(Ema / Emi))
         E_comov = np.geomspace(Emi_co, Ema_co, needed_len)
+    if np.all(dN_dE_lab == 0.):
+        return E_comov, E_comov * 0. + np.finfo(float).tiny
 
     # set up lab-spectrum interpolator, zero outside
     # lab_interp = interp1d(
@@ -1273,7 +1278,8 @@ def lor_trans_e_spec_iso(E_lab, dN_dE_lab, gamma, E_comov=None, n_mu=51,
     #     bounds_error=False,
     #     fill_value=0.0
     # )
-    
+    # print('e lab', E_lab)
+    # print('dnde', dN_dE_lab)
     log_lab_interp = logrep(
         E_lab, dN_dE_lab,
         kind='linear',
@@ -1503,6 +1509,39 @@ def rotate_fromax_toax(v, ax1, ax2):
     _angle, _axis = _find_some_rotation(ax1, ax2) 
     return rotate_vec1_around_vec2(v=v, axis=_axis, theta=_angle)
 
+def project_point_for_gg(vec_r, n_los):
+    rr = absv(vec_r)
+    # n_proj = mycross(vec_r, n_los)
+    e_perp = n_from_v(mycross(vec_r, n_los))
+    n_orb = np.array([0., 0., 1.])
+    def rot_e_perp(_phi):
+        _c, _s = np.cos(_phi)[..., None], np.sin(_phi)[..., None]
+        return (e_perp[..., :] * _c +
+                mycross(n_los, e_perp)[..., :] * _s 
+                 # n_los[..., :] * mydot(n_los, e_perp)[..., None] * (1. - _c)
+                 )
+        # return rotate_vec1_around_vec2(e_perp, n_los, _phi)
+    # def _to_solve(_phi):
+    #     # _c, _s = np.cos(_phi), np.sin(_phi)
+    #     return mydot(n_orb, rot_e_perp(_phi))
+    # _phi = brentq(_to_solve, 0., 2. * np.pi)
+    _a, _b = mydot(e_perp, n_orb), mydot(n_orb, mycross(n_los, e_perp))
+    _phi = -np.arccos(_b / np.sqrt(_a**2 + _b**2))
+    needed_vec = n_from_v(rot_e_perp(_phi))
+    return rr[..., None] * needed_vec
+    # rp = mydot(vec_r, n_los)
+    # nx, ny = n_los[0], n_los[1]
+    # if np.abs(nx) > 1e-3:
+    #     nynx = ny / nx
+    #     ynew = rp * nynx + np.sqrt(rp**2 * nynx**2 + (1. + nynx**2) * (rr**2 - rp**2 / nx**2))
+    #     xnew = (rp - ynew * ny) / nx
+        
+    # else:
+    #     ynew = rp / ny
+    #     xnew = np.sqrt(rr**2 - ynew**2)
+    # return xnew, ynew
+
+
 """ #!!!
 -------------------------------------------------------------------------------
 ------------------------ #######  uuhhh ?  ####### ----------------------------
@@ -1574,7 +1613,8 @@ def plot_with_gradient(fig, ax, xdata, ydata, some_param, colorbar=False, lw=2,
                        ls='-', colorbar_label='grad', minimum=None, maximum=None,
                        scatter=False, marker='o', s=20, alpha=1.0, cmap='coolwarm',
                        loglog=False,
-                       setlims=True):
+                       setlims=True,
+                       colorbar_kwargs={}):
     """
     Draw (xdata, ydata) colored by some_param.
     If scatter=True -> per-point scatter; else -> continuous line with gradient.
@@ -1625,7 +1665,7 @@ def plot_with_gradient(fig, ax, xdata, ydata, some_param, colorbar=False, lw=2,
         
 
     if colorbar:
-        fig.colorbar(mappable, ax=ax, label=colorbar_label)
+        fig.colorbar(mappable, ax=ax, label=colorbar_label, **colorbar_kwargs)
     return mappable
 
 from matplotlib.cm import ScalarMappable
