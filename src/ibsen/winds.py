@@ -188,11 +188,11 @@ star_docstring = """
     allow_missing : bool, optional
         Fill the missing parameters (not explicitly provided, no keyword 
         recognized, and not found in `sys_params`) with None. Default False
-    Ropt : float, optional
+    R_s : float, optional
         Optical star radius [cm].
-    Topt : float, optional
+    T_s : float, optional
         Optical star effective temperature [K].
-    Mopt : float, optional
+    M_s : float, optional
         Optical star mass [g].
     alpha_disk_deg : float, optional
         Disk plane position angle: rotation about the +Z axis (see Notes). Default 0.
@@ -212,14 +212,14 @@ star_docstring = """
         Radial power-law index for the disk pressure in-plane, ``P∝r^{{-np_disk}}``.
         Default 3.
     delta : float, optional
-        Disk opening parameter at the stellar surface, ``z0/r`` at ``r=Ropt``. Default 0.01.
+        Disk opening parameter at the stellar surface, ``z0/r`` at ``r=R_s``. Default 0.01.
     height_exp : float, optional
-        Exponent in the disk scale-height law, ``z0/r ∝ (r/Ropt)^{{height_exp}}``. Default 0.5.
+        Exponent in the disk scale-height law, ``z0/r ∝ (r/R_s)^{{height_exp}}``. Default 0.5.
     rad_prof : 'pl', 'bkpl', optional
         Radial profile: ``'pl'`` = single power law; ``'bkpl'`` = broken power law
         that transitions to ``∝ r^{{-2}}`` beyond ``r_trunk``. Default 'pl'.
     r_trunk : float or None, optional
-        Truncation radius [cm] used when ``rad_prof='bkpl'``. If None, set to ``5*Ropt``.
+        Truncation radius [cm] used when ``rad_prof='bkpl'``. If None, set to ``5*R_s``.
 
     b_model : 'linear', 'dipole', optional
         Model for the optical star magnetic field with radius.
@@ -231,7 +231,7 @@ star_docstring = """
 
     Attributes
     ----------
-    Topt, Ropt, Mopt : float
+    T_s, R_s, M_s : float
         Stellar temperature [K], radius [cm], and mass [g] used by the model.
     alpha_disk, incl_disk : float
         Disk orientation angles (radians).
@@ -280,9 +280,9 @@ class OpticalStar: #!!!
             sys_name=None, # the system name; str,  or None
             sys_params=None, # system parameters dict
             allow_missing=False,
-            Ropt=None,
-            Topt=None,
-            Mopt=None, 
+            R_s=None,
+            T_s=None,
+            M_s=None, 
             f_w = 1.0, #  dimentionless Be star polar wind pressure strength
             
             alpha_disk_deg = 0., # Be-star rotation axis position angle: 2d angle between two planes:
@@ -309,21 +309,21 @@ class OpticalStar: #!!!
             h_enh_true_an = [0, ],
             
             b_model = 'linear', # model of the Be magn field
-            # opt_b_apex = None,
+            # s_b_apex = None,
             b_ref = 0, # B- parameter for Be field scaling 
             r_b_ref = None, # r-scale for Be magn field):
                 ):
         
-        Topt_, Ropt_, Mopt_ = unpack_params(('Topt', 'Ropt', 'Mopt'),
+        T_s_, R_s_, M_s_ = unpack_params(('T_s', 'R_s', 'M_s'),
             orb_type=sys_name, sys_params=sys_params,
             known_types=known_names, get_defaults_func=get_parameters,
-                               Topt=Topt, Ropt=Ropt, Mopt=Mopt,
+                               T_s=T_s, R_s=R_s, M_s=M_s,
                                allow_missing=allow_missing)
         self.sys_name = sys_name
-        self.Topt = Topt_
-        self.Ropt = Ropt_
-        self.Mopt = Mopt_
-        self.GMopt = G * Mopt_
+        self.T_s = T_s_
+        self.R_s = R_s_
+        self.M_s = M_s_
+        self.GM_s = G * M_s_
         self.alpha_disk = np.deg2rad(alpha_disk_deg)
         self.incl_disk = np.deg2rad(incl_disk_deg)
         self.f_d = f_d
@@ -346,15 +346,16 @@ class OpticalStar: #!!!
         
         self.b_model = b_model
         self.b_ref = b_ref 
-        self.r_b_ref = r_b_ref if r_b_ref is not None else Ropt_
+        self.r_b_ref = r_b_ref if r_b_ref is not None else R_s_
                 
     def b(self, r_to_s):
         """
-        The magnetic field of the opt. star [G] at the distance r_to_s.
+        The magnetic field of the optical star [G] at the distance r_to_s.
         If B_apex 
         is provided, the field is calculated relative to the IBS apex 
         (point where P_disk + P_polar = P_pulsar) according to `model`. In 
-        this case, t_b_opt should be provided.
+        this case, the corresponding reference distance ``r_b_ref`` should
+        be provided.
         
         If B_apex is not
         provided, the B_ref, r_ref, ... are used.
@@ -385,15 +386,15 @@ class OpticalStar: #!!!
         model_opts = ['linear', 'dipole']
 
         if self.b_model not in (model_opts):
-            raise ValueError('the opt star field model should be one of:',
+            raise ValueError('the optical-star field model should be one of:',
                              model_opts)
 
         if self.b_model == 'linear':
-            b_opt = self.b_ref * (self.r_b_ref / r_to_s)
+            b_s = self.b_ref * (self.r_b_ref / r_to_s)
         if self.b_model == 'dipole':
-            b_opt = self.b_ref * (self.r_b_ref / r_to_s)**3
+            b_s = self.b_ref * (self.r_b_ref / r_to_s)**3
         
-        return b_opt
+        return b_s
     
     def u_g_density(self, r_from_s):      
         """
@@ -415,10 +416,10 @@ class OpticalStar: #!!!
               distance r_from_s [erg / cm^3].
 
         """
-        factor = 2. * (1. - (1. - (self.Ropt / r_from_s)**2)**0.5 ) # checked!
-        # factor = (self.Ropt / r_from_s)**2 # checked!
+        factor = 2. * (1. - (1. - (self.R_s / r_from_s)**2)**0.5 ) # checked!
+        # factor = (self.R_s / r_from_s)**2 # checked!
         
-        u_dens = SIGMA_BOLTZ * self.Topt**4 / C_LIGHT * factor # checked!
+        u_dens = SIGMA_BOLTZ * self.T_s**4 / C_LIGHT * factor # checked!
         return u_dens
         
     def _delta_eff_novec(self, true_an=0.):
@@ -462,7 +463,7 @@ class OpticalStar: #!!!
             z0(r) [cm].
 
         """
-        return self._delta_eff(true_an=true_an) * r * (r / self.Ropt)**self.height_exp
+        return self._delta_eff(true_an=true_an) * r * (r / self.R_s)**self.height_exp
 
     
     def decr_disk_pressure(self, vec_r_from_s, true_an=0.):
@@ -498,11 +499,11 @@ class OpticalStar: #!!!
             vert = 1./(1.+_k) * (np.exp(-r_to_d**2 / 2 / z0**2) 
                                  + _k * np.exp(-r_to_d / _dd / z0))
         if self.rad_prof == 'pl':
-            rad = (self.Ropt / r_in_d)**self.np_disk  # (shape0)
+            rad = (self.R_s / r_in_d)**self.np_disk  # (shape0)
         if self.rad_prof == 'bkpl':
             rad = np.where(r_in_d < self.r_trunk,
-                    (self.Ropt / self.r_trunk)**self.np_disk * (self.r_trunk / r_in_d)**self.np_disk_in,
-                    (self.Ropt / r_in_d)**self.np_disk
+                    (self.R_s / self.r_trunk)**self.np_disk * (self.r_trunk / r_in_d)**self.np_disk_in,
+                    (self.R_s / r_in_d)**self.np_disk
                            )
         return self._f_d_eff(true_an=true_an) * rad * vert 
 
@@ -511,7 +512,7 @@ class OpticalStar: #!!!
         """
         Dimensionless Be-star polar wind pressure at the distance r_from_s from the star.
         Assuming isotropic polar wind and constant velocity.
-        The coefficient is set so that at r=Ropt, P_w = f_w.
+        The coefficient is set so that at r=R_s, P_w = f_w.
         Parameters
         ----------
         r_from_s : np.ndarray
@@ -523,7 +524,7 @@ class OpticalStar: #!!!
             P_w(r_from_s), dimensionless.
 
         """
-        return self.f_w *(self.Ropt / r_from_s)**2 
+        return self.f_w *(self.R_s / r_from_s)**2 
     
     def u_disk_w_lab_frame(self, vec_se):
         """
@@ -533,7 +534,7 @@ class OpticalStar: #!!!
         """
         norm_se = n_from_v(vec_se) # (shape0, 3)
         vec_r_in_disc = vec_se - mydot(vec_se, self.n_disk)[..., None] * self.n_disk # (shape0, 3)
-        v_disc_absv = np.sqrt(self.GMopt / absv(vec_r_in_disc)) # (shape0, )
+        v_disc_absv = np.sqrt(self.GM_s / absv(vec_r_in_disc)) # (shape0, )
         keplerian_direction = n_from_v(mycross(self.n_disk, norm_se)) # (shape0, 3)
         v_disc = v_disc_absv[..., None] * keplerian_direction
         return v_disc
@@ -552,50 +553,53 @@ class OpticalStar: #!!!
     
 
 winds_docstring = """
-    Describes the pulsar and star's outflows collisions, the position of a 
-    stand-off point as a function of time, and magnetic/photon fields in this point.
-    
+    Wind interaction model for an :class:`Orbit`, optical star, and pulsar.
+
+    All wind-balance equations use relative vectors, never barycentric point
+    coordinates.  ``orbit.vector_sp(t)`` is the star→pulsar separation;
+    ``vec_se`` points star→E and ``vec_pe`` pulsar→E for an evaluation point
+    E.  They satisfy ``vec_se = vector_sp + vec_pe``.  Consequently, stellar
+    disk, polar-wind, photon-field, and stellar-field calls receive
+    star-relative vectors or distances.
+
+    ``orbit.M_s`` and ``star.M_s`` serve distinct formal roles and may be
+    supplied differently.  ``orbit.M_s`` participates only in Kepler's law
+    and in assigning barycentric stellar/pulsar positions.  ``star.M_s`` is
+    used by :class:`OpticalStar` only for the decretion-disk prescription
+    through ``star.GM_s``.  Usually both represent the same physical mass.
+
     Parameters
     ----------
     orbit : Orbit
-        The binary orbit object providing positions/vectors as functions of time.
+        Supplies the relative star→pulsar orbit and, where needed, the
+        corresponding relative velocity.
     star : OpticalStar
-        The optical star object.
+        Stellar wind, disk, photon-field, and magnetic-field model.
     pulsar : Pulsar
-        The pulsar object.
+        Pulsar wind and magnetic-field model.
     hyst : bool, optional
-        Whether to include the hysteresis-like calculation. Default False
-    t_precalculate : np.ndarray, optional
-        On what time to precalculate r_sp in case of hysteresis. If None,
-        chosen as to cover the -T/4 < t < T/4 part of the orbit. Default None
-    k_time : float, optional
-        Decay time constant for hysteresis calculation. Default 1.0
-    alpha_interaction : float, optional
-        Coupling constant for hysteresis calculation. Default 1.0
+        Include the phenomenological hysteresis pressure term. Default False.
+    t_precalculate : array_like or None, optional
+        Epochs [s] used to tabulate the hysteresis solution. Default None.
+    k_time, alpha_interaction : float, optional
+        Hysteresis decay and coupling parameters. Default 1.
     incl_puls_vel : bool, optional
-        Whether to calculate the the winds direction for the IBS orientation
-        in the pulsar frame (incl_puls_vel==True) or not. Default False
-
+        Subtract the relative star→pulsar orbital velocity from stellar-wind
+        velocities when defining the external flow in the pulsar frame.
+        Default False.
 
     Attributes
     ----------
-    
-    orbit, star, pulsar
-        Inputs
-    t1_pass, t2_pass
-        Times of passage through the equator of the disk.
-    hyst, k_time, alpha_interaction, t_precalculate 
-        For hysteresis calculation.
-    times_of_disk_passage
-        Two times within one period when the pulsar crosses the disk plane (property).
+    t1_pass, t2_pass : float
+        Disk-plane crossing epochs [s].
+    times_of_disk_passage, vectors_of_disk_passage
+        Disk-plane crossing times and their relative star→pulsar vectors.
     vectors_of_disk_passage
         Star→pulsar vectors at those crossing times (property).
         
     Methods
     -------
-    
-    Dist_to_disk(rvec)
-        Distance from a point to the disk plane (absolute value returned). 
+
     dist_se_1d(t)
         Distance from the star to the stand-off (shock apex) point along the star–pulsar line.
     u_polar_w_pulsar_frame(t, vec, which), u_disk_w_pulsar_frame(t, vec, which):
@@ -615,7 +619,13 @@ winds_docstring = """
         Pulsar and stellar magnetic fields at the apex [G].
     u_g_density_apex(t)
         Stellar photon energy density at the apex [erg/cm3].
-    """
+
+    Notes
+    -----
+    ``orientation=None`` uses the star–pulsar line.  The implemented 3D flow
+    orientations are ``'flow'`` and ``'flow_p'``; both return a pulsar→apex
+    vector.
+"""
 
 class Winds: # !!!
     __doc__ = winds_docstring
@@ -630,6 +640,7 @@ class Winds: # !!!
                  alpha_interaction = 1.0,
                  incl_puls_vel = False,
                  ):
+        """Bind orbital relative geometry to the stellar and pulsar wind models."""
         self.orbit = orbit
         self.star = star
         self.pulsar = pulsar
@@ -653,15 +664,16 @@ class Winds: # !!!
     @property
     def times_of_disk_passage(self):
         """
-        Times of the pulsar passage through the disk plane.
-        Two solution of the equation vec{r(t)} \dot vec{n_disk} = 0.
-        If the disk is in the orbital plane (incl=0), unpredictable results.
+        Epochs at which the relative star→pulsar line crosses the disk plane.
+
+        Solves ``dot(orbit.vector_sp(t), star.n_disk) = 0``.  A disk exactly
+        coplanar with the orbit has no isolated crossings and is unsupported.
 
         Returns
         -------
         t1 : float
             Negative solution [s]. 
-        t2 : TYPE
+        t2 : float
             Positive solution [s].
 
         """
@@ -717,7 +729,7 @@ class Winds: # !!!
         pres_d = lambda r_se: self.star.decr_disk_pressure(vec_r_from_s = nwind * r_se, true_an=self.orbit.true_an(t))
         pres_p = lambda r_se: self.pulsar.wind_pressure(r_from_p = np.abs(r_sp - r_se))
         to_solve = lambda r_se: pres_d(r_se) + pres_w(r_se) - pres_p(r_se)
-        rse = brentq(to_solve, self.star.Ropt, r_sp*(1-1e-8))
+        rse = brentq(to_solve, self.star.R_s, r_sp*(1-1e-8))
         ### ---------------- test if the solution is good -------------------------
         p_ref = pres_p(rse)
         max_rel_err = np.max(to_solve(rse) / p_ref)
@@ -728,6 +740,7 @@ class Winds: # !!!
         return rse
     
     def _precalculate_dist_pe_hyst(self):
+        """Precompute the time-dependent stand-off solution for hysteresis mode."""
         _t_ev = self.t_precalculate
         if _t_ev is None:
             _t_ev = self.orbit.t_from_true_an(nu = np.linspace(-0.75*pi, 0.75*pi))
@@ -805,9 +818,12 @@ class Winds: # !!!
     
     def _vecs(self, t, vec, which):
         """
-        If `which` == 'se', treats `vec` as s-e-vector; if 
-        `which` == 'pe', treats `vec` as a p-e-vector;
-        returns vec_pe, vec_se.
+        Convert between pulsar-relative and star-relative evaluation vectors.
+
+        ``which='pe'`` interprets ``vec`` as pulsar→E; ``which='se'``
+        interprets it as star→E.  Returns ``(vec_pe, vec_se)`` satisfying
+        ``vec_se = orbit.vector_sp(t) + vec_pe``.  All returned vectors are
+        displacement vectors, not barycentric coordinates.
         """
         vec_sp = self.orbit.vector_sp(t)
         if which == 'pe':
@@ -821,9 +837,12 @@ class Winds: # !!!
 
     def u_polar_w_pulsar_frame(self, t, vec, which='pe'):
         """
-        Vector of the polar wind  relative to pulsar at the point in space
-        defined by `vec`, which is treated either as pe- or se-vector depending
-        on the  `which`={'se', 'pe'}.
+        Polar-wind velocity at E, optionally relative to pulsar motion.
+
+        ``vec`` is interpreted by ``which`` exactly as in :meth:`_vecs`.
+        The underlying radial wind is evaluated from star→E.  If
+        ``incl_puls_vel`` is true, the relative star→pulsar velocity is
+        subtracted to express it in the pulsar frame.
         """
         v_orbital_pulsar =self.orbit.vector_v(t)
         vec_pe, vec_se = self._vecs(t, vec, which)
@@ -836,10 +855,11 @@ class Winds: # !!!
     
     def vec_polar_w(self, t, vec, which='pe'):
         """
-        Vector of the polar wind pressure projection onto a vector pe
-        at the point in space
-        defined by `vec`, which is treated either as pe- or se-vector depending
-        on the  `which`={'se', 'pe'}.
+        Vector polar-wind pressure term at E.
+
+        The pressure magnitude is evaluated from ``|vec_se|`` and its
+        direction follows the local polar-wind velocity.  ``vec`` may be
+        expressed star-relative or pulsar-relative via ``which``.
         """
         vec_pe, vec_se = self._vecs(t, vec, which)
         n_pe = n_from_v(vec_pe)
@@ -852,9 +872,11 @@ class Winds: # !!!
     
     def u_disk_w_pulsar_frame(self, t, vec, which='pe'):
         """
-        Vector of the disk wind  (relative to pulsar?..) at the point in space
-        defined by `vec`, which is treated either as pe- or se-vector depending
-        on the  `which`={'se', 'pe'}.
+        Decretion-disk velocity at E, optionally relative to pulsar motion.
+
+        The Keplerian disk velocity is evaluated from the star→E vector.
+        With ``incl_puls_vel=True``, the relative star→pulsar orbital velocity
+        is subtracted.
         """
         v_orbital_pulsar =self.orbit.vector_v(t) # (3,)
         vec_pe, vec_se = self._vecs(t, vec, which)
@@ -867,10 +889,10 @@ class Winds: # !!!
     
     def vec_disk_w(self, t, vec, which='pe'):
         """
-        Vector of the decretion disk pressure projection onto a vector pe
-        at the point in space
-        defined by `vec`, which is treated either as pe- or se-vector depending
-        on the  `which`={'se', 'pe'}.
+        Vector decretion-disk pressure term at E.
+
+        Disk pressure is computed from the star→E vector and orbital true
+        anomaly; its direction follows the local disk velocity.
         """
         vec_sp = self.orbit.vector_sp(t)
         vec_pe, vec_se = self._vecs(t, vec, which)
@@ -885,10 +907,10 @@ class Winds: # !!!
     
     def vec_pulsar_p(self, t, vec, which='pe'):
         """
-        Vector of the pulsar pressure projection onto a vector pe
-        at the point in space
-        defined by `vec`, which is treated either as pe- or se-vector depending
-        on the  `which`={'se', 'pe'}.
+        Outward pulsar-wind pressure vector at E.
+
+        Its magnitude uses ``|vec_pe|`` and direction is pulsar→E.  ``vec``
+        may be supplied in either supported displacement convention.
         """
         vec_pe, vec_se = self._vecs(t, vec, which)
         p_p = self.pulsar.wind_pressure(r_from_p=absv(vec_pe)) * n_from_v(vec_pe)
@@ -896,14 +918,11 @@ class Winds: # !!!
     
     def vec_addit_pressure(self, t):
         """
-        Vector of an additoinal pressure arising when `hyst=True`.
-        Set to be:
-            --- In absolute units, equal to self.f_adds calculated in
-            `_precalculate_dist_pe_hyst`, and interpolated at time `t`.
-           --- In direction, opposite to the pulsar orbital velocity. 
-           
-        Assumed, formally, to be independent of distances (even though it is
-            of course localized around the IBS apex).
+        Phenomenological hysteresis pressure vector.
+
+        When enabled, its magnitude is interpolated from the precomputed
+        hysteresis term and its direction opposes the relative star→pulsar
+        velocity.  It is formally position independent.
         """
         v_orbital_pulsar =self.orbit.vector_v(t)
         if self.hyst:
@@ -920,15 +939,20 @@ class Winds: # !!!
     
     def make_vec_(self, r, theta, phi):
         """
-        Vector vec_se is defined as such: its length is r_se, while theta
-        and phi are the positional angles relative to the orbit coordinate
-        system.
+        Construct a star-relative vector from spherical polar coordinates.
+
+        Returns a vector of magnitude ``r`` pointing at polar angle ``theta``
+        and azimuth ``phi`` in the orbital coordinate system.
         """
         return r * rotated_vector(phi, theta)
     
     def _ext_wind_direction(self, t, vec, which='pe'):
         """
-        The direction of winds (p_i * v_i) at time t and at the position 'vec'.
+        Unit direction of the summed external-flow momentum term at E.
+
+        This private helper converts the input displacement vector via
+        :meth:`_vecs`, evaluates stellar quantities star-relative, and adds
+        the optional hysteresis term.
         """
         _, vec_se = self._vecs(t, vec, which)
         _nu = self.orbit.true_an(t)
@@ -951,9 +975,10 @@ class Winds: # !!!
     
     def _vec_pe_3d_novec(self, t, eps=1e-3):
         """
-        A vector from the pulsar to the emission zone calculated in 3d. 
-        
-        t should be float [s]
+        Compute the ``'flow'`` pulsar→apex vector for one scalar epoch.
+
+        The magnitude is the 1D stand-off distance and the direction is
+        opposite to the summed external-flow direction.
         """
         vec_sp = self.orbit.vector_sp(t)
         rsp = absv(vec_sp)
@@ -968,9 +993,10 @@ class Winds: # !!!
 
     def _vec_pe_3d_novec_full(self, t, eps=1e-3):
         """
-        A vector from the pulsar to the emission zone calculated in 3d. 
-        
-        t should be float [s]
+        Compute the ``'flow_p'`` pulsar→apex vector for one scalar epoch.
+
+        This variant estimates the external-flow direction at the pulsar
+        position rather than at the 1D stand-off estimate.
         """            
         vec_sp = self.orbit.vector_sp(t)
         rsp = absv(vec_sp)
@@ -983,9 +1009,23 @@ class Winds: # !!!
 
     def vec_pe_3d(self, t, eps=1e-3, orientation='flow'): 
         """
-        A vector from the pulsar to the emission zone calculated in 3d. 
-        
-        t is a float or a 1d np.ndarray [s].
+        Pulsar→apex vector for a 3D flow-based orientation.
+
+        Parameters
+        ----------
+        t : float or array_like
+            Epoch(s) from periastron [s].
+        eps : float, optional
+            Reserved numerical tolerance parameter.
+        orientation : {'flow', 'flow_p'}
+            ``'flow'`` evaluates direction near the 1D apex; ``'flow_p'``
+            evaluates it at the pulsar position.
+
+        Returns
+        -------
+        ndarray
+            Pulsar→apex vector(s) [cm], shape ``(3,)`` for scalar time and
+            ``(N, 3)`` for array input.
         """
         t_ = np.asarray(t)
         if orientation == 'flow':
@@ -1003,9 +1043,13 @@ class Winds: # !!!
     
     def dist_pe(self, t, orientation=None, return_se=False):
         """
-        An absolute value of the distance from the pulsar to the emission zone. 
-        
-        t should be float [s]
+        Distances from the pulsar and optical star to the shock apex.
+
+        With ``orientation=None`` the apex lies on the star–pulsar line.
+        Otherwise the pulsar→apex vector is obtained from :meth:`vec_pe_3d`.
+
+        Returns ``r_pe`` by default, or ``(r_pe, r_se)`` when ``return_se``
+        is true; both are positive physical distances [cm].
         """
         r_sp = self.orbit.r(t)
         if orientation is None:
@@ -1047,7 +1091,10 @@ class Winds: # !!!
     
     def dbeta_dn(self, t, eps=1e-4):
         """
-        calculates T_orb d(beta_eff)/dt
+        Orbital-period-scaled central derivative of ``beta_eff``.
+
+        Returns ``T * d(beta_eff)/dt`` evaluated symmetrically in true
+        anomaly around epoch ``t``.
         """
         _nu = self.orbit.true_an(t)
         t_i, t_f = self.orbit.t_from_true_an(_nu - pi*eps), self.orbit.t_from_true_an(_nu + pi*eps)
@@ -1061,20 +1108,22 @@ class Winds: # !!!
         ----------
         t : float | np.ndarray
             Time relative to periastron [s].
+        orientation : str or None, optional
+            Apex orientation passed to :meth:`dist_pe`.
 
         Returns
         -------
         B_ns_apex : float | np.ndarray
             The magnetic field of the NS at the apex point [G].
-        B_opt_apex : float | np.ndarray
+        B_s_apex : float | np.ndarray
             The magnetic field of the optical star at the apex point [G].
 
         """
 
         r_pe, r_se = self.dist_pe(t, orientation, return_se=True)
         _b_puls_apex = self.pulsar.b(r_to_p=r_pe)
-        _b_opt_apex = self.star.b(r_to_s = r_se)
-        return _b_puls_apex, _b_opt_apex
+        _b_s_apex = self.star.b(r_to_s = r_se)
+        return _b_puls_apex, _b_s_apex
     
     
     def u_g_density_apex(self, t, orientation=None): 
@@ -1085,6 +1134,8 @@ class Winds: # !!!
         ----------
         t : float | np.ndarray
             Time relative to periastron [s].
+        orientation : str or None, optional
+            Apex orientation passed to :meth:`dist_pe`.
 
         Returns
         -------
@@ -1116,6 +1167,9 @@ class Winds: # !!!
         plot_rs : bool, optional
             Whether to plot r_pe/se/sp(t) on an additional axis.
               The default is True.
+        t_forwinds : float, optional
+            Time relative to periastron at which to draw the instantaneous
+            star-centred wind-pressure field [s]. Default 0.
 
         Returns
         -------
@@ -1147,9 +1201,14 @@ class Winds: # !!!
 
         t1, t2 = self.times_of_disk_passage
         vec_disk1, vec_disk2 = self.vectors_of_disk_passage
-        _r_scale = absv(vec_disk1)
-        
-        orb_x, orb_y = self.orbit.xtab_p[show_cond], self.orbit.ytab_p[show_cond]
+        _r_scale = max(absv(vec_disk1), absv(vec_disk2))
+
+        orb_x_p = self.orbit.xtab_p[show_cond]
+        orb_y_p = self.orbit.ytab_p[show_cond]
+        orb_x_s = self.orbit.xtab_s[show_cond]
+        orb_y_s = self.orbit.ytab_s[show_cond]
+        orb_x = np.concatenate((orb_x_p, orb_x_s))
+        orb_y = np.concatenate((orb_y_p, orb_y_s))
         x_scale = np.max(np.array([
             np.abs(np.min(orb_x)), np.abs(np.max(orb_x)), 1.5*_r_scale,
             ]))
@@ -1157,42 +1216,53 @@ class Winds: # !!!
                 np.abs(np.min(orb_y)), np.abs(np.max(orb_y)), 1.5*_r_scale, 
                 ]))
         
-        coord_scale = np.max(np.array([
-            np.min(orb_x), np.max(orb_x), np.min(orb_y), np.max(orb_y),
-            np.max( (orb_x**2 + orb_y**2)**0.5 )
-            ]))
+        coord_scale = max(x_scale, y_scale)
+        star_now = self.orbit.vector_s(t_forwinds)
+        pulsar_now = self.orbit.vector_p(t_forwinds)
+        x_star, y_star = star_now[:2]
+        x_pulsar, y_pulsar = pulsar_now[:2]
+
         ################### ------ drawing the orbit again ------- ############
-        ax0.plot(orb_x, orb_y)                                                    
-        ax0.scatter(0, 0, c='r')                                                  
+        ax0.plot(orb_x_p, orb_y_p, color='C0', label='pulsar orbit')
+        ax0.plot(orb_x_s, orb_y_s, color='C3', label='optical-star orbit')
+        ax0.scatter(x_pulsar, y_pulsar, color='C0', zorder=5, label='pulsar now')
+        ax0.scatter(x_star, y_star, color='C3', zorder=5, label='star now')
+        ax0.scatter(0, 0, color='k', marker='x', zorder=6, label='barycenter')
         ax0.plot([np.min(orb_x),
                     np.max(orb_x)], [0, 0],
                     color='k', ls='--')      
-        ax0.plot([0, coord_scale*cos(self.orbit.nu_los)],                            
-                [0, coord_scale*sin(self.orbit.nu_los)], color='g', ls='--')        
+        ax0.plot([x_star, x_star + coord_scale*cos(self.orbit.nu_los)],
+                [y_star, y_star + coord_scale*sin(self.orbit.nu_los)],
+                color='g', ls='--')
         xx1, yy1, zz1 = vec_disk1                                                 
         xx2, yy2, zz2 = vec_disk2                                                 
-        ax0.plot([xx1, xx2], [yy1, yy2], color='orange', ls='--', lw=2)    
+        ax0.plot([x_star + xx1, x_star + xx2],
+                 [y_star + yy1, y_star + yy2],
+                 color='orange', ls='--', lw=2)
         
-        ntot_orb_left = orb_x.size
-        add_arrow(ax0, orb_x, orb_y, int(ntot_orb_left/9.), span=2,  color='C0', lw=1.5)
-        add_arrow(ax0, orb_x, orb_y, int(3.*ntot_orb_left/9.), span=2,  color='C0', lw=1.5)
-        add_arrow(ax0, orb_x, orb_y, int(6.*ntot_orb_left/9.), span=2,  color='C0', lw=1.5)
-        add_arrow(ax0, orb_x, orb_y, int(8.*ntot_orb_left/9.), span=2,  color='C0', lw=1.5)
+        ntot_orb_left = orb_x_p.size
+        add_arrow(ax0, orb_x_p, orb_y_p, int(ntot_orb_left/9.), span=2,  color='C0', lw=1.5)
+        add_arrow(ax0, orb_x_p, orb_y_p, int(3.*ntot_orb_left/9.), span=2,  color='C0', lw=1.5)
+        add_arrow(ax0, orb_x_p, orb_y_p, int(6.*ntot_orb_left/9.), span=2,  color='C0', lw=1.5)
+        add_arrow(ax0, orb_x_p, orb_y_p, int(8.*ntot_orb_left/9.), span=2,  color='C0', lw=1.5)
         
         ###### ------------ tabulating pressure values ------------------ #####
         
         Nx = 301
         Ny = 201
-        x_forp = np.linspace(np.min(orb_x)*3, np.max(orb_x)*4, Nx)
-        y_forp = np.linspace(np.min(orb_y)*2, np.max(orb_y)*2, Ny)
+        rel_x = self.orbit.x(self.orbit.ttab[show_cond])
+        rel_y = self.orbit.y(self.orbit.ttab[show_cond])
+        x_from_s = np.linspace(np.min(rel_x)*3, np.max(rel_x)*4, Nx)
+        y_from_s = np.linspace(np.min(rel_y)*2, np.max(rel_y)*2, Ny)
 
-        XX, YY = np.meshgrid(x_forp, y_forp, indexing='ij')
-        disk_ps = np.zeros((x_forp.size, y_forp.size))
+        XX_from_s, YY_from_s = np.meshgrid(x_from_s, y_from_s, indexing='ij')
+        XX = XX_from_s + x_star
+        YY = YY_from_s + y_star
 
         vec_from_s_ = np.empty((Nx, Ny, 3))
-        vec_from_s_[:, :, 0] = XX
-        vec_from_s_[:, :, 1] = YY
-        vec_from_s_[:, :, 2] = XX * 0
+        vec_from_s_[:, :, 0] = XX_from_s
+        vec_from_s_[:, :, 1] = YY_from_s
+        vec_from_s_[:, :, 2] = 0.0
         _nu = self.orbit.true_an(t_forwinds)
         disk_ps = (self.star.decr_disk_pressure(vec_from_s_, true_an=_nu) + 
                    self.star.polar_wind_pressure(absv(vec_from_s_)))
@@ -1207,7 +1277,7 @@ class Winds: # !!!
         alphas = np.linspace(0, 1, n_levels)           
         colors = np.column_stack((colors, alphas))     
         custom_cmap = ListedColormap(colors)
-        disk_ps[(XX**2 + YY**2)**0.5 < self.star.Ropt] = np.nan
+        disk_ps[(XX_from_s**2 + YY_from_s**2)**0.5 < self.star.R_s] = np.nan
         disk_ps[disk_ps < np.nanmax(disk_ps)-4.5] = np.nan
         ax0.contourf(XX, YY, disk_ps, levels=n_levels, cmap=custom_cmap)          
         
@@ -1215,8 +1285,10 @@ class Winds: # !!!
             ax0.contour(XX, YY, disk_ps, levels=special_contours, 
                         **kwargs_special_contours)
 
-        ax0.set_xlim(-1.2*x_scale, 1.2*min(x_scale, self.orbit.r_periastr) )
+        ax0.set_xlim(-1.2*x_scale, 1.2*x_scale)
         ax0.set_ylim(-1.2*y_scale, 1.2*y_scale) 
+        ax0.set_aspect('equal', adjustable='box')
+        # ax0.legend(loc='best')
         #######################################################################    
         
         if plot_rs:

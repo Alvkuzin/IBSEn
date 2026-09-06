@@ -22,14 +22,17 @@ def ibs_plotter(beta, n, n_phi, s_max, gamma_max,
                 )
     rot_ax = rotated_vector(phi_rot, theta_rot)
     ibs_rotated = ibs3d.rotate(phi=angle_rot, vec_ax=rot_ax)
+    if ibs_color is None:
+        return ibs_rotated.r_vec, None
+
     ibs_color = ibs_color.lower()
     if ibs_color in ('doppler', 'dopl', 'doppl', 'dopler', 'doppler factor'):
         color_param = ibs_rotated.dopl
     elif ibs_color in ('scattering', 'scattering angle'):
         color_param = ibs_rotated.scattering_angle
-    elif ibs_color in ('scattering_comov', 'scattering_angle_comov'
+    elif ibs_color in ('scattering_comov', 'scattering_angle_comov',
                        'scattering comov', 'scattering angle comov',
-                       'scattering comoving', 'scattering angle comoving'
+                       'scattering comoving', 'scattering angle comoving',
                        ):
         color_param = ibs_rotated.scattering_angle_comov
     else:

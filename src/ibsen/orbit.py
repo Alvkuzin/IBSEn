@@ -14,13 +14,20 @@ PARSEC = float(const.pc.cgs.value)
 DAY = 86400
 
 orbit_docstring = """
-    Keplerian binary orbit in the orbital plane (CGS units).
-    
-    This class represents a two-body elliptical orbit with the periastron
-    aligned with the +X axis and motion confined to the XY-plane (Z=0).
-    It provides geometry and anomalies as functions of time measured from
-    periastron passage and pre-tabulates the orbit for quick
-    plotting/evaluation.
+    Newtonian two-body Keplerian orbit in cgs units.
+
+    The orbit is planar: the relative periastron direction is +X, the orbital
+    angular-momentum direction is +Z, and ``t=0`` is periastron.  The primary
+    coordinate convention is the *relative* vector
+    ``vector_sp(t) = r_p(t) - r_s(t)`` from the optical star to the pulsar.
+    Thus ``x``, ``y``, ``z``, ``r`` and their derivatives describe the
+    star-to-pulsar separation, not a barycentric position.
+
+    Barycentric positions are available separately: ``vector_s`` is the
+    optical-star position and ``vector_p`` the pulsar position.  They satisfy
+    ``M_s * vector_s + M_p * vector_p = 0`` and
+    ``vector_p - vector_s = vector_sp``.  The scalar methods ending in
+    ``_s`` and ``_p`` use the same barycentric convention.
     
     Parameters
     ----------
@@ -30,16 +37,17 @@ orbit_docstring = """
         If None, all parameters must be contained in `sys_params` dictionary or
         given explicitly.
     sys_params : dict or None, optional
-          If provided, a dictionary of orbital parameters to use instead of
-          default values from ``get_parameters``. Keys are: `T`, `e`, `M`,
-          `nu_los`, `incl_los`. Explicit arguments below override those in
-          this dictionary. If None, all parameters must be given explicitly.  
+        Parameter dictionary used instead of system defaults.  Relevant keys
+        are ``T``, ``e``, ``M_s``, ``M_p``, ``nu_los`` and ``incl_los``.
+        Explicit keyword arguments take precedence.
     T : float, optional
         Orbital period `T` in seconds.
     e : float, optional
         Orbital eccentricity (`0 <= e < 1`).
-    M : float, optional
-        Total system mass `M` in grams. Used to form ``GM = G*M``.
+    M_s, M_p : float, optional
+        Optical-star and pulsar masses [g].  Their sum determines the
+        relative Keplerian orbit and their ratio assigns the two barycentric
+        orbits.  ``Orbit.M_s`` is an orbital-dynamics quantity only.
     nu_los : float, optional
         Line-of-sight true anomaly (radians) in the orbital plane. Used to
         locate the time of line-of-sight passage.
@@ -60,8 +68,11 @@ orbit_docstring = """
         Eccentricity.
     T : float
         Orbital period (s).
+    M_s, M_p : float
+        Optical-star and pulsar masses [g] used by the Keplerian two-body
+        calculation.
     M : float
-        Total system mass (g).
+        Total mass ``M_s + M_p`` [g].
     GM : float
         Gravitational parameter :math:`G M` (cgs).
     nu_los : float
@@ -82,9 +93,10 @@ orbit_docstring = """
         Apoastron distance (cm).
     t_los: float
         Time of the line of sight crossing [s].
-    xtab, ytab, ztab : ndarray or None
-        Tabulated coordinates (cm) if ``n`` is not None. ``ztab`` is identically
-        zero for the planar orbit.
+    xtab_p, ytab_p, ztab_p : ndarray or None
+        Tabulated pulsar barycentric coordinates [cm].
+    xtab_s, ytab_s, ztab_s : ndarray or None
+        Tabulated optical-star barycentric coordinates [cm].
     ttab : ndarray or None
         Tabulated times (s) relative to periastron.
     rtab : ndarray or None
@@ -109,13 +121,22 @@ orbit_docstring = """
     t_from_true_an(nu)
         Time(s) since periastron for given true anomaly(ies) `nu`.
     x(t), y(t), z(t)
-        Coordinates at time(s) `t`.
+        Relative coordinates at time(s) `t`. For the pulsar coordinates, use
+        x_p, y_p, z_p. For the optical star coordinates, use x_s, y_s, z_s.
+    a_s, a_p, b_s, b_p
+        Optical-star and pulsar barycentric semi-axes.
+    r_s(t), r_p(t)
+        Optical-star and pulsar distances from the barycenter.
     dx(t), dy(t), dz(t)
         Velocity components at time(s) `t`.
     vector_sp(t)
-        3D position vector at time(s) `t`.
+        Relative star→pulsar position vector.
     vector_v(t)
-        3D velocity vector at time(s) `t`.
+        Relative star→pulsar velocity vector.
+    vector_s(t), vector_p(t)
+        Optical-star and pulsar barycentric position vectors.
+    vector_v_s(t), vector_v_p(t)
+        Optical-star and pulsar barycentric velocity vectors.
     peek(ax=None, showtime=None, times_pos=(), color='k', xplot='time')
         Quick look at the orbit.
     
@@ -123,27 +144,33 @@ orbit_docstring = """
     Notes
     -----
     Times ``t`` are interpreted as offsets from periastron passage (``t=0``).
-    All distances are returned in centimeters (cgs).
+    All distances are in cm and velocities in cm s^-1.
 
-  """%(known_names,)
+"""%(known_names,)
 
 class Orbit:
     __doc__ = orbit_docstring
     def __init__(self, sys_name=None, sys_params=None, T=None, e=None,
-                 Mopt=None, Mp=None,
+                 M_s=None, M_p=None,
                  nu_los=None, incl_los=None, n=1000, allow_missing=False):
-        T_, e_, Mopt_, Mp_, nu_los_, incl_los_ = unpack_params(
-            ('T', 'e', 'Mopt', 'Mp', 'nu_los', 'incl_los'),
+        """Initialize the relative Kepler orbit and its barycentric mass split.
+
+        Parameter precedence and coordinate conventions are documented on
+        :class:`Orbit`.  Tabulation is performed immediately when ``n`` is not
+        ``None``.
+        """
+        T_, e_, M_s_, M_p_, nu_los_, incl_los_ = unpack_params(
+            ('T', 'e', 'M_s', 'M_p', 'nu_los', 'incl_los'),
             orb_type=sys_name, sys_params=sys_params,
             known_types=known_names,
             get_defaults_func=get_parameters,
-            T=T, e=e, Mopt=Mopt, Mp=Mp, nu_los=nu_los,
+            T=T, e=e, M_s=M_s, M_p=M_p, nu_los=nu_los,
             incl_los=incl_los, allow_missing=allow_missing)
         self.e = e_
         self.T = T_
-        self.Mopt = Mopt_
-        self.Mp = Mp_
-        self.M = self.Mopt + self.Mp
+        self.M_s = M_s_
+        self.M_p = M_p_
+        self.M = self.M_s + self.M_p
         self.nu_los = nu_los_
         self.incl_los = incl_los_
         self.unit_los = n_from_v(rotated_vector(alpha=nu_los_, incl=incl_los_))
@@ -275,7 +302,7 @@ class Orbit:
         
     def r(self, t):
         """
-        Binary separation at time t.
+        Magnitude of the relative star-to-pulsar separation at time ``t``.
 
         Parameters
         ----------
@@ -309,7 +336,8 @@ class Orbit:
     
     def d_ecc_an(self, t):
         """
-        The time derivative of the eccentric anomaly: \dot{E} = a/r 2pi/T.
+        Time derivative of the eccentric anomaly,
+        :math:`\\dot{E} = (a/r) 2\\pi/T`.
 
         Parameters
         ----------
@@ -327,8 +355,10 @@ class Orbit:
         
     def true_an(self, t):
         """
-        True anomaly at time t. The angle between the direction of
-          periastron and the current position of pulsar (-pi...pi).
+        Relative true anomaly at time ``t``.
+
+        This is the angle from +X (the star→pulsar periastron direction) to
+        ``vector_sp(t)``; it is independent of the barycentric mass ratio.
 
         Parameters
         ----------
@@ -408,8 +438,10 @@ class Orbit:
     
     def x(self, t):
         """
-        X-coordinate of the relative orbit at time t.
-        The direction of the periastron is along the X-axis.
+        X component of the relative star→pulsar vector.
+
+        The periastron direction is +X.  This is not the pulsar's
+        barycentric X coordinate; use ``x_p`` for that.
 
         Parameters
         ----------
@@ -426,8 +458,7 @@ class Orbit:
 
     def y(self, t):
         """
-        Y-coordinate of the relative orbit at time t. 
-        The direction of the periastron is along the X-axis.
+        Y component of the relative star→pulsar vector.
 
         Parameters
         ----------
@@ -444,8 +475,9 @@ class Orbit:
 
     def z(self, t):
         """
-        Z-coordinate of the relative orbit at time t. T
-        he direction of the periastron is along the X-axis.
+        Z component of the relative star→pulsar vector.
+
+        The present Keplerian model is planar, so this returns zero.
 
         Parameters
         ----------
@@ -463,8 +495,7 @@ class Orbit:
 
     def vector_sp(self, t):
         """
-        Position vector of the relative orbit at time t. 
-        The direction of the periastron is along the X-axis.
+        Relative position vector from optical star to pulsar.
 
         Parameters
         ----------
@@ -473,112 +504,117 @@ class Orbit:
 
         Returns
         -------
-        np.ndarray of shape (3, len(t))
-            3D position vector at time t.
+        ndarray, shape (3,) or (3, N)
+            ``vector_p(t) - vector_s(t)`` in cm.  A scalar ``t`` gives
+            shape ``(3,)``; array input gives shape ``(3, N)``.
 
         """
         return np.array([self.x( t), self.y( t), self.z( t)])   
     
     def dx(self, t):
-        """Time derivative of an x-coordinate of a relative orbit: \dot{x}. """
+        """Relative star→pulsar X velocity [cm s^-1]."""
         return -self.a * self.d_ecc_an(t) * sin(self.ecc_an(t))
     
     def dy(self, t):
-        """Time derivative of an y-coordinate of a relative orbit: \dot{y}. """
+        """Relative star→pulsar Y velocity [cm s^-1]."""
         return self.b * self.d_ecc_an(t) * cos(self.ecc_an(t))
     
     def dz(self, t):
-        """Time derivative of an z-coordinate of a relative orbit: \dot{z}. """
+        """Relative star→pulsar Z velocity [cm s^-1], identically zero."""
         return t * 0.
     
     def vector_v(self, t):
-        """ Vector of the relative velocity."""
+        """Relative velocity ``d(vector_sp)/dt`` [cm s^-1]."""
         return np.array([self.dx(t), self.dy(t), self.dz(t)])
     
     @property
-    def a_opt(self):
-        """Semi-major axis of an optical star."""
-        return self.a * self.Mp / self.M
+    def a_s(self):
+        """Optical-star barycentric semi-major axis [cm]."""
+        return self.a * self.M_p / self.M
     
     @property
     def a_p(self):
-        """Semi-major axis of a pulsar."""
-        return self.a * self.Mopt / self.M
+        """Pulsar barycentric semi-major axis [cm]."""
+        return self.a * self.M_s / self.M
     
     @property
-    def b_opt(self):
-        """Semi-minor axis of an optical star."""
-        return self.b * self.Mp / self.M
+    def b_s(self):
+        """Optical-star barycentric semi-minor axis [cm]."""
+        return self.b * self.M_p / self.M
     
     @property
     def b_p(self):
-        """Semi-minor axis of a pulsar."""
-        return self.b * self.Mopt / self.M
+        """Pulsar barycentric semi-minor axis [cm]."""
+        return self.b * self.M_s / self.M
     
-    def r_opt(self, t):
-        """Distance from the optical star to the barycenter."""
-        return self.r(t) * self.Mp / self.M
+    def r_s(self, t):
+        """Optical-star distance from the barycenter [cm]."""
+        return self.r(t) * self.M_p / self.M
     
     def r_p(self, t):
-        """Distance from the pulsar to the barycenter."""
-        return self.r(t) * self.Mopt / self.M
+        """Pulsar distance from the barycenter [cm]."""
+        return self.r(t) * self.M_s / self.M
     
-    def x_opt(self, t):
-        """X-coordinate of an optical star."""
-        return -self.Mp / self.M * self.x(t)
+    def x_s(self, t):
+        """Optical-star barycentric X coordinate [cm]."""
+        return -self.M_p / self.M * self.x(t)
     
-    def y_opt(self, t):
-        """Y-coordinate of an optical star."""
-        return -self.Mp / self.M * self.y(t)
+    def y_s(self, t):
+        """Optical-star barycentric Y coordinate [cm]."""
+        return -self.M_p / self.M * self.y(t)
     
-    def z_opt(self, t):
-        """Z-coordinate of an optical star."""
-        return -self.Mp / self.M * self.z(t)
+    def z_s(self, t):
+        """Optical-star barycentric Z coordinate [cm]."""
+        return -self.M_p / self.M * self.z(t)
     
     def x_p(self, t):
-        """X-coordinate of a pulsar."""
-        return self.Mopt / self.M * self.x(t)
+        """Pulsar barycentric X coordinate [cm]."""
+        return self.M_s / self.M * self.x(t)
     
     def y_p(self, t):
-        """Y-coordinate of a pulsar."""
-        return self.Mopt / self.M * self.y(t)
+        """Pulsar barycentric Y coordinate [cm]."""
+        return self.M_s / self.M * self.y(t)
     
     def z_p(self, t):
-        """Z-coordinate of a pulsar."""
-        return self.Mopt / self.M * self.z(t)
+        """Pulsar barycentric Z coordinate [cm]."""
+        return self.M_s / self.M * self.z(t)
     
     def vector_s(self, t):
-        """Position of star 1 relative to the barycenter."""
-        return -self.Mp / self.M * self.vector_sp(t)
+        """Optical-star barycentric position vector [cm]."""
+        return -self.M_p / self.M * self.vector_sp(t)
     
     def vector_p(self, t):
-        """Position of star 2 relative to the barycenter."""
-        return self.Mopt / self.M * self.vector_sp(t)
+        """Pulsar barycentric position vector [cm]."""
+        return self.M_s / self.M * self.vector_sp(t)
     
-    def vector_v_opt(self, t):
-        """Velocity of star 1 relative to the barycenter."""
-        return -self.Mp / self.M * self.vector_v(t)
+    def vector_v_s(self, t):
+        """Optical-star barycentric velocity vector [cm s^-1]."""
+        return -self.M_p / self.M * self.vector_v(t)
     
     def vector_v_p(self, t):
-        """Velocity of star 2 relative to the barycenter."""
-        return self.Mopt / self.M * self.vector_v(t)
+        """Pulsar barycentric velocity vector [cm s^-1]."""
+        return self.M_s / self.M * self.vector_v(t)
 
     def _calculate(self):
         """
-        Tabulate the orbit, set xtab, ytab, ztab, ttab, rtab, nu_truetab.
+        Tabulate the relative and barycentric orbit coordinates.
+
+        Sets ``xtab_s``, ``ytab_s``, ``ztab_s``, ``rtab_s`` and their
+        ``_p`` counterparts, together with ``ttab``, ``rtab``, and
+        ``nu_truetab``.
 
         """
         _E_tab = np.linspace(-2.5 * pi, 2.5 * pi, int(self.n))
         t_tab = self.T / (2. * pi) * (_E_tab - self.e * sin(_E_tab))
-        self.xtab_opt = self.x_opt( t_tab)
-        self.ytab_opt = self.y_opt( t_tab)
-        self.ztab_opt = self.z_opt( t_tab)    
+        self.xtab_s = self.x_s( t_tab)
+        self.ytab_s = self.y_s( t_tab)
+        self.ztab_s = self.z_s( t_tab)    
         self.ttab = t_tab
         self.xtab_p = self.x_p( t_tab)
         self.ytab_p = self.y_p( t_tab)
         self.ztab_p = self.z_p( t_tab)    
         
-        self.rtab_opt = self.r_opt( t_tab)
+        self.rtab_s = self.r_s( t_tab)
         self.rtab_p = self.r_p( t_tab)
         self.rtab = self.r( t_tab)
         
@@ -625,7 +661,8 @@ class Orbit:
             
         # ax[0].set_aspect('equal')
         ax[0].plot(self.xtab_p[show_cond], self.ytab_p[show_cond], color=color) # plot the pulsar orbit
-        ax[0].plot(self.xtab_opt[show_cond], self.ytab_opt[show_cond], color='r') # plot the star orbit
+        if show_star:
+            ax[0].plot(self.xtab_s[show_cond], self.ytab_s[show_cond], color='r') # plot the star orbit
         ax[0].scatter(x=0, y=0, color='k', marker='x') # show a barycenter
         ax[0].plot([0, 3 * self.b * cos(self.nu_los)],
                 [0, 3 * self.b * sin(self.nu_los)],
@@ -658,9 +695,8 @@ class Orbit:
             ax[0].scatter(x=self.x_p( t_pos),
                               y=self.y_p( t_pos), color=color) # draw a point at time t_pos
             if show_star:
-                ax[0].scatter(x=self.x_opt( t_pos),
-                                  y=self.y_opt( t_pos), color=color) # draw a star at time t_pos
+                ax[0].scatter(x=self.x_s( t_pos),
+                                  y=self.y_s( t_pos), color=color) # draw a star at time t_pos
             ax[1].scatter(x=t_pos/x_norma, y=self.r( t_pos), color=color)
             ax[2].scatter(x=t_pos/x_norma,
                           y=self.true_an( t_pos) * 180. / pi, color=color)
-            

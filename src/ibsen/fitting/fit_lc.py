@@ -35,7 +35,7 @@ d0_test = 0.03
 default_params = { "sys_name": "psrb",
                             
               "puls_b_ref" : 1.0, "puls_r_ref" : 1e13,
-              "opt_b_ref": 0.0, "opt_r_ref": 1e13,
+              "s_b_ref": 0.0, "s_r_ref": 1e13,
               "alpha_disk_deg": 15.,
               "incl_disk_deg": -45.,
               "f_d" : f_d_test, "f_p": 0.03, 

@@ -23,7 +23,7 @@ DAY = 86400.
 def compute_lc(ts, bands, sys_name='psrb',
                ### stars params:
                b_puls_13=1,
-               b_opt_13=0.0, 
+               b_s_13=0.0, 
                ### disk params:
                f_d=100, 
                f_p=0.1,
@@ -69,7 +69,7 @@ def compute_lc(ts, bands, sys_name='psrb',
                         sys_name=sys_name, 
                         ### -----------------------------------------------
                         puls_b_ref=b_puls_13, puls_r_ref=1e13,
-                        opt_b_ref=b_opt_13, opt_r_ref=1e13,
+                        s_b_ref=b_s_13, s_r_ref=1e13,
                         ### -----------------------------------------------
                         f_d=f_d, delta=delta, np_disk=np_disk,
                         height_exp=height_exp, alpha_disk_deg=alpha_deg,
@@ -250,8 +250,8 @@ class LightCurveWindow(ToolWindowBase):
         lay, self.b_puls_13 = self.make_log10_slider("b_puls_13", 0.01, 100.0, 0.003, 0.53)
         lay_stars.addLayout(lay); _wire_slider(self.b_puls_13)
     
-        lay, self.b_opt_13 = self.make_log10_slider("b_opt_13", 0.01, 100.0, 0.1, 0.01)
-        lay_stars.addLayout(lay); _wire_slider(self.b_opt_13)
+        lay, self.b_s_13 = self.make_log10_slider("b_s_13", 0.01, 100.0, 0.1, 0.01)
+        lay_stars.addLayout(lay); _wire_slider(self.b_s_13)
     
         # ----- Disk parameters -----
         lay_disk = _page_widget("Disk parameters")
@@ -820,7 +820,7 @@ class LightCurveWindow(ToolWindowBase):
                         to_parall=self.to_parall.isChecked(),
                         
                         b_puls_13=float(self.slider_value(self.b_puls_13)),
-                        b_opt_13=float(self.slider_value(self.b_opt_13)),
+                        b_s_13=float(self.slider_value(self.b_s_13)),
                         f_d=float(self.slider_value(self.f_d)),
                         f_p=float(self.slider_value(self.f_p)),
                         delta=float(self.slider_value(self.delta)),

@@ -207,7 +207,8 @@ def tau_gg_iso_2d(eg, x, y, R_star, T_star, incl_los, nu_los, fast=False, z=0.):
     """
     Optical depth due to gamma-gamma pair production for a photon of energy
     eg (in units of electron rest-energy) emitted from the position (x, y, z)
-    in the pulsar orbit plane (z=0; however you can specify arbitrary z). 
+    relative to the star in the pulsar orbit plane 
+    (z=0; however you can specify arbitrary z). 
     X-axis is directed from the optical star to
     the periastron of the pulsar. Z-axis is aligned with the direction of pulsar 
     orbital velosity; Y-axis is chosen so that [e_X x e_Y] = e_Z.
@@ -287,7 +288,7 @@ def tau_gg_iso_2d(eg, x, y, R_star, T_star, incl_los, nu_los, fast=False, z=0.):
          low_inner, lambda l_: low_inner(l_)*1e3, epsrel = 1e-3)[0] * overall_coef
     return res
 
-def tabulate_absgg(orb, nrho, nphi, ne, Topt, Ropt, rhomin=0.1, rhomax=5.5, emin=1e9,
+def tabulate_absgg(orb, nrho, nphi, ne, T_s, R_s, rhomin=0.1, rhomax=5.5, emin=1e9,
                    emax=1e14, to_save=True, filename='gg_abs', to_return=False,
                    n_cores=None, fast=False):
     """
@@ -311,9 +312,9 @@ def tabulate_absgg(orb, nrho, nphi, ne, Topt, Ropt, rhomin=0.1, rhomax=5.5, emin
         Number of grid points in phi (linear).
     ne : int
         Number of grid points in energy E (logarithmic).
-    Topt : float
+    T_s : float
         Stellar effective temperature, [K].
-    Ropt : float
+    R_s : float
         Stellar radius, in cm.
     rhomin : float, optional
         Minimum rho (dimensionless) for the grid. Default is 0.1.
@@ -383,8 +384,8 @@ def tabulate_absgg(orb, nrho, nphi, ne, Topt, Ropt, rhomin=0.1, rhomax=5.5, emin
             yy[ir, iphi] = y
             
             def to_parall(ie):
-                return tau_gg_iso_2d(eg = es[ie]/5.11e5, x=x, y=y, R_star=Ropt,
-                            T_star=Topt, incl_los=orb.incl_los,
+                return tau_gg_iso_2d(eg = es[ie]/5.11e5, x=x, y=y, R_star=R_s,
+                            T_star=T_s, incl_los=orb.incl_los,
                             nu_los=orb.nu_los, fast=fast)
             if n_cores is None:
                 res[ir, iphi, :] = np.array([

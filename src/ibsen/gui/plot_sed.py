@@ -32,7 +32,7 @@ def sed(t=0.0, f_d=100.0, b_13=1.0, gamma_max=2.0, s_max=1.0, cooling='stat_ibs'
               f_d=f_d, delta=0.01, np_disk=3, rad_prof='pl', r_trunk=None,
              height_exp=0.25, 
              b_ref=0., r_b_ref=1e13)
-    pulsar = Pulsar( f_p=0.1, r_p_ref=star.Ropt,
+    pulsar = Pulsar( f_p=0.1, r_p_ref=star.R_s,
              b_ref=b_13, r_b_ref=1e13)
     winds = Winds(orbit=orb, star=star, pulsar=pulsar)
     if not three_dim:
@@ -110,7 +110,7 @@ class SEDWindow(QMainWindow):
         (self.line_sy,) = self.ax.plot([], [], label="Synchrotron", color='b', ls='--')
         (self.line_ic,) = self.ax.plot([], [], label="IC", color='r', ls='--')
         (self.line_tot,) = self.ax.plot([], [], label="Total", color='k', ls='-')
-        self._conf_interv_poly = self.ax.fill_between([], [], [], alpha=0.2, color='k') 
+        self._conf_interv_poly = None
 
         self.ax.legend(loc="best")
 
@@ -564,6 +564,7 @@ class SEDWindow(QMainWindow):
             sed_sy = np.asarray(sed_sy)
             sed_ic = np.asarray(sed_ic)
             sed_tot = sed_sy + sed_ic
+            confidence_interval = None
             
             # if fit enabled and a dataset exists:
             if self.fit_norm_cb.isChecked() and self.fit_dataset.count() > 0:
@@ -572,15 +573,22 @@ class SEDWindow(QMainWindow):
                 # find the dataset by name
                 ds = next((d for d in self.obs_data if d["name"] == name), None)
                 if ds is not None:
+                    model_fit_mask = np.isfinite(E) & np.isfinite(sed_tot)
                     (optimal_norm_e,), sed_tot, (dn,), sed_tot_low, sed_tot_high = fit_norm_here(
                         x_obs=ds["x"], 
                         y_obs=ds["y"], dy_obs=ds["dy"], x_model=E,
                         y_model=sed_tot, norm_init=NORMALIZATION_INITIAL,
                         grid_scale='log', return_err=True)
                     
- 
-                    sed_sy = optimal_norm_e / NORMALIZATION_INITIAL * sed_sy
-                    sed_ic = optimal_norm_e / NORMALIZATION_INITIAL * sed_ic
+                    E = E[model_fit_mask]
+                    sed_sy = (optimal_norm_e / NORMALIZATION_INITIAL
+                              * sed_sy[model_fit_mask])
+                    sed_ic = (optimal_norm_e / NORMALIZATION_INITIAL
+                              * sed_ic[model_fit_mask])
+                    confidence_interval = (
+                        np.asarray(sed_tot_low),
+                        np.asarray(sed_tot_high),
+                    )
             
             # Mask invalid/nonpositive for log scale
             m = np.isfinite(E) & np.isfinite(sed_tot) & (E > 0) & (sed_tot > 0)
@@ -588,11 +596,16 @@ class SEDWindow(QMainWindow):
             sed_sy = sed_sy[m]
             sed_ic = sed_ic[m]
             sed_tot = sed_tot[m]
+            if confidence_interval is not None:
+                sed_tot_low, sed_tot_high = tuple(
+                    bound[m] for bound in confidence_interval
+                )
             
-            # Update band: remove old poly and make a new one
-            if self.fit_norm_cb.isChecked() and self.fit_dataset.count() > 0:    
-                if self._conf_interv_poly is not None:
-                    self._conf_interv_poly.remove()
+            # Confidence bounds exist only after a successful normalization fit.
+            if self._conf_interv_poly is not None:
+                self._conf_interv_poly.remove()
+                self._conf_interv_poly = None
+            if confidence_interval is not None:
                 self._conf_interv_poly = self.ax.fill_between(E, sed_tot_low,
                                 sed_tot_high, alpha=0.2, color='k')
                 

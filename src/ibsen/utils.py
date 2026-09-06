@@ -1209,13 +1209,13 @@ def vector_angle(n1, n2, vec_beta=np.zeros(3), lor_trans=False):
     n1_ = n_from_v(n1, eps=1e-10)
     n2_ = n_from_v(n2, eps=1e-10)
     if np.all(vec_beta == 0) or (not lor_trans):
-        # if np.all(n1_ == 0.) or np.all(n2_ == 0.):
-            # return np.arccos( mydot(n1_*0., n2_*0.) )
-        return np.arccos( mydot(n1_, n2_) )
+        return np.arccos( np.clip(mydot(n1_, n2_), -1.0, 1.0) )
     else:    
         n1_prime = n_from_v(lor_trans_vec(n1_, vec_beta))
         n2_prime = n_from_v(lor_trans_vec(n2_, vec_beta))
-        return np.arccos( mydot(n1_prime, n2_prime))
+        return np.arccos(
+            np.clip(mydot(n1_prime, n2_prime), -1.0, 1.0)
+            )
 
 def lor_trans_e_spec_iso(E_lab, dN_dE_lab, gamma, E_comov=None, n_mu=51, 
                          mode=None, inv_jac=False):
@@ -1271,15 +1271,6 @@ def lor_trans_e_spec_iso(E_lab, dN_dE_lab, gamma, E_comov=None, n_mu=51,
     if np.all(dN_dE_lab == 0.):
         return E_comov, E_comov * 0. + np.finfo(float).tiny
 
-    # set up lab-spectrum interpolator, zero outside
-    # lab_interp = interp1d(
-    #     E_lab, dN_dE_lab,
-    #     kind='linear',
-    #     bounds_error=False,
-    #     fill_value=0.0
-    # )
-    # print('e lab', E_lab)
-    # print('dnde', dN_dE_lab)
     log_lab_interp = logrep(
         E_lab, dN_dE_lab,
         kind='linear',
@@ -1511,7 +1502,6 @@ def rotate_fromax_toax(v, ax1, ax2):
 
 def project_point_for_gg(vec_r, n_los):
     rr = absv(vec_r)
-    # n_proj = mycross(vec_r, n_los)
     e_perp = n_from_v(mycross(vec_r, n_los))
     n_orb = np.array([0., 0., 1.])
     def rot_e_perp(_phi):
@@ -1520,26 +1510,11 @@ def project_point_for_gg(vec_r, n_los):
                 mycross(n_los, e_perp)[..., :] * _s 
                  # n_los[..., :] * mydot(n_los, e_perp)[..., None] * (1. - _c)
                  )
-        # return rotate_vec1_around_vec2(e_perp, n_los, _phi)
-    # def _to_solve(_phi):
-    #     # _c, _s = np.cos(_phi), np.sin(_phi)
-    #     return mydot(n_orb, rot_e_perp(_phi))
-    # _phi = brentq(_to_solve, 0., 2. * np.pi)
     _a, _b = mydot(e_perp, n_orb), mydot(n_orb, mycross(n_los, e_perp))
     _phi = -np.arccos(_b / np.sqrt(_a**2 + _b**2))
     needed_vec = n_from_v(rot_e_perp(_phi))
     return rr[..., None] * needed_vec
-    # rp = mydot(vec_r, n_los)
-    # nx, ny = n_los[0], n_los[1]
-    # if np.abs(nx) > 1e-3:
-    #     nynx = ny / nx
-    #     ynew = rp * nynx + np.sqrt(rp**2 * nynx**2 + (1. + nynx**2) * (rr**2 - rp**2 / nx**2))
-    #     xnew = (rp - ynew * ny) / nx
-        
-    # else:
-    #     ynew = rp / ny
-    #     xnew = np.sqrt(rr**2 - ynew**2)
-    # return xnew, ynew
+
 
 
 """ #!!!

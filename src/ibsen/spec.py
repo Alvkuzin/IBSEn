@@ -290,10 +290,9 @@ docstr_specibs =  f"""
     distance : float or None, optional
         Source distance [cm]. If None, taken from system defaults via
         ``unpack_dist(orbit.name, distance)``.
-    mode : str {'rgi', 'int'}, optional
-        Whether to use RegularGridInterpolator (vectorized but lin-lin
-            interplation) or non-vectorized interp1d in log-log scale for
-            each point at the IBS independently.
+    mode : str, optional
+        Retained configuration option for compatibility. It is stored but is
+        not used by the current SED calculation path.
     ne_mult : float, optional
         The density of nods at the auxilary energy grid. ne_mult=1 means
         the same density as the input e_ph of calculate(e_ph).
@@ -312,30 +311,61 @@ docstr_specibs =  f"""
         Electron/IBS container used for radiation.
     _orb : Orbit
         Orbit of the system (from ``els.ibs.winds.orbit``).
-    _ibs : IBS
+    _ibs : IBS or IBS3D
         IBS geometry at the evaluation time.
-    distance : float
-        Adopted distance [cm].
-    ic_ani, delta_power, lorentz_boost, simple, abs_photoel, abs_gg, nh_tbabs, apex_only
-        Stored configuration flags/parameters.
+    distance : tuple of float
+        Adopted source distance [cm], as returned by ``unpack_params``.
+    method : {'full', 'simple', 'apex'}
+        Selected spatial radiation calculation.
+    mechanisms, ic_ani, delta_power, lorentz_boost, ani_lorentz_boost :
+        Stored radiation and Doppler-frame configuration.
+    abs_photoel, abs_gg, nh_tbabs : bool, bool, float
+        Stored line-of-sight absorption configuration.
+    mode, ic_approx, ne_mult, nEed_syn, nEed_ic
+        Stored interpolation/approximation and Naima-grid controls.
+    dopls, spatial_shape : ndarray, tuple
+        Midpoint Doppler factors and their spatial-grid shape.  This is
+        ``(2*Ns-1,)`` for the signed 2D IBS and ``(Nphi, Ns-1)`` for IBS3D.
+    b, u, temp_eff, scat_ang : ndarray
+        Local midpoint quantities used for the last SED calculation.  They
+        are lab-frame quantities when ``lorentz_boost=False`` and the selected
+        comoving approximations otherwise.
+    e_el, dne_de, ne_i : ndarray
+        Electron energy grid, per-segment spectra, and integrated segment
+        populations selected from ``els``. ``dne_de`` has shape
+        ``spatial_shape + (Ne,)``.
+    b_apex, u_apex, scat_ang_apex, dopl_apex : float
+        Apex values used by ``method='apex'``; ``T_s`` is the stellar
+        temperature and ``symm_ax`` is the shock symmetry axis.
+    abs_tot, abs_tot_apex : ndarray
+        Total transmission for midpoint cells and the apex. Set by
+        :meth:`_set_absorption`.
     e_ph : ndarray
         Photon-energy grid used for the last computed SED [eV].
     sed : ndarray
         Total SED integrated over the IBS [erg s-1 cm-2].
     sed_s : ndarray
-        Per-segment SED array with shape (n_segments, e_ph.size) [erg s-1 cm-2].
-    sed_sy, sed_ic : ndarray, optional
-        Mechanism-separated totals (set if those mechanisms were computed). 
+        Per-segment SED array with shape ``(2*Ns-1, Nph)`` for 2D or
+        ``(Nphi, Ns-1, Nph)`` for 3D [erg s-1 cm-2].
+    sed_sy, sed_ic, sed_s_sy, sed_s_ic : ndarray, optional
+        Mechanism-separated total and per-segment SEDs, set only for requested
+        mechanisms.
     calculated : bool
         Whether the SED was calculated.
 
     Methods
     -------
+    _set_sed_parameters()
+        Select the IBS midpoint and electron attributes used by all radiation
+        methods, in either the lab or the requested comoving frame.
+    _set_absorption(e_ph), _extended_photon_energies(e_ph)
+        Build line-of-sight transmissions and the Doppler-safe internal photon
+        grid.
     sed_nonboosted_apex(self, e_ext, emiss_mechanism)
         Compute an SED using the apex fields values and a total el spectrum.
     sed_nonboosted_simple(self, e_ext, emiss_mechanism)
         Compute an SED over the IBS using a simple and fast approach.
-    sed_nonboosted_full(self, e_ext, emiss_mechanism)
+    sed_nonboosted_full(self, e_ext, emiss_mechanism, decimals=None)
         Compute an SED over the IBS using the fully correct method.
     calculate(e_ph=np.logspace(2,14,1000), to_return=False)
         Compute and store SED(s) on energy grid e_ph;
@@ -347,7 +377,7 @@ docstr_specibs =  f"""
         Vectorized band fluxes for many (e1,e2) intervals; ``epows`` may be None,
         a scalar, or an iterable matching ``bands``. 
     index(e1, e2)
-        Photon index γ fitted over [e1, e2] assuming dN/dE \propto E^{{-index}}; returns NaN
+        Photon index fitted over [e1, e2] assuming dN/dE \propto E^{{-index}}; returns NaN
         if the fit fails. 
     indexes(bands)
         Vectorized photon indexes for many bands. 
@@ -356,11 +386,10 @@ docstr_specibs =  f"""
 
     Notes
     -----
-    * **Segment treatment.** If ``method!=`apex`', each segment’s SED is computed
-      (synchrotron or IC) using per-segment electron spectra and local B/u
-      values.
-      For symmetric mechanisms (syn and ic), the opposite horn is filled by symmetry; for
-      anisotropic IC, both horns are computed explicitly. 
+    * **Segment treatment.** If ``method != 'apex'``, each segment’s SED uses
+      its local electron spectrum and B/u values.  The current full method
+      evaluates every distinct local parameter combination; it does not rely
+      on a two-horn symmetry shortcut.
     * **Boosting & integration.** Segment SEDs are Doppler-boosted, absorbed,
       and summed along arclength; The internal energy grid are extended
       by the maximum Doppler factor to avoid edge losses. 
@@ -386,6 +415,7 @@ class SpectrumIBS: #!!!
                  ic_approx='KN',
                  nEed_syn = None,
                  nEed_ic = None):
+        """Configure a spectrum calculator for one calculated IBS snapshot."""
         self.calculated = False
         self.els = els
         try:
@@ -404,7 +434,7 @@ class SpectrumIBS: #!!!
         self.nh_tbabs = nh_tbabs
         self.mechanisms = mechanisms
         
-        _dist = unpack_params(('D', ),
+        (_dist,) = unpack_params(('D', ),
             orb_type=sys_name, sys_params=sys_params,
             known_types=known_names, get_defaults_func=get_parameters,
                                D=distance)
@@ -431,7 +461,7 @@ class SpectrumIBS: #!!!
 
         ##### --------- general --------- ####
         self.dopls = self._ibs.dopl_mid         
-        self.Topt = self._ibs.winds.star.Topt
+        self.T_s = self._ibs.winds.star.T_s
         self.spatial_shape = self.dopls.shape
         ##### ---------- apex ----------- ####
         self.b_apex = self._ibs.b_apex
@@ -448,15 +478,15 @@ class SpectrumIBS: #!!!
             ne_i_mid = self.els.n_i_mid_comov
             if not self.ani_lorentz_boost:
                 u_2horns = self._ibs.ug_mid_comov_iso
-                temp_2horns = self._ibs.T_opt_eff_mid_comov_iso
+                temp_2horns = self._ibs.T_s_eff_mid_comov_iso
             else:
                 u_2horns = self._ibs.ug_mid_comov_ani
-                temp_2horns = self._ibs.T_opt_eff_mid_comov_ani
+                temp_2horns = self._ibs.T_s_eff_mid_comov_ani
 
         else:
             b_2horns = self._ibs.b_mid
             u_2horns = self._ibs.ug_mid
-            temp_2horns = self._ibs.T_opt_eff_mid
+            temp_2horns = self._ibs.T_s_eff_mid
             scat_ang_2horns = self._ibs.scattering_angle_mid
             e_vals = self.els.e_vals
             dne_de_mid = self.els.dNe_de_mid
@@ -486,7 +516,8 @@ class SpectrumIBS: #!!!
 
         Returns
         -------
-        None.
+        None
+            Stores ``abs_tot`` and ``abs_tot_apex``.
 
         """
         _abs_ph = np.ones(e_ph.size)
@@ -512,7 +543,8 @@ class SpectrumIBS: #!!!
 
         Returns
         -------
-        None.
+        ndarray
+            Internal photon-energy grid [eV].
 
         """
         
@@ -554,13 +586,13 @@ class SpectrumIBS: #!!!
         if emiss_mechanism == 'ic':
             emiss_function = InverseCompton
             kwargs = dict(seed_photon_fields=[['star',
-                                self.Topt * u.K,
+                                self.T_s * u.K,
                                 self.u_apex * u.erg / u.cm**3]],
                           nEed=self.nEed_ic)
         if emiss_mechanism == 'ic_ani':
             emiss_function = InverseCompton
             kwargs = dict(seed_photon_fields=[['star',
-                                self.Topt * u.K,
+                                self.T_s * u.K,
                                 self.u_apex * u.erg / u.cm**3,
                                 self.scat_ang_apex * u.rad
                                 ]],
