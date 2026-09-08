@@ -31,14 +31,12 @@ pip install -e ".[gui]"
 This project requires:
  - Python 3 (please install yourself),
  - [Naima](https://naima.readthedocs.io/en/latest/installation.html),
- - And some standard scientific and graphic libraries. Install them, including Naima, with:
+ - And some standard scientific and graphic libraries. 
 
-```bash
-pip install -r requirements.txt
-```
+**Note on Naima.** If you have both Naima and numpy installed and they are not in conflict with each other and with your python, you are good to go. But it is a good idea to create a separate environment for IBSEn where the numpy<2 and  Naima will be installed.
 
-**Note on Naima.** If you have both Naima and numpy installed and they are not in conflict, you are good to go. It is a good idea to create a separate environment for IBSEn where the numpy<2 and  Naima will be installed.
 
+### Test the installation
 
 Scripts now are mainly not suited for running from the command line... And I don't have proper tests yet, so to find out if the installation works, try running a very basic python script that simply initializes a lot of classes with more or less default parameters and stores the output in a file:
 ```bash
