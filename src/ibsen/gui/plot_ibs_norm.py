@@ -26,9 +26,9 @@ def points_and_color(beta, nu_los, s_max, gamma_max, phi_rot, ibs_color):
         color_param = _ibs.dopl
     elif ibs_color in ('scattering', 'scattering angle'):
         color_param = _ibs.scattering_angle
-    elif ibs_color in ('scattering_comov', 'scattering_angle_comov'
+    elif ibs_color in ('scattering_comov', 'scattering_angle_comov',
                        'scattering comov', 'scattering angle comov',
-                       'scattering comoving', 'scattering angle comoving'
+                       'scattering comoving', 'scattering angle comoving',
                        ):
         color_param = _ibs.scattering_angle_comov
     else:
@@ -69,7 +69,7 @@ class IBSNormWindow(QMainWindow):
         (self.line_los,) = self.ax.plot([], [], lw=2, ls="--", color='C2')
         (self.line_symm,) = self.ax.plot([], [], lw=2, ls=":", color='C1')
         self.ax.scatter(0, 0, c='r')
-        self.opt_star_scatter = self.ax.scatter([], [], color='b')
+        self.star_scatter = self.ax.scatter([], [], color='b')
         self.grad_plot = GradientPlot(fig=self.fig, ax=self.ax, colorbar=True, cbar_label=None)
 
         plot_layout.addWidget(self.canvas)
@@ -221,7 +221,7 @@ class IBSNormWindow(QMainWindow):
         self.line_los.set_data([0, 3 * np.cos(nu_los)], [0, 3 * np.sin(nu_los)])
         self.line_symm.set_data([-3 * np.cos(phi_rot), 3 * np.cos(phi_rot)],
                                 [-3 * np.sin(phi_rot), 3 * np.sin(phi_rot)])
-        self.opt_star_scatter.set_offsets([[np.cos(phi_rot), np.sin(phi_rot)]])
+        self.star_scatter.set_offsets([[np.cos(phi_rot), np.sin(phi_rot)]])
         
         self.ax.set_xlim(-2, 2)
         self.ax.set_ylim(-2, 2)

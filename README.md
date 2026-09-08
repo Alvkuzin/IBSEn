@@ -6,8 +6,6 @@ IBSEn: **I**ntra**B**inary **S**hock **E**mission **n**-**n**ot-mea**n**i**n**g-
 ## Installation & Requirements 
 ### Installation
 
-**This version may be unstable. Gonna push the latest one soon.**
-
 Clone and install manually. Normal installation:
 
 ```bash
@@ -43,10 +41,10 @@ pip install -r requirements.txt
 
 Scripts now are mainly not suited for running from the command line... And I don't have proper tests yet, so to find out if the installation works, try running a very basic python script that simply initializes a lot of classes with more or less default parameters and stores the output in a file:
 ```bash
-python test_ibsen.py --testall True --ndim 3 > my_ibsen_test.txt
+python test_ibsen.py --testall True --ndim -1 > my_test.txt 
 
 ```
-Compare the output with the file `ibsen_test_results_0_5_10.txt`
+Compare the output with the file `ibsen_test_results_0_5_12.txt`
 
 ## Usage
 There is a poor attempt at the graphical interface: run it with
@@ -68,8 +66,8 @@ from ibsen import Orbit
 import matplotlib.pyplot as plt   
 import numpy as np
 DAY = 86400
-orb = Orbit(T=25*DAY, e=0.7, M=30*2e33,
-                 nu_los=90*np.pi/180, incl_los=20*np.pi/180)
+orb = Orbit(T=25*DAY, e=0.7, M_s=30*2e33, M_p=1.4*2e33,
+                 nu_los=np.deg2rad(90), incl_los=np.deg2rad(20))
 t = np.linspace(-20*DAY, 70*DAY, 1000)
 plt.plot(orb.x(t), orb.y(t))
 ```
@@ -77,8 +75,8 @@ plt.plot(orb.x(t), orb.y(t))
 Initiate `Winds` with a decretion disk pressure 100 times stronger than the polar wind (see tutorials for further info) and plot the star-to-emission zone distance VS time.
 ```python
 from ibsen import Pulsar, OpticalStar, Winds
-star = OpticalStar(f_d=100, Ropt=7e11, Mopt=28*2e33, Topt=4e4)
-pulsar = Pulsar(b_ref=10, r_b_ref=star.Ropt, r_p_ref=star.Ropt)
+star = OpticalStar(f_d=100, R_s=7e11, M_s=28*2e33, T_s=4e4)
+pulsar = Pulsar(b_ref=10, r_b_ref=star.R_s, r_p_ref=star.R_s)
 winds = Winds(orbit=orb, star=star, pulsar=pulsar)
 t1 = np.linspace(-3*DAY, 3*DAY, 1000)
 plt.plot(t1/DAY, winds.dist_se_1d(t1))
@@ -115,13 +113,13 @@ from ibsen import LightCurve
 t_lc = np.linspace(-3*DAY, 3*DAY, 100)
 lc = LightCurve(times = t_lc, 
                 to_parall=True, n_cores=4,
-                T=25*DAY, e=0.7, M=30*2e33,
-                 nu_los=90*np.pi/180, incl_los=20*np.pi/180, 
-                 Ropt=7e11, Mopt=28*2e33, Topt=4e4,
+                T=25*DAY, e=0.7, M_s=30*2e33, M_p=30*2e33,
+                 nu_los=np.deg2rad(90), incl_los=np.deg2rad(20), 
+                 R_s=7e11,T_s=4e4,
                 distance=3e3*3e18,
                 bands = ([300, 1e4], ), cooling='stat_mimic',
                 f_d=100, 
-                puls_b_ref=10, puls_r_ref=star.Ropt, 
+                puls_b_ref=10, puls_r_ref=star.R_s, 
                 method='simple', mechanisms=['syn', 'ic'])
 lc.calculate()
 lc.peek()
@@ -131,13 +129,11 @@ See tutorials in `tutorials` folder for the complete description of these models
 
 ### TODO and known issues
  1. How to visualize winds in 3D?
- 2. Write fitting utils for LC/SEDs. It should take several datasets and fit to the theoretical model using the same sets of parameters except normalizations.
- 3. If one is bored so much that one feels the need to make the graphical interface better, it'd be cool to add all gamma-ray binaies systems in the drop-down windows, as well as allow for the basic system parameters variation (such as Torb, Mopt, e...) instead of keeping them strictly fixed. Also, the default values and ranges of sliders should be system-dependent.
- 4. The spectrum calculation utils are currently very close to being a general function for calculating the non-thermal spectra from an extended emission zone. 
+ 2. If one is bored so much that one feels the need to make the graphical interface better, it'd be cool to add all gamma-ray binaies systems in the drop-down windows, as well as allow for the basic system parameters variation (such as Torb, Mopt, e...) instead of keeping them strictly fixed. Also, the default values and ranges of sliders should be system-dependent.
+ 3. The spectrum calculation utils are currently very close to being a general function for calculating the non-thermal spectra from an extended emission zone. 
 It'd be a good idea to actually make it so.
- 5. Occasional NaNs in IC spectrum.
- 6. `Orbit.t\_from\_true\_an` seems to have problems passing through nu = -pi
- 7. Clarify whether the coordinates origin is at the optical star OR in the mass center.
+ 4. Occasional NaNs in IC spectrum.
+ 5. `Orbit.t\_from\_true\_an` seems to have problems passing through nu = -pi
  
 
 

@@ -1,5 +1,5 @@
 import numpy as np
-from ibsen.utils import  interplg
+from ibsen.utils import  interplg, trapz_loglog
 import inspect
 from scipy.interpolate import interp1d
 
@@ -349,6 +349,88 @@ def fit_norm(ydata, dy_data, y0_normalized, return_err=False, addit_const=False)
         return _fit_norm_addit_and_multi(ydata, dy_data, y0_normalized, return_err)
     return _fit_norm_only_multi(ydata, dy_data, y0_normalized, return_err)
 
+def powerlaw_approx(dnde, e, e1, e2):
+    """
+    Fit dnde = A * e**(-p) independently along the last axis.
+
+    Parameters
+    ----------
+    dnde : array-like, shape (..., Ne)
+        Spectra to fit.
+    e : array-like, shape (Ne,)
+        Energy grid.
+    e1, e2 : float
+        Fitting range. As in `index`, a factor-of-1.2 margin is applied.
+
+    Returns
+    -------
+    A, p : np.ndarray, shape (...)
+        Best-fitting normalization and power-law index. Invalid or
+        underdetermined fits are returned as NaN.
+    """
+    dnde = np.asarray(dnde, dtype=float)
+    e = np.asarray(e, dtype=float)
+
+    if dnde.ndim == 0:
+        raise ValueError("dnde must have an energy axis")
+    if e.ndim != 1:
+        raise ValueError("e must be one-dimensional")
+    if dnde.shape[-1] != e.size:
+        raise ValueError(
+            "the last axis of dnde must have the same size as e"
+        )
+
+    energy_good = (
+        np.isfinite(e)
+        & (e > 0)
+        & (e >= e1 / 1.2)
+        & (e <= e2 * 1.2)
+    )
+
+    good = (
+        energy_good
+        & np.isfinite(dnde)
+        & (dnde > 0)
+    )
+
+    # log10(dnde) = log10(A) - p*log10(e)
+    x = np.zeros_like(e)
+    np.log10(e, out=x, where=energy_good)
+
+    y = np.zeros_like(dnde)
+    np.log10(dnde, out=y, where=good)
+
+    # Analytical unweighted linear-regression sums along the energy axis.
+    n = np.sum(good, axis=-1)
+    sx = np.sum(np.where(good, x, 0.0), axis=-1)
+    sy = np.sum(np.where(good, y, 0.0), axis=-1)
+    sxx = np.sum(np.where(good, x**2, 0.0), axis=-1)
+    sxy = np.sum(np.where(good, x * y, 0.0), axis=-1)
+
+    denominator = n * sxx - sx**2
+    fit_good = (n >= 2) & np.isfinite(denominator) & (denominator != 0)
+
+    slope = np.full(dnde.shape[:-1], np.nan, dtype=float)
+    np.divide(
+        n * sxy - sx * sy,
+        denominator,
+        out=slope,
+        where=fit_good,
+    )
+
+    intercept = np.full_like(slope, np.nan)
+    np.divide(
+        sy - slope * sx,
+        n,
+        out=intercept,
+        where=fit_good,
+    )
+
+    p = -slope
+    A = np.power(10.0, intercept)
+
+    return A, p
+
 # def df_dx(f, x, eps=1e-5):
 #     dx = x * eps
 #     return (f(x + dx) - f(x - dx)) / 2. / dx
@@ -450,12 +532,13 @@ def index_simple(dnde, e):
 def index(dnde, e, e1, e2):
     """
     Electron index of a spectrum dnde. Fits a dnde in a given range 
-    [e1, e2] with a powerlaw.
+    [e1, e2] with a powerlaw. The fit is performed independently along the
+    last axis of ``dnde``.
 
     Parameters
     ----------
-    dnde : np.ndarray (Ne, )
-        Array to fit
+    dnde : np.ndarray (..., Ne)
+        Array(s) to fit. The last axis corresponds to energy.
     e : np.ndarray (Ne, )
         Energies at which dnde is calculated
     e1 : float
@@ -465,17 +548,37 @@ def index(dnde, e, e1, e2):
 
     Returns
     -------
-    float | np.nan
-        If the fit is successful, the index is returned. If the 
-        curve_fit raised an error, np.nan is returned.
+    np.ndarray (...,)
+        Power-law index for every leading-axis entry. Entries with fewer than
+        two valid points return ``np.nan``.
 
     """
         
-    _mask = np.logical_and(e >= e1/1.2, e <= e2*1.2)
-    _good = _mask & np.isfinite(dnde)
-    ind_ = index_simple(dnde[_good],
-                        e[_good])
-    return ind_
+    dnde = np.asarray(dnde)
+    e = np.asarray(e)
+    if dnde.ndim == 0:
+        raise ValueError('dnde must have an energy axis')
+    if e.ndim != 1:
+        raise ValueError('e must be one-dimensional')
+    if dnde.shape[-1] != e.size:
+        raise ValueError('the last axis of dnde and e should have the same size')
+
+    mask = (e >= e1 / 1.2) & (e <= e2 * 1.2)
+    e_fit = e[mask]
+    indexes = np.empty(dnde.shape[:-1], dtype=float)
+
+    for ind in np.ndindex(indexes.shape):
+        indexes[ind] = index_simple(dnde[ind][mask], e_fit)
+
+    return indexes
+
+# def powerlaw_params(dnde, e, e1, e2):
+#     p = index(dnde, e, e1, e2)
+#     ok = 
+#     ntot = trapz_loglog(y, x)
+#     amplitude = np.where(np.abs(p-1.)>1e-2,
+#                          ,
+#                          )
 
 
 
@@ -503,8 +606,8 @@ def avg(arr, weights=None, power=None, axis=None):
 
     """
     if power is None:
-        power = 1.
-        
+        return (np.sum(arr * weights, axis=axis) / 
+                np.sum(weights, axis=axis))
     return (np.sum(arr**power * weights, axis=axis) / 
             np.sum(weights, axis=axis))**(1. / power)
 

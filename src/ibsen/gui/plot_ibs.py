@@ -15,16 +15,18 @@ from ibsen.get_obs_data import known_names
 
 def _ibs_color_param(ibs, ibs_color: str) -> np.ndarray:
     key = ibs_color.strip().lower()
-
-    if key in ("doppler", "dopl", "doppl", "dopler", "doppler factor"):
+    key_clean = key.replace("_", "")
+    key_clean = key_clean.replace(" ", "")
+    
+    if key_clean in ("doppler", "dopl", "doppl", "dopler", "dopplerfactor"):
         return np.asarray(ibs.dopl)
-    if key in ("scattering", "scattering angle"):
+    if key_clean in ("scat", "scattering", "scatteringang" "scatteringangle"):
         return np.asarray(ibs.scattering_angle)
-    if key in (
-        "scattering_comov", "scattering_angle_comov",
-        "scattering comov", "scattering angle comov",
-        "scattering comoving", "scattering angle comoving",
-    ):
+    if key_clean in (
+                    "scatteringcomov", "scatteringanglecomov",
+                    "scatcomov","scatangcomov", "scatanglecomov", 
+                    "scatteringcomoving", "scatteringanglecomoving",
+                        ):
         if hasattr(ibs, "scattering_angle_comov"):
             return np.asarray(getattr(ibs, "scattering_angle_comov"))
         if hasattr(ibs, "scattering_angle_comoving"):
@@ -52,7 +54,7 @@ def winds_and_ibs(
     alpha_deg: float,
     incl_deg: float,
     b_puls_13: float,
-    b_opt_13: float,
+    b_s_13: float,
     nu_los_deg: float,
     s_max: float,
     gamma_max: float,
@@ -71,13 +73,13 @@ def winds_and_ibs(
                 rad_prof="pl",
                 r_trunk=None,
                 b_model="linear",
-                b_ref=b_opt_13,
+                b_ref=b_s_13,
                 r_b_ref=1e13)
     pulsar = Pulsar(r_b_ref=1e13,
                     f_p=f_p,
                     b_ref=b_puls_13,
                     b_model='linear',
-                    r_p_ref=star.Ropt,
+                    r_p_ref=star.R_s,
         )
 
     winds = Winds(
@@ -185,8 +187,8 @@ class IBSWindow(ToolWindowBase): #!!!
         bpuls_layout, self.b_puls_13 = self.make_log10_slider("b_puls_13", 0.01, 100.0, 0.01, 1.0)
         self.controls_layout.insertLayout(9, bpuls_layout)
 
-        bopt_layout, self.b_opt_13 = self.make_log10_slider("b_opt_13", 0.01, 100.0, 0.01, 1.0)
-        self.controls_layout.insertLayout(10, bopt_layout)
+        bs_layout, self.b_s_13 = self.make_log10_slider("b_s_13", 0.01, 100.0, 0.01, 1.0)
+        self.controls_layout.insertLayout(10, bs_layout)
 
         nu_layout, self.nu_los_deg = self.make_linear_slider("nu_los [deg]", 0.0, 360.0, 1.0, 90.0)
         self.controls_layout.insertLayout(11, nu_layout)
@@ -199,8 +201,11 @@ class IBSWindow(ToolWindowBase): #!!!
 
         self.controls_layout.insertWidget(14, QLabel("IBS color"))
         self.ibs_color = QComboBox()
-        self.ibs_color.addItems(["doppler", "scattering", "scattering_comoving",
-                                 "b", "b_comov", "ug", "ug_comov",
+        self.ibs_color.addItems(["doppler",
+                                 "dopl_star",
+                                 "scattering", "scattering_comoving",
+                                 "b", "b_comov", "ug", "ug_comov_iso",
+                                 "ug_comov_ani",
                                  "gamma-gamma (100 GeV)", "gamma-gamma (1 TeV)",
                                  "gamma-gamma (10 TeV)"])
         self.ibs_color.setCurrentText("doppler")
@@ -214,7 +219,7 @@ class IBSWindow(ToolWindowBase): #!!!
 
         for s in (
             self.limits, self.t_days, self.f_d, self.f_p, self.delta, self.alpha_deg, self.incl_deg,
-            self.b_puls_13, self.b_opt_13, self.nu_los_deg, self.s_max, self.gamma_max
+            self.b_puls_13, self.b_s_13, self.nu_los_deg, self.s_max, self.gamma_max
         ):
             hook_slider(s)
 
@@ -237,15 +242,20 @@ class IBSWindow(ToolWindowBase): #!!!
         t1, t2 = self._winds.times_of_disk_passage
         _r_scale = max(self._orb.r(t1), self._orb.r(t2))
         
-        orb_x, orb_y = self._orb.xtab[show_cond], self._orb.ytab[show_cond]
+        orb_x_p = self._orb.xtab_p[show_cond]
+        orb_y_p = self._orb.ytab_p[show_cond]
+        orb_x_s = self._orb.xtab_s[show_cond]
+        orb_y_s = self._orb.ytab_s[show_cond]
+        orb_x = np.concatenate((orb_x_p, orb_x_s))
+        orb_y = np.concatenate((orb_y_p, orb_y_s))
         x_scale = np.max(np.array([
             np.abs(np.min(orb_x)), np.abs(np.max(orb_x)), 1.5*_r_scale,
-            np.abs(np.max(self._ibs_x)), np.abs(np.max(self._ibs_x)),
+            np.abs(np.min(self._ibs_x)), np.abs(np.max(self._ibs_x)),
             self._orb.r_periastr
             ]))
         y_scale = np.max(np.array([
                 np.abs(np.min(orb_y)), np.abs(np.max(orb_y)), 1.5*_r_scale, 
-                np.abs(np.max(self._ibs_y)), np.abs(np.max(self._ibs_y)),
+                np.abs(np.min(self._ibs_y)), np.abs(np.max(self._ibs_y)),
                 self._orb.r_periastr
                 ]))
         self.ax.set_xlim(-1.2 * x_scale, 1.2 * x_scale)
@@ -266,7 +276,7 @@ class IBSWindow(ToolWindowBase): #!!!
             alpha_deg = float(self.slider_value(self.alpha_deg))
             incl_deg = float(self.slider_value(self.incl_deg))
             b_puls_13 = float(self.slider_value(self.b_puls_13))
-            b_opt_13 = float(self.slider_value(self.b_opt_13))
+            b_s_13 = float(self.slider_value(self.b_s_13))
             nu_los_deg = float(self.slider_value(self.nu_los_deg))
             s_max = float(self.slider_value(self.s_max))
             gamma_max = float(self.slider_value(self.gamma_max))
@@ -281,7 +291,7 @@ class IBSWindow(ToolWindowBase): #!!!
                 alpha_deg=alpha_deg,
                 incl_deg=incl_deg,
                 b_puls_13=b_puls_13,
-                b_opt_13=b_opt_13,
+                b_s_13=b_s_13,
                 nu_los_deg=nu_los_deg,
                 s_max=s_max,
                 gamma_max=gamma_max,

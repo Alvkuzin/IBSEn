@@ -6,7 +6,8 @@ from ibsen.winds import Winds
 from ibsen.ibs_norm import IBS_norm, IBS_norm3D
 from ibsen.utils import plot_with_gradient, \
  lor_trans_ug_iso, lor_trans_b_iso, lor_trans_Teff_iso, rotated_vector, absv, \
-     plot_surface_quads, vector_angle, n_from_v, vec_between, trapz_loglog, doppler_delta
+     plot_surface_quads, vector_angle, n_from_v, vec_between, trapz_loglog, doppler_delta,\
+         project_point_for_gg
 from ibsen.absorption.absorption import gg_analyt, gg_tab
 from ibsen.get_obs_data import known_names
 
@@ -22,11 +23,11 @@ def gamma_test(g0, par, coef):
 
 PEEK_KEYS = ('doppler', 'scattering', 'scattering_comoving',
                   'gg_tau', 'gg_abs', 'b_ns', 'b_ns_comov', 
-                  'b_opt', 'b_opt_comov', 'b', 'b_comov', 
+                  'b_s', 'b_s_comov', 'b', 'b_comov', 
                   'ug', 'ug_comov', )
 
 ibs_docstring = f"""
-    Intrabinary shock (IBS) in physical (cgs) units at a given orbital epoch.
+    Planar intrabinary shock (IBS) in physical cgs units at one orbital epoch.
 
     This adapter builds a **dimensionless** shock via :class:`IBS_norm` using the
     effective momentum-flux ratio `\\beta` from a supplied :class:`Winds`
@@ -35,7 +36,17 @@ ibs_docstring = f"""
     quantities by the current separation :math:`r_{{\\rm sp}}(t)`, and then shifts
     the curve to the pulsar’s instantaneous position in the orbital plane.
     Unitless/angle-like properties are delegated to the underlying normalized
-    object. 
+    object.
+
+    Reference frames
+    ----------------
+    The normalized shock is defined relative to the pulsar and is rotated to
+    the instantaneous star→pulsar direction.  After scaling by ``r_sp``, its
+    Cartesian points are translated to the pulsar's barycentric position.
+    Thus ``x``, ``y``, ``r_vec`` and their midpoint forms are barycentric
+    coordinates.  ``vec_pIBS``/``r`` are pulsar→IBS vectors/distances, while
+    ``vec_sIBS``/``r1`` are star→IBS vectors/distances.  Stellar radiation and
+    magnetic-field quantities use the latter, never barycentric distances.
 
     Parameters
     ----------
@@ -57,6 +68,9 @@ ibs_docstring = f"""
     n : int, optional
         Sampling points used to build the normalized IBS (per horn, before
         mirroring). Default is 31.
+    include_incl_in_los : bool, optional
+        If True, include ``orbit.incl_los`` in the line-of-sight vector;
+        otherwise use its projection onto the orbital plane. Default False.
     abs_gg_filename : str or None, optional
         Name of the file with tabukated gg-opacity. If None (default),
         IBSEn searches for a file tabulated for winds.sys_name if it is in
@@ -81,16 +95,23 @@ ibs_docstring = f"""
         shifting.
     ibs_n : IBS_norm
         Underlying **normalized** IBS rotated by ``π + true_an(t_forbeta)``.
-    x, y : ndarray, shape (N,)
-        IBS coordinates in the orbital plane [cm], shifted so the star is at the
-        origin and the pulsar lies at ``orbit.vector_sp(t_forbeta)``. 
+    Array organization
+    ------------------
+    Point arrays have shape ``(Ns,)`` and contain both reflected horns in one
+    signed-arclength ordering: from ``s=-s_max`` through the apex to
+    ``s=+s_max``.  Segment/midpoint arrays, identifiable by ``_mid`` or
+    ``ds``, have shape ``(Ns-1,)``.  ``*_m`` and ``*_p`` are segment endpoint
+    arrays.  The coordinate arrays below are barycentric.
+
+    x, y : ndarray, shape (Ns,)
+        Barycentric IBS coordinates in the orbital plane [cm].
     s : ndarray
         Signed arclength along the IBS [cm]; increases through the apex.
     s_max, s_max_g : float
         Arclength cut and the location of ``gamma_max`` [cm] (rescaled from
         the normalized values).
     r, r1 : ndarray
-        Distances from pulsar→IBS and star→IBS, respectively [cm].
+        Pulsar→IBS and star→IBS distances, respectively [cm].
     r_mid, r1_mid : ndarray
         Distances from pulsar→IBS_mid and star→IBS_mid, respectively [cm].
     x_apex : float
@@ -109,7 +130,7 @@ ibs_docstring = f"""
     b_ns, b_ns_mid, b_ns_comov, b_ns_mid_comov : ndarray
         NS-originating magnetic field on the IBS, IBS_mid, IBS (in co-moving
             reference frame), IBS_mid (in co-moving reference frame)
-    b_opt, b_opt_mid, b_opt_comov, b_opt_mid_comov : ndarray
+    b_s, b_s_mid, b_s_comov, b_s_mid_comov : ndarray
         Optical star-originating magnetic field on the IBS, IBS_mid, IBS (in co-moving
             reference frame), IBS_mid (in co-moving reference frame)
     b, b_mid, b_comov, b_mid_comov : ndarray
@@ -161,6 +182,7 @@ class IBS: #!!!
                  winds = None, coef_quench=0.0,
                  abs_gg_filename = None,
                  include_incl_in_los=False):
+        """Initialize and calculate the planar shock at one orbital epoch."""
         self.t_forbeta = t_to_calculate_beta_eff
         self.gamma_max = gamma_max
         self.s_max = s_max
@@ -169,9 +191,9 @@ class IBS: #!!!
         self.n = n
         self.winds = winds
         self.ug_apex = winds.u_g_density_apex(t=t_to_calculate_beta_eff)
-        b_ns_apex, b_opt_apex = winds.magn_fields_apex(t=t_to_calculate_beta_eff)
-        self.b_ns_apex, self.b_opt_apex = b_ns_apex, b_opt_apex
-        self.b_apex = b_ns_apex + b_opt_apex
+        b_ns_apex, b_s_apex = winds.magn_fields_apex(t=t_to_calculate_beta_eff)
+        self.b_ns_apex, self.b_s_apex = b_ns_apex, b_s_apex
+        self.b_apex = b_ns_apex + b_s_apex
         
         self.abs_gg_filename = abs_gg_filename
         self.include_incl_in_los = include_incl_in_los
@@ -180,14 +202,16 @@ class IBS: #!!!
         self.calculate()
         
     def calculate(self):
-        """General calculation of everything"""
+        """Build normalized planar geometry and rescale it to the selected epoch."""
         self.calculate_normalized_ibs()
         self.rescale_to_position()
-        self.rescale_gamma()
+        # self.rescale_gamma()
     
     def calculate_normalized_ibs(self):
-        """calculate the effective beta from Winds at time t_forbeta and 
-            initialize the normalized IBS with this beta.
+        """Create the rotated dimensionless planar IBS at ``t_forbeta``.
+
+        The normalized origin is the pulsar; its geometry is rotated into the
+        physical relative star→pulsar orientation before rescaling.
         """
         self.beta = self.winds.beta_eff(self.t_forbeta)
         self.r_sp = self.winds.orbit.r(self.t_forbeta)
@@ -208,64 +232,84 @@ class IBS: #!!!
         
     def rescale_to_position(self):
         """
-        Rescale the IBS to the real units at
-        the time t_to_calculate_beta_eff [s] and rotate it so that its 
-        line of sy_mmetry is S-P line. Rescaled are: x, y, r, s, r1, x_apex.
-        The tangent is added pi + nu_tr to (at the stage of 'IBS.rotate').
-        To the x and y - coordinates of the IBS there is also added the
-        vector of the real s-p distance at the moment (in cm).
-        Yes, read this terrible English sentence which I translated from 
-        Russian in my head. Suffer.
-        ---
-        Returns new rescaled ibs_resc:IBS
+        Scale the rotated planar shock and place its points barycentrically.
+
+        All normalized lengths are multiplied by ``|orbit.vector_sp|``.
+        Pulsar-relative shock vectors are translated by ``orbit.vector_p`` to
+        form barycentric point coordinates.  Star-relative and pulsar-relative
+        displacement vectors are then derived by subtracting ``vector_s`` and
+        ``vector_p`` respectively.
         """
-        _r_sp = self.winds.orbit.r(self.t_forbeta)
-        _x_sp, _y_sp = self.winds.orbit.x(self.t_forbeta), self.winds.orbit.y(self.t_forbeta)
-        _nu_tr = self.winds.orbit.true_an(self.t_forbeta)
-        x_sh, y_sh = self.ibs_n.x, self.ibs_n.y
-        x_sh_mid, y_sh_mid = self.ibs_n.x_mid, self.ibs_n.y_mid
+        r_sp_vec = self.winds.orbit.vector_sp(self.t_forbeta)
+        r_p_vec = self.winds.orbit.vector_p(self.t_forbeta)
+        r_s_vec = self.winds.orbit.vector_s(self.t_forbeta)
+        _r_sp = absv(r_sp_vec)
+        self.vec_sp = r_sp_vec
+        self.vec_p = r_p_vec
+        self.vec_s = r_s_vec
+        self.x_s, self.y_s = r_s_vec[:2]
+        self.x_pulsar, self.y_pulsar = r_p_vec[:2]
+
+        # Build the normalized P->IBS vectors from the rotated planar
+        # coordinates.  ``IBS_norm.rotate`` rotates x/y but does not refresh
+        # its cached r_vec, so using that cache here would lose the orbital
+        # rotation away from true anomaly zero.
+        norm_r_vec = np.column_stack((
+            self.ibs_n.x,
+            self.ibs_n.y,
+            np.zeros_like(self.ibs_n.x),
+        )) * _r_sp
+        norm_r_vec_mid = 0.5 * (norm_r_vec[:-1] + norm_r_vec[1:])
+        self.r_vec = norm_r_vec + r_p_vec[None, :]
+        self.r_vec_mid = norm_r_vec_mid + r_p_vec[None, :]
+
+        # These are physical displacement vectors, not barycentric points.
+        self.vec_pIBS = self.r_vec - r_p_vec[None, :]
+        self.vec_pIBS_mid = self.r_vec_mid - r_p_vec[None, :]
+        self.vec_sIBS = self.r_vec - r_s_vec[None, :]
+        self.vec_sIBS_mid = self.r_vec_mid - r_s_vec[None, :]
+        self.r1_vec = self.vec_sIBS
+        self.r1_vec_mid = self.vec_sIBS_mid
+
+        self.x, self.y = self.r_vec[:, 0], self.r_vec[:, 1]
+        self.x_mid, self.y_mid = self.r_vec_mid[:, 0], self.r_vec_mid[:, 1]
+        self.x_m, self.x_p = self.x[:-1], self.x[1:]
+        self.y_m, self.y_p = self.y[:-1], self.y[1:]
         
-        x_sh, y_sh = x_sh * _r_sp, y_sh * _r_sp
-        x_sh_mid, y_sh_mid = x_sh_mid * _r_sp, y_sh_mid * _r_sp
-        
-        x_sh += _r_sp * cos(_nu_tr)
-        y_sh += _r_sp * sin(_nu_tr)
-        x_sh_mid += _r_sp * cos(_nu_tr)
-        y_sh_mid += _r_sp * sin(_nu_tr)
-        
-        self.x = x_sh
-        self.y = y_sh
-        self.x_mid = x_sh_mid
-        self.y_mid = y_sh_mid
-        
-        for name in ("s", "s_max_g", "r", "r1", "x_apex", "ds_dtheta",
+        for name in ("s", "s_max_g", "x_apex", "ds_dtheta",
                      "s_m", "s_p", "s_mid", "ds", "dx", "dy", "s_max_cm"):
             setattr(self, name, _r_sp * getattr(self.ibs_n, name))
    
         
-        self.r1_mid = np.sqrt(x_sh_mid**2 + y_sh_mid**2)
-        self.r_mid = np.sqrt( (x_sh_mid-_x_sp)**2
-                              + (y_sh_mid - _y_sp)**2)
-        
-        self.x_apex_coord = self.r_se/self.r_sp * self.winds.orbit.x(self.t_forbeta)
-        self.y_apex_coord = self.r_se/self.r_sp * self.winds.orbit.y(self.t_forbeta)
-        self.symm_ax = n_from_v(np.array([self.x_apex_coord, self.y_apex_coord, 0.]))
-        self.scatter_angle_apex = vector_angle(self.winds.orbit.vector_sp(self.t_forbeta),
-                                               self.unit_los)
+        self.r = absv(self.vec_pIBS)
+        self.r_mid = absv(self.vec_pIBS_mid)
+        self.r1 = absv(self.vec_sIBS)
+        self.r1_mid = absv(self.vec_sIBS_mid)
+        self.r_m, self.r_p = self.r[:-1], self.r[1:]
+        self.r1_m, self.r1_p = self.r1[:-1], self.r1[1:]
+
+        vec_apex = r_s_vec + self.r_se / _r_sp * r_sp_vec
+        self.x_apex_coord, self.y_apex_coord = vec_apex[:2]
+        self.symm_ax = n_from_v(r_sp_vec)
+        self.scatter_angle_apex = vector_angle(self.symm_ax, self.unit_los)
         self.dopl_apex_eff = doppler_delta(self.gamma_max,
                         vector_angle(self.winds.orbit.unit_los, self.symm_ax))
+        
 
         
-    def rescale_gamma(self):
-        r_pIBS = np.array([np.array([_x, _y, 0.]) for _x, _y in zip(self.x, self.y)])
-        r_sp = self.winds.orbit.vector_sp(self.t_forbeta)
-        r_sIBS = r_pIBS + r_sp[None, :]
-        pdisk = self.winds.star.decr_disk_pressure(r_sIBS)
-        ppolar = self.winds.star.polar_wind_pressure(absv(r_sIBS))
-        ppulsar = self.winds.pulsar.wind_pressure(absv(r_pIBS))
-        dispers_out = np.std((pdisk + ppolar) / ppulsar )
-        self.ibs_n.gamma_max = gamma_test(self.gamma_max, dispers_out, self.coef_quench)
+    # def rescale_gamma(self):
+    #     # r_pIBS = np.array([np.array([_x, _y, 0.]) for _x, _y in zip(self.x, self.y)])
+    #     vec_sp = self.winds.orbit.vector_sp(self.t_forbeta)
+    #     vec_sIBS = self.r_vec
+    #     vec_pIBS = -(vec_sp[None, :] - vec_sIBS)
+    #     # r_sIBS = r_pIBS + r_sp[None, :]
+    #     pdisk = self.winds.star.decr_disk_pressure(vec_sIBS)
+    #     ppolar = self.winds.star.polar_wind_pressure(absv(vec_sIBS))
+    #     ppulsar = self.winds.pulsar.wind_pressure(absv(vec_pIBS))
+    #     dispers_out = np.std((pdisk + ppolar) / ppulsar )
+    #     self.ibs_n.gamma_max = gamma_test(self.gamma_max, dispers_out, self.coef_quench)
         
+    
         
     
     def s_interp(self, s_, what):
@@ -299,6 +343,7 @@ class IBS: #!!!
         return interpolator(s_)
     
     def gma(self, s):
+        """Bulk Lorentz factor at signed planar arclength ``s`` [cm]."""
         return self.ibs_n.gma(s / self.r_sp)
     
     @property
@@ -310,6 +355,20 @@ class IBS: #!!!
     def g_mid(self):
         """Bulk Lorentz factor along the IBS-mid"""
         return self.gma(s = self.s_mid)
+    
+    @property
+    def dopl_star(self):
+        """Doppler-factor at the IBS for the direction to the star"""
+        return doppler_delta(self.g,
+                vector_angle(self.unit_beta, n_from_v(self.vec_sIBS))
+                )
+    
+    @property
+    def dopl_star_mid(self):
+        """Doppler-factor at the IBS-mid for the direction to the star"""
+        return doppler_delta(self.g_mid,
+                vector_angle(self.unit_beta_mid, n_from_v(self.vec_sIBS_mid))
+                )
     
     
     def gg_abs(self, e_phot, analyt=False, what_return='abs'):
@@ -327,7 +386,9 @@ class IBS: #!!!
         what_return: str {'abs' or 'tau'}
             What to return: e^-tau or tau. Default 'abs'.
             
-        returns : np.ndarray of shape (n, e_phot.size)
+        returns : np.ndarray of shape (Ns, e_phot.size)
+            The tabulated/analytic opacity is evaluated with each emission
+            point expressed relative to the optical star.
             
         """
         if self.abs_gg_filename is not None and str(self.abs_gg_filename).strip():
@@ -338,13 +399,13 @@ class IBS: #!!!
             raise ValueError('Provide abs_gg_filename or winds.sys_name for gg-abs.')
         if analyt:
             gg_res = np.array([gg_analyt(eg = e_phot / 5.11e5,
-                         x = self.x[i], y = self.y[i],
-                         R_star=self.winds.star.Ropt, T_star = self.winds.star.Topt,
+                         x = self.x[i]-self.x_s, y = self.y[i]-self.y_s,
+                         R_star=self.winds.star.R_s, T_star = self.winds.star.T_s,
                          nu_los=self.winds.orbit.nu_los,
                          incl_los=self.winds.orbit.incl_los)
                            for i in range(self.x.size)])
         else:
-            gg_res = gg_tab(E=e_phot, x=self.x, y=self.y, 
+            gg_res = gg_tab(E=e_phot, x=self.x-self.x_s[None], y=self.y-self.y_s[None],
                             orb=self.winds.orbit,
                             filename=filename, what_return=what_return)
         return gg_res
@@ -371,7 +432,8 @@ class IBS: #!!!
         what_return: str {'abs' or 'tau'}
             What to return: e^-tau or tau. Default 'abs'.
             
-        returns : np.ndarray of shape (n-1, e_phot.size)
+        returns : np.ndarray of shape (Ns-1, e_phot.size)
+            Midpoint emission positions are expressed relative to the star.
             
         """
         if self.abs_gg_filename is not None and str(self.abs_gg_filename).strip():
@@ -382,13 +444,13 @@ class IBS: #!!!
             raise ValueError('Provide abs_gg_filename or winds.sys_name for gg-abs.')
         if analyt:
             gg_res = np.array([gg_analyt(eg = e_phot / 5.11e5,
-                         x = self.x_mid[i], y = self.y_mid[i],
-                         R_star=self.winds.star.Ropt, T_star = self.winds.star.Topt,
+                         x = self.x_mid[i]-self.x_s, y = self.y_mid[i]-self.y_s,
+                         R_star=self.winds.star.R_s, T_star = self.winds.star.T_s,
                          nu_los=self.winds.orbit.nu_los,
                          incl_los=self.winds.orbit.incl_los)
                            for i in range(self.x_mid.size)])
         else:
-            gg_res = gg_tab(E=e_phot, x=self.x_mid, y=self.y_mid,
+            gg_res = gg_tab(E=e_phot, x=self.x_mid-self.x_s[None], y=self.y_mid-self.y_s[None],
                             orb=self.winds.orbit,
                             filename=filename, what_return=what_return)
         return gg_res
@@ -424,12 +486,15 @@ class IBS: #!!!
 
         if analyt:
             gg_res = gg_analyt(eg = e_phot / 5.11e5,
-                         x = self.x_apex, y = self.y_apex,
-                         R_star=self.winds.star.Ropt, T_star = self.winds.star.Topt,
+                         x = self.x_apex_coord - self.x_s,
+                         y = self.y_apex_coord - self.y_s,
+                         R_star=self.winds.star.R_s, T_star = self.winds.star.T_s,
                          nu_los=self.winds.orbit.nu_los,
                          incl_los=self.winds.orbit.incl_los)
         else:
-            gg_res = gg_tab(E=e_phot, x=self.x_apex_coord, y=self.y_apex_coord,
+            gg_res = gg_tab(E=e_phot,
+                            x=self.x_apex_coord - self.x_s,
+                            y=self.y_apex_coord - self.y_s,
                             orb=self.winds.orbit,
                             filename=filename, what_return=what_return)
         return gg_res
@@ -447,15 +512,28 @@ class IBS: #!!!
         return self.winds.star.u_g_density(r_from_s = self.r1_mid)
     
     @property
-    def ug_comov(self):
-        """Photon field energy density on the IBS in the comoving frame [erg/cm^3]."""
+    def ug_comov_iso(self):
+        """Photon field energy density on the IBS in the comoving frame [erg/cm^3].
+        Isotropc approximation."""
         return lor_trans_ug_iso(ug_iso = self.ug, gamma=self.g)
       
     @property
-    def ug_mid_comov(self):
-        """Photon field energy density on the IBS_mid in the comoving frame [erg/cm^3]."""          
+    def ug_mid_comov_iso(self):
+        """Photon field energy density on the IBS_mid in the comoving frame [erg/cm^3].
+        Isotropc approximation."""          
         return lor_trans_ug_iso(ug_iso = self.ug_mid, gamma=self.g_mid)
       
+    @property
+    def ug_comov_ani(self):
+        """Photon field energy density on the IBS in the comoving frame [erg/cm^3].
+        Anisotropc approximation."""
+        return self.ug / self.dopl_star**2
+      
+    @property
+    def ug_mid_comov_ani(self):
+        """Photon field energy density on the IBS_mid in the comoving frame [erg/cm^3].
+        Anisotropc approximation."""          
+        return self.ug_mid / self.dopl_star_mid**2 
         
     ###########################################################################
     @property
@@ -481,68 +559,82 @@ class IBS: #!!!
     
     ###########################################################################
     @property
-    def b_opt(self):
+    def b_s(self):
         """Optical star-originating magnetic field on the IBS [G]."""
         return self.winds.star.b(r_to_s = self.r1)
     
     @property
-    def b_opt_mid(self):
+    def b_s_mid(self):
         """Optical star-originating magnetic field on the IBS_mid [G]."""
         return self.winds.star.b(r_to_s = self.r1_mid,)
     
     @property
-    def b_opt_comov(self):
+    def b_s_comov(self):
         """Optical star-originating magnetic field on the IBS in the comoving frame [G]."""
-        return lor_trans_b_iso(B_iso=self.b_opt, gamma=self.g)
+        return lor_trans_b_iso(B_iso=self.b_s, gamma=self.g)
     
     @property
-    def b_opt_mid_comov(self):
+    def b_s_mid_comov(self):
         """Optical star-originating magnetic field on the IBS_mid in the comoving frame [G]."""
-        return lor_trans_b_iso(B_iso=self.b_opt_mid, gamma=self.g_mid)
+        return lor_trans_b_iso(B_iso=self.b_s_mid, gamma=self.g_mid)
     
     ###########################################################################
     @property
     def b(self):
         """Total magnetic field on the IBS [G]."""
-        return self.b_pulsar + self.b_opt
+        return self.b_pulsar + self.b_s
     
     @property
     def b_mid(self):
         """Total magnetic field on the IBS_mid [G]."""
-        return self.b_pulsar_mid + self.b_opt_mid
+        return self.b_pulsar_mid + self.b_s_mid
     
     @property
     def b_comov(self):
         """Total magnetic field on the IBS in the comoving frame [G]."""
-        return self.b_pulsar_comov + self.b_opt_comov
+        return self.b_pulsar_comov + self.b_s_comov
     
     @property
     def b_mid_comov(self):
         """Total magnetic field on the IBS_mid in the comoving frame [G]."""
-        return self.b_pulsar_mid_comov + self.b_opt_mid_comov
+        return self.b_pulsar_mid_comov + self.b_s_mid_comov
     
     ###########################################################################
     @property
-    def T_opt_eff(self):
+    def T_s_eff(self):
         """Optical star effective temperature on the IBS [K]. 
         Simply the star temperature everywhere."""
-        return self.winds.star.Topt * np.ones(self.r.size)
+        return self.winds.star.T_s * np.ones(self.r.size)
     
     @property
-    def T_opt_eff_mid(self):
+    def T_s_eff_mid(self):
         """Optical star effective temperature on the IBS_mid [K]. 
         Simply the star temperature everywhere."""
-        return self.winds.star.Topt * np.ones(self.r_mid.size)
+        return self.winds.star.T_s * np.ones(self.r_mid.size)
+
+    @property
+    def T_s_eff_comov_iso(self):
+        """Optical star effective temperature on the IBS in the comoving frame [K].
+        Isotropc approximation."""
+        return lor_trans_Teff_iso(Teff_iso = self.T_s_eff, gamma=self.g)
     
     @property
-    def T_opt_eff_comov(self):
-        """Optical star effective temperature on the IBS in the comoving frame [K]."""
-        return lor_trans_Teff_iso(Teff_iso = self.T_opt_eff, gamma=self.g)
+    def T_s_eff_mid_comov_iso(self):
+        """Optical star effective temperature on the IBS_mid in the comoving frame [K].
+        Isotropc approximation."""
+        return lor_trans_Teff_iso(Teff_iso = self.T_s_eff_mid, gamma=self.g_mid)
     
     @property
-    def T_opt_eff_mid_comov(self):
-        """Optical star effective temperature on the IBS_mid in the comoving frame [K]."""
-        return lor_trans_Teff_iso(Teff_iso = self.T_opt_eff_mid, gamma=self.g_mid)
+    def T_s_eff_comov_ani(self):
+        """Optical star effective temperature on the IBS in the comoving frame [K].
+        Anisotropc approximation."""
+        return self.T_s_eff / self.dopl_star
+    
+    @property
+    def T_s_eff_mid_comov_ani(self):
+        """Optical star effective temperature on the IBS_mid in the comoving frame [K].
+        Anisotropc approximation."""
+        return self.T_s_eff_mid / self.dopl_star_mid
 
     
     peek_docs = f"""
@@ -583,7 +675,13 @@ class IBS: #!!!
     """
     def peek(self, fig=None, ax=None, show_winds=False,
              ibs_color='k', to_label=True,
-             showtime=None, E_for_gg=1e12):
+             showtime=None, E_for_gg=1e12,
+             special_contours_winds=None, kwargs_special_contours_winds={},
+             min_param=None, max_param=None,
+             label_colorbar=None,
+             colorbar_kwargs={},
+             plot_puls_pos=True,
+             plot_line_to_puls=True):
         import matplotlib.colors as mcolors
         
 
@@ -617,10 +715,13 @@ class IBS: #!!!
                 if not hasattr(self, ibs_color):
                     raise AttributeError(f"No attribute '{ibs_color}' in {type(self).__name__}")
                 color_param = getattr(self, ibs_color)
-
+            
+            if label_colorbar is None:
+                label_colorbar = ibs_color
             line_ = plot_with_gradient(fig=fig, ax=ax, xdata=self.x, ydata=self.y,
                             some_param=color_param, colorbar=to_label, lw=2, ls='-',
-                            colorbar_label=ibs_color)
+                            colorbar_label=label_colorbar, minimum=min_param, maximum=max_param,
+                            colorbar_kwargs=colorbar_kwargs)
 
         elif mcolors.is_color_like(ibs_color):
             line_ = ax.plot(self.x, self.y, color=ibs_color, label = label)     
@@ -632,21 +733,25 @@ class IBS: #!!!
             if not isinstance(self.winds, Winds):
                 raise ValueError("You should provide winds:Winds to show the winds.")
             self.winds.peek(ax=ax, showtime=showtime,
-                            plot_rs=False)
+                            plot_rs=False, special_contours=special_contours_winds,
+                            kwargs_special_contours=kwargs_special_contours_winds)
 
-        # if rescaled:
-        puls_vector = self.winds.orbit.vector_sp(self.t_forbeta)
+        puls_vector = self.winds.orbit.vector_p(self.t_forbeta)
+        star_vector = self.winds.orbit.vector_s(self.t_forbeta)
         _xp, _yp = puls_vector[0], puls_vector[1]
-        ax.scatter(_xp, _yp, color='b') # pulsaR
+        _xs, _ys = star_vector[0], star_vector[1]
+        if plot_puls_pos:
+            ax.scatter(_xp, _yp, color='b') # pulsaR
         # ...and the star was alreay plotted in the winds.peek()
-        ax.plot( [0, 1.5*_xp], [0, 1.5*_yp], color='k', alpha=0.3, ls='--',)
+        if plot_line_to_puls:
+            ax.plot([_xs, _xp], [_ys, _yp], color='k', alpha=0.3, ls='--')
 
         ##################################################################################
         if showtime is None:
             showtime = [-self.winds.orbit.T/2, self.winds.orbit.T/2]
         show_cond  = np.logical_and(self.winds.orbit.ttab > showtime[0], 
                                     self.winds.orbit.ttab < showtime[1])
-        orb_x, orb_y = self.winds.orbit.xtab[show_cond], self.winds.orbit.ytab[show_cond]
+        orb_x, orb_y = self.winds.orbit.xtab_p[show_cond], self.winds.orbit.ytab_p[show_cond]
         x_scale = np.max(np.array([
             np.abs(np.min(orb_x)), np.abs(np.max(orb_x))
             ]))
@@ -658,12 +763,13 @@ class IBS: #!!!
         ax.set_ylim(-1.2*y_scale, 1.2*y_scale) 
         
             
-        ax.legend()
+        # ax.legend()
         return line_ 
     peek.__doc__ = peek_docs
 
     
     def __getattr__(self, name):
+        """Delegate normalized, dimensionless geometry attributes to ``ibs_n``."""
         ibs_n_ = self.__dict__.get("ibs_n", None)
         if ibs_n_ is None:
             raise AttributeError(name)
@@ -672,9 +778,26 @@ class IBS: #!!!
     
 class IBS3D: #!!!
     """
-    An analog of the class IBS for there dimensions. I haven't written the' proper
-    documentation yet, so please refer to the 'IBS' docs; here I only give the
-    list of parameters.
+    Axisymmetric three-dimensional intrabinary shock in physical cgs units.
+
+    A normalized surface is rotated so that its axis is either the relative
+    star→pulsar direction or a flow-defined direction from :class:`Winds`.
+    Its points are then scaled by the relative separation and translated to
+    the pulsar's barycentric position.  Hence ``r_vec`` is a barycentric point
+    coordinate, whereas ``vec_pIBS`` and ``vec_sIBS`` are pulsar→IBS and
+    star→IBS displacement vectors.  ``r`` is the pulsar distance and
+    ``r1``/``r_from_s`` the stellar distance; stellar fields are evaluated
+    only from the latter.
+
+    Array organization
+    ------------------
+    Point arrays have shape ``(Nphi, Ns)``.  The first axis samples azimuth
+    around the IBS symmetry axis and the second samples one horn from the
+    apex outward.  Segment/midpoint arrays have shape ``(Nphi, Ns-1)``.
+    Cartesian ``r_vec`` arrays append a final coordinate axis and therefore
+    have shape ``(Nphi, Ns, 3)`` (or ``(Nphi, Ns-1, 3)`` at midpoints).
+    ``*_m``/``*_p`` are lower/upper arclength segment endpoints.  Scalar
+    apex quantities are single values at the selected epoch.
     
     Parameters
     ----------
@@ -700,46 +823,36 @@ class IBS3D: #!!!
         The number of sampling points over azimuth, meaning, in the plane
             perpendicular to the line of symmetry. Default is 33.
     orientation : str or None, optional
-        How the IBS symmetry axis is oriented at the given time. Either None (default),
-        'flow', 'direction', 'projection', or 'full'. 
-        --- None: the IBS symetry axis is along the S-P line.
-        --- 'flow': takes the 1D solutoin for PE; calculates the velocities
-        of polar/disk components in the pulsar reference frame: u_w/u_d;
-        defies the axis as anti-parallel to the vector
-            P_w(1D) * u_w(1D) + P_d(1D) * u_d(1D).
-        ONLY THIS OPTION AND `None` GIVE STABLE AND TESTED RESULTS.
-        
-        For the next two options, let us define an equation: a ram pressure
-        tensor P_ij = P n_i n_j (n --- a normal vector in the direciton of the
-        relative vel), so if we want the polar+disk pressure projection onto a
-        PE line to be equal to the pulsar pressure, we get the vector equation:
-            
-        P_d (n_d * n_pe) n_d + P_w (n_w * n_pe) n_w = P_p n_pe.
-        
-        --- 'projection':  fixing the direction n_pe as given by the 'flow', 
-        solves the scalar equation which is a projection of the equation above
-        onto a PE line. Starts from the 1D r_pe. 
-        --- 'direction':  fixing |r_pe| at its 1D solution, solves the
-        equation above in the least-squares sense for the direction n_pe. Starts
-        from the solution given by 'flow' as an initial guess.
-        --- 'full':  solves the equation above in the least-squares sense for
-        the direction n_pe and |r_pe|.Starts from the solution given by 'flow' 
-        as an initial guess.
+        ``None`` aligns the symmetry axis with the relative star→pulsar line.
+        ``'flow'`` obtains a pulsar→apex vector from :meth:`Winds.vec_pe_3d`
+        and aligns the shock axis oppositely.  These are the consistently
+        supported options in this class.  Although ``Winds`` also implements
+        ``'flow_p'``, this class currently constructs its axis with the
+        default ``'flow'`` vector; do not use ``'flow_p'`` here expecting a
+        distinct axis.
         
     shield_star : float, optional
-        If not zero, the attenuation of the photon field is calculated as
-        np.exp(-shield_star * \int_{point on the IBS}^{opt star} (P_d + P_w) d(r/R0))
+        Dimensionless multiplier for attenuation of the stellar photon field
+        through integrated star-relative external pressure. Default 0.
     abs_gg_filename : str or None, optional
         Name of the file with tabukated gg-opacity. If None (default),
         IBSEn searches for a file tabulated for winds.sys_name if it is in
         the known names: {known_names}. Can also be one of known names, then 
         searches for a file tabulated for a system with this name.
     
+    Important attributes
+    --------------------
+    ``x``, ``y``, ``z`` and ``r_vec`` are barycentric coordinates.  ``ug``,
+    ``b_s``, ``disk_pressure`` and ``polar_pressure`` use star-relative
+    geometry.  ``b_pulsar`` uses pulsar-relative geometry.  The normalized
+    object and dimensionless angular quantities remain available through
+    ``ibs_n`` and attribute delegation.
     """
     def __init__(self, t_to_calculate_beta_eff, s_max=1.0, gamma_max=3.0, s_max_g=4.0,
                  n=31, n_phi=33, orientation = None,
                  winds = None, coef_quench=0.0, shield_star = 0.0,
                  abs_gg_filename = None):
+        """Initialize and calculate the axisymmetric 3D shock at one epoch."""
         self.t_forbeta = t_to_calculate_beta_eff
         self.gamma_max = gamma_max
         self.s_max = s_max
@@ -750,31 +863,40 @@ class IBS3D: #!!!
         self.orientation = orientation
         self.coef_quench = coef_quench
         self.shield_star = shield_star
-        self.ug_apex = winds.u_g_density_apex(t=t_to_calculate_beta_eff)
-        b_ns_apex, b_opt_apex = winds.magn_fields_apex(t=t_to_calculate_beta_eff)
-        self.b_ns_apex, self.b_opt_apex = b_ns_apex, b_opt_apex
-        self.b_apex = b_ns_apex + b_opt_apex
+        self.ug_apex = winds.u_g_density_apex(
+            t=t_to_calculate_beta_eff, orientation=self.orientation
+        )
+        b_ns_apex, b_s_apex = winds.magn_fields_apex(
+            t=t_to_calculate_beta_eff, orientation=self.orientation
+        )
+        self.b_ns_apex, self.b_s_apex = b_ns_apex, b_s_apex
+        self.b_apex = b_ns_apex + b_s_apex
         
         self.abs_gg_filename = abs_gg_filename
         self.peek_keys = PEEK_KEYS
        
         self._calculate_normalized_ibs()
         self._rescale_to_position()
+        # self.rescale_gamma()
 
     
     def _calculate_normalized_ibs(self):
-        """calculate the effective beta from Winds at time t_forbeta and 
-            initialize the normalized IBS with this beta.
+        """Create the normalized 3D shock and align its symmetry axis.
+
+        ``orientation=None`` follows the relative star→pulsar separation;
+        otherwise the axis is inferred from the flow-defined pulsar→apex
+        vector returned by :class:`Winds`.
         """
         vec_sp = self.winds.orbit.vector_sp(t = self.t_forbeta)
         self.r_sp = absv(vec_sp)
         if self.orientation is None:
             self.beta = self.winds.beta_eff(self.t_forbeta)
             self.r_se = self.winds.dist_se_1d(self.t_forbeta)
+            self.r_pe = self.r_sp - self.r_se
             self.symm_ax = n_from_v(self.winds.orbit.vector_sp(self.t_forbeta))
         else:
             vec_pe_3d = self.winds.vec_pe_3d(self.t_forbeta) 
-            # r_pe = absv(vec_pe_3d)
+            self.r_pe = absv(vec_pe_3d)
             self.r_se = absv(vec_pe_3d + vec_sp)
             self.symm_ax = -n_from_v(vec_pe_3d)
             self.beta = self.winds.beta_eff(self.t_forbeta, orientation=self.orientation)
@@ -789,58 +911,97 @@ class IBS3D: #!!!
             unit_los=unit_los_).rotate_to_ax(new_axis=self.symm_ax)
         
     def _rescale_to_position(self):
-        """
-        Rescale the IBS to the real units at
-        the time t_to_calculate_beta_eff [s] and rotate it so that its 
-        line of sy_mmetry is S-P line. Rescaled are: x, y, r, s, r1, x_apex.
-        To the x and y - coordinates of the IBS there is also added the
-        vector of the real s-p distance at the moment (in cm).
-        Yes, read this terrible English sentence which I translated from 
-        Russian in my head. Suffer.
-        ---
-        Returns new rescaled ibs_resc:IBS
+        """Scale the 3D shock and translate its points to barycentric space.
+
+        ``r_vec`` has shape ``(Nphi, Ns, 3)`` and is barycentric.  The
+        star-relative and pulsar-relative displacement arrays are derived from
+        it before computing fields and distances.
         """
         r_sp_vec = self.winds.orbit.vector_sp(self.t_forbeta)
+        r_p_vec = self.winds.orbit.vector_p(self.t_forbeta)
+        r_s_vec = self.winds.orbit.vector_s(self.t_forbeta)
+        
         self.vec_sp = r_sp_vec
+        self.vec_p = r_p_vec
+        self.vec_s = r_s_vec
+        
         _r_sp = absv(r_sp_vec)
-        ### rescale ans shift vector stuff:
-        for name in ("r_vec", "r1_vec"):
-            for suffix in ("", "_mid"):
-                norm_vec = getattr(self.ibs_n, name+suffix)
-                rescaled_vec = _r_sp * norm_vec
-                shifted_rotated_vec = rescaled_vec + r_sp_vec[None, None, :]
-                setattr(self, name+suffix, shifted_rotated_vec)
-                
+        # ``ibs_n.r_vec`` is P->IBS.  Scale it and add the barycentric
+        # pulsar position to obtain the physical, barycentric IBS points.
+        # In contrast, ``ibs_n.r1_vec`` is S->IBS, so it must never receive
+        # this barycentric translation.
+        for suffix in ("", "_mid"):
+            p_to_ibs = _r_sp * getattr(self.ibs_n, "r_vec" + suffix)
+            r_vec = p_to_ibs + r_p_vec[None, None, :]
+            setattr(self, "r_vec" + suffix, r_vec)
+
+            # Derive displacement vectors from the physical endpoints.
+            s_to_ibs = r_vec - r_s_vec[None, None, :]
+            setattr(self, "vec_sIBS" + suffix, s_to_ibs)
+            setattr(self, "r1_vec" + suffix, s_to_ibs)
+
+            p_to_ibs = r_vec - r_p_vec[None, None, :]
+            setattr(self, "vec_pIBS" + suffix, p_to_ibs)
+        
 
         for name, i in zip(("x", "y", "z"), (0, 1, 2)):
             for suffix in ("", "_mid"):
                 setattr(self, name+suffix, getattr(self, "r_vec"+suffix)[..., i])
 
-        ### rescale some other stuff        
-        for name in ("s", "s_max_g", "r", "r1", "r_mid", "r1_mid",  "x_apex", "ds_dtheta",
+            # Segment endpoints are barycentric points, rather than scaled
+            # normalized coordinates.  The differences below remain physical
+            # displacement vectors and are therefore translation-invariant.
+            coord = getattr(self, name)
+            setattr(self, name + "_m", coord[:, :-1])
+            setattr(self, name + "_p", coord[:, 1:])
+
+        ### rescale the stuff that's relative to the IBS
+        for name in ("s", "s_max_g", "ds_dtheta",
                      "s_m", "s_p", "s_mid", "ds", "dx", "dy", "s_max_cm"):
             setattr(self, name, _r_sp * getattr(self.ibs_n, name))
+
+        ### rescale and/or set distances from star and from pulsar
+        self.r_from_s = absv(self.vec_sIBS)
+        self.r_from_s_mid = absv(self.vec_sIBS_mid)
+        self.r = absv(self.vec_pIBS)
+        self.r_mid = absv(self.vec_pIBS_mid)
+        # Preserve the normalized-class public naming, now in physical units.
+        self.r1 = self.r_from_s
+        self.r1_mid = self.r_from_s_mid
+        self.x_apex = _r_sp * self.ibs_n.x_apex
+        for name in ("r", "r1"):
+            distance = getattr(self, name)
+            setattr(self, name + "_m", distance[:, :-1])
+            setattr(self, name + "_p", distance[:, 1:])
+
    
-        
-        self.x_apex_coord = self.r_se/self.r_sp * self.winds.orbit.x(self.t_forbeta)
-        self.y_apex_coord = self.r_se/self.r_sp * self.winds.orbit.y(self.t_forbeta)
-        self.scatter_angle_apex = vector_angle(self.winds.orbit.vector_sp(self.t_forbeta),
-                                               self.unit_los)
+        vec_apex = self.winds.orbit.vector_p(self.t_forbeta) + (-self.symm_ax) * self.r_pe 
+        self.x_apex_coord = vec_apex[0]
+        self.y_apex_coord = vec_apex[1]
+        vec_s_apex = (-r_s_vec) + vec_apex
+
+        self.scatter_angle_apex = vector_angle(vec_s_apex, self.unit_los)
         self.dopl_apex_eff = doppler_delta(self.gamma_max,
                         vector_angle(self.winds.orbit.unit_los, self.symm_ax))
-        
-        self.r_from_s = absv(self.r_vec)
-        self.r_from_s_mid = absv(self.r_vec_mid)
+
         
         
-        
-    
-    def rescale_gamma(self):
-        pdisk = self.winds.star.decr_disk_pressure(self.r_vec)
-        ppolar = self.winds.star.polar_wind_pressure(absv(self.r_vec))
-        ppulsar = self.winds.pulsar.wind_pressure(self.r)
-        dispers_out = np.std((pdisk + ppolar) / ppulsar )
-        self.ibs_n.gamma_max = gamma_test(self.gamma_max, dispers_out, self.coef_quench)
+    # def rescale_gamma(self):
+    #     true_an = self.winds.orbit.true_an(self.t_forbeta)
+    #     pdisk = self.winds.star.decr_disk_pressure(self.vec_sIBS,
+    #                                                 true_an=true_an)
+    #     ppolar = self.winds.star.polar_wind_pressure(self.r_from_s)
+    #     ppulsar = self.winds.pulsar.wind_pressure(self.r)
+    #     dispers_out = np.std((pdisk + ppolar) / ppulsar )
+    #     self.ibs_n.gamma_max = gamma_test(self.gamma_max, dispers_out, self.coef_quench)
+    #     # ``vec_beta`` is cached by the normalized class and is used by the
+    #     # comoving scattering-angle properties, so refresh it after changing
+    #     # the Lorentz-factor prescription.
+    #     self.ibs_n._set_beta_vecs()
+    #     self.dopl_apex_eff = doppler_delta(
+    #         self.ibs_n.gamma_max,
+    #         vector_angle(self.winds.orbit.unit_los, self.symm_ax),
+    #     )
     
     def s_interp(self, s_, what):
         """
@@ -875,6 +1036,7 @@ class IBS3D: #!!!
         return interpolator(s_)
     
     def gma(self, s):
+        """Bulk Lorentz factor at 3D-shock arclength ``s`` [cm]."""
         return self.ibs_n.gma(s / self.r_sp)
     
     @property
@@ -891,14 +1053,14 @@ class IBS3D: #!!!
     def dopl_star(self):
         """Doppler-factor at the IBS for the direction to the star"""
         return doppler_delta(self.g,
-                vector_angle(self.unit_beta, -n_from_v(self.r_vec))
+                vector_angle(self.unit_beta, n_from_v(self.vec_sIBS))
                 )
     
     @property
     def dopl_star_mid(self):
         """Doppler-factor at the IBS-mid for the direction to the star"""
         return doppler_delta(self.g_mid,
-                vector_angle(self.unit_beta_mid, -n_from_v(self.r_vec_mid))
+                vector_angle(self.unit_beta_mid, n_from_v(self.vec_sIBS_mid))
                 )
     
     def gg_abs(self, e_phot, analyt=False, what_return='abs'):
@@ -931,15 +1093,19 @@ class IBS3D: #!!!
         if analyt:
             gg_res_1horn = np.array([gg_analyt(eg = e_phot / 5.11e5,
                          x = _x, y = _y,
-                         R_star=self.winds.star.Ropt, T_star = self.winds.star.Topt,
+                         R_star=self.winds.star.R_s, T_star = self.winds.star.T_s,
                          nu_los=self.winds.orbit.nu_los,
                          incl_los=self.winds.orbit.incl_los)
-                           for _x, _y in zip(self.x[0, :], self.y[0, :])])
+                           for _x, _y in zip(self.vec_sIBS[0, :, 0], self.vec_sIBS[0, :, 1])])
+            gg_res = np.array([gg_res_1horn for _i in range(self.n_phi)])
         else:
-            gg_res_1horn = gg_tab(E=e_phot, x=self.x[0, :], y=self.y[0, :], 
+            proj_vecs = project_point_for_gg(self.vec_sIBS, self.winds.orbit.unit_los)
+            xproj, yproj = np.average(proj_vecs[..., 0], axis=0), np.average(proj_vecs[..., 1], axis=0)
+            gg_res_1horn = gg_tab(E=e_phot, x=xproj, y=yproj, 
                             orb=self.winds.orbit,
                             filename=filename, what_return=what_return)
-        gg_res = np.array([gg_res_1horn for _i in range(self.n_phi)])
+            gg_res = np.array([gg_res_1horn for _i in range(self.n_phi)])
+        
         return gg_res
     
     
@@ -970,15 +1136,18 @@ class IBS3D: #!!!
         if analyt:
             gg_res_1horn = np.array([gg_analyt(eg = e_phot / 5.11e5,
                          x = _x, y = _y,
-                         R_star=self.winds.star.Ropt, T_star = self.winds.star.Topt,
+                         R_star=self.winds.star.R_s, T_star = self.winds.star.T_s,
                          nu_los=self.winds.orbit.nu_los,
                          incl_los=self.winds.orbit.incl_los)
-                           for _x, _y in zip(self.x_mid[0, :], self.y_mid[0, :])])
+                           for _x, _y in zip(self.vec_sIBS_mid[0, :, 0], self.vec_sIBS_mid[0, :, 1])])
+            gg_res = np.array([gg_res_1horn for _i in range(self.n_phi)])
         else:
-            gg_res_1horn = gg_tab(E=e_phot, x=self.x_mid[0, :], y=self.y_mid[0, :], 
+            proj_vecs_mid = project_point_for_gg(self.vec_sIBS_mid, self.winds.orbit.unit_los)
+            xproj, yproj = np.average(proj_vecs_mid[..., 0], axis=0), np.average(proj_vecs_mid[..., 1], axis=0)
+            gg_res_1horn = gg_tab(E=e_phot, x=xproj, y=yproj, 
                             orb=self.winds.orbit,
                             filename=filename, what_return=what_return)
-        gg_res = np.array([gg_res_1horn for _i in range(self.n_phi)])
+            gg_res = np.array([gg_res_1horn for _i in range(self.n_phi)])
         return gg_res
     
     def gg_abs_apex(self, e_phot, analyt=False, what_return='abs'):
@@ -1012,14 +1181,19 @@ class IBS3D: #!!!
 
         if analyt:
             gg_res = gg_analyt(eg = e_phot / 5.11e5,
-                         x = self.x_apex, y = self.y_apex,
-                         R_star=self.winds.star.Ropt, T_star = self.winds.star.Topt,
-                         nu_los=self.winds.orrbit.nu_los,
+                         x = self.x_apex_coord - self.vec_s[0],
+                         y = self.y_apex_coord - self.vec_s[1],
+                         R_star=self.winds.star.R_s,
+                         T_star = self.winds.star.T_s,
+                         nu_los=self.winds.orbit.nu_los,
                          incl_los=self.winds.orbit.incl_los)
         else:
-            gg_res = gg_tab(E=e_phot, x=self.x_apex_coord, y=self.y_apex_coord,
+            gg_res = gg_tab(E=e_phot, 
+                            x=self.x_apex_coord - self.vec_s[0],
+                            y=self.y_apex_coord - self.vec_s[1],
                             orb=self.winds.orbit,
-                            filename=filename, what_return=what_return)
+                            filename=filename, 
+                            what_return=what_return)
         return gg_res
     
     @property
@@ -1027,14 +1201,19 @@ class IBS3D: #!!!
         """
         An integral of external pressure over the line connecting the star's
         surface to the IBS.
+
+        Creates a line from star to the point on IBS, calculates pressure on
+        this line, then integrates it over the line.
         
         returns : integrated p, shape of (Nphi, N)
         """
         param = np.geomspace(1e-3, 1., 27)
-        vecs_s_ibs = vec_between(vec_i = np.zeros((3,)), vec_f = self.r_vec, param=param)
+        vecs_s_ibs = vec_between(vec_i = np.zeros((3,)), vec_f = self.vec_sIBS, param=param)
+        true_an = self.winds.orbit.true_an(self.t_forbeta)
         ps = (self.winds.star.polar_wind_pressure(r_from_s=absv(vecs_s_ibs)) + 
-             self.winds.star.decr_disk_pressure(vec_r_from_s=vecs_s_ibs))
-        ps[absv(vecs_s_ibs) < self.winds.star.Ropt] = 1e-100
+             self.winds.star.decr_disk_pressure(vec_r_from_s=vecs_s_ibs,
+                                                 true_an=true_an))
+        ps[absv(vecs_s_ibs) < self.winds.star.R_s] = 1e-100
         integrated_p = trapz_loglog(ps, param, axis=0)
         return integrated_p
     
@@ -1047,19 +1226,23 @@ class IBS3D: #!!!
         returns : integrated p, shape of (Nphi, N-1)
         """
         param = np.geomspace(1e-3, 1., 27)
-        vecs_s_ibs = vec_between(vec_i = np.zeros((3,)), vec_f = self.r_vec_mid, param=param)
+        vecs_s_ibs = vec_between(vec_i = np.zeros((3,)), vec_f = self.vec_sIBS_mid, param=param)
+        true_an = self.winds.orbit.true_an(self.t_forbeta)
         ps = (self.winds.star.polar_wind_pressure(r_from_s=absv(vecs_s_ibs)) + 
-             self.winds.star.decr_disk_pressure(vec_r_from_s=vecs_s_ibs))
-        ps[absv(vecs_s_ibs) < self.winds.star.Ropt] = 1e-100
+             self.winds.star.decr_disk_pressure(vec_r_from_s=vecs_s_ibs,
+                                                 true_an=true_an))
+        ps[absv(vecs_s_ibs) < self.winds.star.R_s] = 1e-100
         integrated_p = trapz_loglog(ps, param, axis=0)
         return integrated_p
     
     @property
     def soft_ph_abs(self):
+        """Stellar-photon attenuation on point cells, shape ``(Nphi, Ns)``."""
         return np.exp(- self.shield_star * self.integrated_pressure)
     
     @property
     def soft_ph_abs_mid(self):
+        """Stellar-photon attenuation on segment cells, shape ``(Nphi, Ns-1)``."""
         return np.exp(- self.shield_star * self.integrated_pressure_mid)
     
     ###########################################################################
@@ -1127,94 +1310,97 @@ class IBS3D: #!!!
     
     ###########################################################################
     @property
-    def b_opt(self):
+    def b_s(self):
         """Optical star-originating magnetic field on the IBS [G]."""
-        return self.winds.star.b(r_to_s = absv(self.r_vec))
+        return self.winds.star.b(r_to_s = self.r_from_s)
     
     @property
-    def b_opt_mid(self):
+    def b_s_mid(self):
         """Optical star-originating magnetic field on the IBS_mid [G]."""
-        return self.winds.star.b(r_to_s = absv(self.r_vec_mid))
+        return self.winds.star.b(r_to_s = self.r_from_s_mid)
     
     @property
-    def b_opt_comov(self):
+    def b_s_comov(self):
         """Optical star-originating magnetic field on the IBS in the comoving frame [G]."""
-        return lor_trans_b_iso(B_iso=self.b_opt, gamma=self.g)
+        return lor_trans_b_iso(B_iso=self.b_s, gamma=self.g)
     
     @property
-    def b_opt_mid_comov(self):
+    def b_s_mid_comov(self):
         """Optical star-originating magnetic field on the IBS_mid in the comoving frame [G]."""
-        return lor_trans_b_iso(B_iso=self.b_opt_mid, gamma=self.g_mid)
+        return lor_trans_b_iso(B_iso=self.b_s_mid, gamma=self.g_mid)
     
     ###########################################################################
     @property
     def b(self):
         """Total magnetic field on the IBS [G]."""
-        return self.b_pulsar + self.b_opt
+        return self.b_pulsar + self.b_s
     
     @property
     def b_mid(self):
         """Total magnetic field on the IBS_mid [G]."""
-        return self.b_pulsar_mid + self.b_opt_mid
+        return self.b_pulsar_mid + self.b_s_mid
     
     @property
     def b_comov(self):
         """Total magnetic field on the IBS in the comoving frame [G]."""
-        return self.b_pulsar_comov + self.b_opt_comov
+        return self.b_pulsar_comov + self.b_s_comov
     
     @property
     def b_mid_comov(self):
         """Total magnetic field on the IBS_mid in the comoving frame [G]."""
-        return self.b_pulsar_mid_comov + self.b_opt_mid_comov
+        return self.b_pulsar_mid_comov + self.b_s_mid_comov
     
     ###########################################################################
     @property
-    def T_opt_eff(self):
+    def T_s_eff(self):
         """Optical star effective temperature on the IBS [K]. 
         Simply the star temperature everywhere."""
-        return self.winds.star.Topt * np.ones(self.r.shape)
+        return self.winds.star.T_s * np.ones(self.r.shape)
     
     @property
-    def T_opt_eff_mid(self):
+    def T_s_eff_mid(self):
         """Optical star effective temperature on the IBS_mid [K]. 
         Simply the star temperature everywhere."""
-        return self.winds.star.Topt * np.ones(self.r_mid.shape)
+        return self.winds.star.T_s * np.ones(self.r_mid.shape)
     
     @property
-    def T_opt_eff_comov_iso(self):
+    def T_s_eff_comov_iso(self):
         """Optical star effective temperature on the IBS in the comoving frame [K].
         Isotropc approximation."""
-        return lor_trans_Teff_iso(Teff_iso = self.T_opt_eff, gamma=self.g)
+        return lor_trans_Teff_iso(Teff_iso = self.T_s_eff, gamma=self.g)
     
     @property
-    def T_opt_eff_mid_comov_iso(self):
+    def T_s_eff_mid_comov_iso(self):
         """Optical star effective temperature on the IBS_mid in the comoving frame [K].
         Isotropc approximation."""
-        return lor_trans_Teff_iso(Teff_iso = self.T_opt_eff_mid, gamma=self.g_mid)
+        return lor_trans_Teff_iso(Teff_iso = self.T_s_eff_mid, gamma=self.g_mid)
     
     @property
-    def T_opt_eff_comov_ani(self):
+    def T_s_eff_comov_ani(self):
         """Optical star effective temperature on the IBS in the comoving frame [K].
         Anisotropc approximation."""
-        return self.T_opt_eff / self.dopl_star
+        return self.T_s_eff / self.dopl_star
     
     @property
-    def T_opt_eff_mid_comov_ani(self):
+    def T_s_eff_mid_comov_ani(self):
         """Optical star effective temperature on the IBS_mid in the comoving frame [K].
         Anisotropc approximation."""
-        return self.T_opt_eff_mid / self.dopl_star_mid
+        return self.T_s_eff_mid / self.dopl_star_mid
     
     
     @property
     def disk_pressure(self):
         """Decretion disk pressure calculated on the IBS."""
-        return self.winds.star.decr_disk_pressure(vec_r_from_s = self.r_vec)
+        return self.winds.star.decr_disk_pressure(
+            vec_r_from_s=self.vec_sIBS,
+            true_an=self.winds.orbit.true_an(self.t_forbeta),
+        )
     
     
     @property
     def polar_pressure(self):
         """Polar wind pressure calculated on the IBS."""
-        return self.winds.star.polar_wind_pressure(r_from_s = absv(self.r_vec))
+        return self.winds.star.polar_wind_pressure(r_from_s = self.r_from_s)
     
     @property
     def tot_external_pressure(self):
@@ -1267,7 +1453,8 @@ class IBS3D: #!!!
              edgecolor='k', linewidth=0.1,
              alpha=0.5, colorbar=True,
              showtime=None, E_for_gg=1e12,
-             scale='linear'):
+             scale='linear',
+             show_star=False):
         import matplotlib.colors as mcolors
         import matplotlib.pyplot as plt
 
@@ -1311,19 +1498,19 @@ class IBS3D: #!!!
             raise ValueError("'scale' can be 'linear' or 'log'.")
 
 
-        # if show_winds:
-        #     if not isinstance(self.winds, Winds):
-        #         raise ValueError("You should provide winds:Winds to show the winds.")
-        #     self.winds.peek(ax=ax, showtime=showtime,
-        #                     plot_rs=False)
-
-        # if rescaled:
-        puls_vector = self.winds.orbit.vector_sp(self.t_forbeta)
+        puls_vector = self.winds.orbit.vector_p(self.t_forbeta)
+        star_vector = self.winds.orbit.vector_s(self.t_forbeta)
         _xp, _yp = puls_vector[0], puls_vector[1]
+        _xs, _ys = star_vector[0], star_vector[1]
         ax.scatter(_xp, _yp, 0, color='b') # pulsaR
-        # ...and the star was alreay plotted in the winds.peek()
-        ax.plot( [0, 1.5*_xp], [0, 1.5*_yp], [0, 0], color='k', alpha=0.3, ls='--',)
+        if show_star:
+            ax.scatter(_xs, _ys, 0, color='r') # optical star
+        ax.scatter(0., 0., 0, color='k', marker='x') # barycenter
+
+        ax.plot([_xs, _xp], [_ys, _yp], [0, 0], color='k', alpha=0.3, ls='--')
         vec_disk1, vec_disk2 = self.winds.vectors_of_disk_passage
+        vec_disk1 = star_vector + vec_disk1
+        vec_disk2 = star_vector + vec_disk2
         xx1, yy1, zz1 = vec_disk1                                                 
         xx2, yy2, zz2 = vec_disk2                                                 
         ax.plot([xx1, xx2], [yy1, yy2], [zz1, zz2], color='orange', ls='--', lw=2)    
@@ -1333,7 +1520,7 @@ class IBS3D: #!!!
             showtime = [-self.winds.orbit.T/2, self.winds.orbit.T/2]
         show_cond  = np.logical_and(self.winds.orbit.ttab > showtime[0], 
                                     self.winds.orbit.ttab < showtime[1])
-        orb_x, orb_y = self.winds.orbit.xtab[show_cond], self.winds.orbit.ytab[show_cond]
+        orb_x, orb_y = self.winds.orbit.xtab_p[show_cond], self.winds.orbit.ytab_p[show_cond]
         x_scale = np.max(np.array([
             np.abs(np.min(orb_x)), np.abs(np.max(orb_x))
             ]))
@@ -1341,6 +1528,9 @@ class IBS3D: #!!!
                 np.abs(np.min(orb_y)), np.abs(np.max(orb_y))            
             ]))
         ax.plot(orb_x, orb_y, 0*orb_x)
+        if show_star:
+            orb_x_s, orb_y_s = self.winds.orbit.xtab_s[show_cond], self.winds.orbit.ytab_s[show_cond]
+            ax.plot(orb_x_s, orb_y_s, 0*orb_x_s)
         ax.set_xlim(-1.2*x_scale, 1.2*min(x_scale, self.winds.orbit.r_periastr) )
         ax.set_ylim(-1.2*y_scale, 1.2*y_scale) 
         ax.set_zlim(-1.2*x_scale, 1.2*x_scale) 
@@ -1350,21 +1540,20 @@ class IBS3D: #!!!
                            cbar_label=bar_label, alpha=alpha,
                            )
         # ax.scatter(xstar_, ystar_, zstar_, color='b')
-        ax.scatter(0, 0, 0, color='r')
         # ax.set_xlim(-2, 2)
         # ax.set_ylim(-2, 2)
         # ax.set_zlim(-2, 2)
         xlos_, ylos_, zlos_ = self.unit_los * x_scale
-        ax.quiver(0, 0, 0, 1.*xlos_, 1.*ylos_, 1.*zlos_, arrow_length_ratio=0.12, linewidth=2, color='g')
-        ax.legend()
+        ax.quiver(_xs, _ys, star_vector[2], xlos_, ylos_, zlos_,
+                  arrow_length_ratio=0.12, linewidth=2, color='g')
+        # ax.legend()
         # return line_ 
         return ax
 
     
     def __getattr__(self, name):
+        """Delegate normalized, dimensionless geometry attributes to ``ibs_n``."""
         ibs_n_ = self.__dict__.get("ibs_n", None)
         if ibs_n_ is None:
             raise AttributeError(name)
         return getattr(ibs_n_, name)
- 
-    

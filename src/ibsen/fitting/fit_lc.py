@@ -33,9 +33,9 @@ g0_test = 1.19
 f_d_test = 250.
 d0_test = 0.03
 default_params = { "sys_name": "psrb",
-              
+                            
               "puls_b_ref" : 1.0, "puls_r_ref" : 1e13,
-              "opt_b_ref": 0.0, "opt_r_ref": 1e13,
+              "s_b_ref": 0.0, "s_r_ref": 1e13,
               "alpha_disk_deg": 15.,
               "incl_disk_deg": -45.,
               "f_d" : f_d_test, "f_p": 0.03, 
@@ -44,6 +44,7 @@ default_params = { "sys_name": "psrb",
               
               # "orientation": 'flow',
               "orientation": 'flow_p',
+              'incl_puls_vel': False,
               
               "n_ibs": 15, "n_phi": 23, "gamma_max": g0_test,
               "s_max_g": SMAX, "s_max" : SMAX, "coef_quench": 0.0, "shield_star": 5.0,

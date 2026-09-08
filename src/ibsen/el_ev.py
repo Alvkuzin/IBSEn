@@ -80,7 +80,7 @@ def Giso_full(x):
     """
     return Giso(x, 5.68) * gfunc(x)
 
-def ic_loss(Ee, Topt, Ropt, dist):
+def ic_loss(Ee, T_s, R_s, dist):
     """
     Inverse Compton (isotropic) losses dE/de 
 
@@ -88,9 +88,9 @@ def ic_loss(Ee, Topt, Ropt, dist):
     ----------
     Ee : np.ndarray
         Electron energy [eV].
-    Topt : np.ndarray
+    T_s : np.ndarray
         Effective temperature of a star [K].
-    Ropt : np.ndarray
+    R_s : np.ndarray
         Star radius [cm].
     dist : np.ndarray
         Distance from the star.
@@ -101,8 +101,8 @@ def ic_loss(Ee, Topt, Ropt, dist):
         IC losses for a single electron dE/dt [eV/s].
 
     """
-    kappa = (Ropt / 2 / dist)**2
-    T_me = (K_BOLTZ * Topt / MC2E)
+    kappa = (R_s / 2 / dist)**2
+    T_me = (K_BOLTZ * T_s / MC2E)
     Ee_me = Ee  / ERG_TO_EV / MC2E
     coef = 2 * R_ELECTRON**2 * M_E**3 * C_LIGHT**4 * kappa * T_me**2 / pi / HBAR**3 # 1/s
     Edot = coef * MC2E * ERG_TO_EV * Giso_full(4 * T_me * Ee_me) #[eV/s]
@@ -130,7 +130,7 @@ def t_adiab(dist, eta_flow):
 
 
 
-def total_loss(ee, B, Topt, Ropt, dist, eta_flow, eta_syn, eta_IC, dist_ad=None):
+def total_loss(ee, B, T_s, R_s, dist, eta_flow, eta_syn, eta_IC, dist_ad=None):
     """
     Total losses dE/dt = eta_syn * syn_loss + eta_IC * ic_loss - E/t_ad.
     Negative! For a single electron.
@@ -141,9 +141,9 @@ def total_loss(ee, B, Topt, Ropt, dist, eta_flow, eta_syn, eta_IC, dist_ad=None)
         Electron energy [eV].
     B : np.ndarray
         Magnetic field [cgs].
-    Topt : np.ndarray
+    T_s : np.ndarray
         Optical star effective temperature [K].
-    Ropt : np.ndarray
+    R_s : np.ndarray
         Optical star radius [cm].
     dist : np.ndarray
         Distance from the optical star [cm].
@@ -168,9 +168,9 @@ def total_loss(ee, B, Topt, Ropt, dist, eta_flow, eta_syn, eta_IC, dist_ad=None)
     if dist_ad is None:
         dist_ad = dist
     if eta_flow_max < 1e10:
-        return eta_syn * syn_loss(ee, B) + eta_IC * ic_loss(ee, Topt, Ropt, dist) - ee / t_adiab(dist_ad, eta_flow)
+        return eta_syn * syn_loss(ee, B) + eta_IC * ic_loss(ee, T_s, R_s, dist) - ee / t_adiab(dist_ad, eta_flow)
     else:
-        return eta_syn * syn_loss(ee, B) + eta_IC * ic_loss(ee, Topt, Ropt, dist)
+        return eta_syn * syn_loss(ee, B) + eta_IC * ic_loss(ee, T_s, R_s, dist)
 
 def e_syn_ph(e_el, b, return_dim = 'eV'):
     """
@@ -729,9 +729,9 @@ def evolved_e(cooling, r_SP, ss, rs, thetas, edot_func, f_inject_func,
         e_vals = np.logspace(np.log10(emin), np.log10(emax), 979)
         smesh, emesh = np.meshgrid(ss*r_SP, e_vals, indexing = 'ij')
         if cooling == 'stat_mimic':
-            (B0, Topt, Ropt, r_SE, eta_fl, eta_sy, eta_ic, ss, rs, thetas, r_SP) = tot_loss_args
+            (B0, T_s, R_s, r_SE, eta_fl, eta_sy, eta_ic, ss, rs, thetas, r_SP) = tot_loss_args
             eta_fl_new = eta_flow_func(smesh, *eta_flow_args)
-            tot_loss_args = (B0, Topt, Ropt, r_SE, eta_fl_new * eta_fl,
+            tot_loss_args = (B0, T_s, R_s, r_SE, eta_fl_new * eta_fl,
                                  eta_sy, eta_ic, ss, rs, thetas, r_SP)    
         f_inj_se = f_inject_func(smesh, emesh, *f_args)
         edots_se = edot_func(smesh, emesh, *tot_loss_args)
@@ -786,13 +786,18 @@ class ElectronsOnIBS: #!!!
     Electron injection and cooling on the intrabinary shock (IBS).
 
     This class builds and evolves the electron distribution on a single IBS
-    snapshot (given by an :class:`IBS` instance) using several cooling models.
+    snapshot (given by an :class:`IBS` or :class:`IBS3D` instance) using several
+    cooling models.
     It provides injection profiles in energy and along the shock, radiative and
     adiabatic loss rates, optional leakage/advection mimics, and solvers for
     stationary/leaky/advection cases. Energies are in eV, lengths in cm, and
     times in seconds. The supplied ``ibs`` must already be initialized with a
-    valid ``winds`` (and thus an ``orbit``, so it should be ibs:IBS, not
-    ibs:IBS_norm). 
+    valid ``winds`` (and thus an ``orbit``), so it must be a physical
+    ``IBS``/``IBS3D`` rather than ``IBS_norm``/``IBS3D_norm``. Coordinates of
+    a physical IBS are barycentric, but the loss calculation deliberately uses
+    star-relative and pulsar-relative *distances*: ``ibs.s_interp(..., 'r1')``
+    for the stellar photon density in IC cooling, and
+    ``ibs.s_interp(..., 'r')`` for the pulsar-to-IBS adiabatic length.
 
     Parameters
     ----------
@@ -802,8 +807,9 @@ class ElectronsOnIBS: #!!!
         and distances needed by losses. 
     cooling : {'no', 'stat_apex', 'stat_ibs', 'stat_mimic',
                'leak_apex', 'leak_ibs', 'leak_mimic', 'adv'} or None, optional
-        Cooling/evolution mode. If not in the set above, it falls back to
-        ``'no'`` at runtime. See *Notes* for meanings. Default is None.
+        Cooling/evolution mode. A value outside this set (including ``None``)
+        raises ``ValueError`` when :meth:`calculate` is called. See *Notes*
+        for meanings.
     to_inject_e : {'pl', 'ecpl', 'secpl', 'bkpl'}, optional
         Energy part of the injection law: power law, exponential cutoff PL,
         or super-exponential cutoff PL. Default 'ecpl'.
@@ -814,7 +820,7 @@ class ElectronsOnIBS: #!!!
         Cutoff energy for 'ecpl'/'secpl' [eV]. Default 1e12.
     ebr : float, optional
         Break energy for 'bkpl' [eV]. Default 1e12.
-    n_e_cut : floar, optional
+    n_e_cut : float, optional
         Cutoff energy index: e_cut_real = ecut * (1 [G]/ b)**n_e_cut. Default 0.
     p_e : float, optional
         Injection spectral index. Default 2.0.
@@ -847,13 +853,32 @@ class ElectronsOnIBS: #!!!
     Attributes
     ----------
     ibs : IBS/IBS3D
-        The supplied IBS snapshot; used for s-grid, theta(s), r(s), and gamma(s).
-        Should contain winds and winds.orbit.
+        Supplied physical IBS snapshot. Its positions are barycentric, while
+        ``r1`` and ``r`` remain the star-to-IBS and pulsar-to-IBS distances
+        used by the loss calculation.
+    orbit : Orbit
+        Convenience reference to ``ibs.winds.orbit``.
     r_sp : float
         Star–pulsar separation at the IBS epoch [cm].
     eta_a, eta_syn, eta_ic : float
         Coefficients controlling adiabatic, synchrotron, and IC losses.
         Note that is cooling==`stat_mimic`, ``eta_a`` is scaled along the IBS.
+    cooling, to_inject_e, to_inject_theta : str
+        Selected transport solver and injection laws.
+    ecut, ebr, n_e_cut, p_e, delta_p_e, beta_e, norm_e, epow_norm_e : float
+        Stored injection-spectrum and normalization parameters.
+    emin, emax, emin_grid, emax_grid : float
+        Injection cut and electron-solver energy bounds [eV].
+    to_cut_e, to_cut_theta : bool
+        Flags for the energy and angular injection cuts; ``where_cut_theta``
+        is the latter cut in radians.
+    integral_f_deds : float
+        Integral used to normalize :meth:`f_inject` to ``norm_e``.
+    s_1d_dim : ndarray, shape (Ns,)
+        Positive-arclength grid on the computed horn (2D) or reference arch at
+        ``phi=0`` (3D), in cm.
+    allowed_coolings : tuple of str
+        Cooling-mode names accepted by :meth:`calculate`.
     e_vals : shape (Ne,) 
         The energies [eV] of electrons for the electron spectrum.
     e_vals_comov : shape (Ne_comov,) 
@@ -865,6 +890,9 @@ class ElectronsOnIBS: #!!!
     dNe_deds_IBS_1horn : shape (n, Ne)
         The electron spectrum dNe/ds/de [1 / cm / eV] calculated on
         one horn (one arch) of the IBS.
+    _vel, _f_inj, _edot : ndarray, shape (Ns, Ne)
+        Bulk speed, injection rate, and loss rate on ``smesh, emesh`` for the
+        computed one-arch solution.
     dNe_deds_IBS : shape (2n, Ne) for 2D IBS and (n_phi, n, Ne) for 
     3D IBS. 
         The electron spectrum dNe/ds/de [1 / cm / eV] calculated on
@@ -906,7 +934,7 @@ class ElectronsOnIBS: #!!!
     ntot : float 
         The total number of electrons on the IBS. Defined as 
         \sum_{all IBS sections} n_i_mid.
-    ntot : float 
+    ntot_comov : float
         The total number of electrons on the IBS calculated
         from the co-moving spectrum of electrons. Physically, should 
         be = ntot, but it is not guaranteed (though it was tested to be so).
@@ -915,25 +943,50 @@ class ElectronsOnIBS: #!!!
 
     Methods
     -------
-    calculate(to_return=False)
+    _check_and_set_ibs(), _normalize_injection()
+        Validate the physical IBS input, select the one-arch grid, and build
+        the injection normalization.
+    effective_e_cut(spat_coord, type_coord='s')
+        Local cutoff energy from the shock magnetic field.
+    inject_over_theta(spat_coord, type_coord='s', force_no_spatial_cut=False)
+        Spatial factor of the injection law, including the ``s``/``theta``
+        Jacobian when appropriate.
+    inject_over_e(spat_coord, e, type_coord='s')
+        Energy factor of the injection law at the specified position.
+    _f_inject_nonnormalized(...), f_inject(...)
+        Unnormalized and normalized injection rates in ``(s,E)`` or
+        ``(theta,E)`` coordinates.
+    calculate_spec_stat(...), calculate_spec_leak(...), calculate_spec_adv()
+        One-arch stationary, leaky-stationary, and advective transport
+        solvers, respectively.
+    _calculate_one_arch(), _set_solution_onto_ibs(), _calculate_comoving_e_spec()
+        Internal assembly of the one-arch solution, full spatial grid, and
+        optional comoving spectra.
+    _up, _low, _up_mid, _low_mid : ndarray property
+        Index arrays for the signed upper/lower 2D horns and their midpoint
+        cells; unavailable for the 3D IBS.
+    calculate(to_return=False, require_lorentz=True)
         Build the electron distribution on the IBS according to ``cooling``;
         mirrors one horn to the full two-horn array (or all arches of the IBS,
         in case of 3D IBS). Optionally returns the distribution and its energy grid.
-    f_inject(s_, e_, spat_coord='s')
+    f_inject(spat_coord, e, type_coord='s', force_no_spatial_cut=False)
         Injection law in (s, E). Supports 's' or 'theta' as the spatial density.
     edot(s_, e_)
         Total electron energy loss rate dE/dt at (s, E) including synchrotron,
         IC, and optional adiabatic term.
     vel(s)
         Bulk flow speed along the IBS from the gamma(s) profile.
-    t_leakage(s, e)
-        Leakage time T(s, E) used to mimic advection solutions.
-    eta_flow_mimic(s)
-        Position-dependent adiabatic factor used in 'stat_mimic' and tests.
-    analyt_adv_Ntot_self : property
+    analyt_adv_Ntot_self()
         Total number of electrons along the **upper** horn (integrated over E).
     analyt_adv_Ntot(s_1d, f_inj_integrated)
         Integral form for N_tot(s) given \int f_inject(s,E) dE.
+    t_leakage(s, e), eta_flow_mimic(s)
+        Leakage time and position-dependent adiabatic factor used by the
+        transport approximations.
+    dne_de_tot(comov=True, return_e_el=True), n_e(e1, e2, comov=True, epow=0)
+        Total electron spectrum and its integrated moment over an energy band.
+    index(e1, e2, comov=True)
+        Effective power-law index of the IBS-integrated electron spectrum.
     peek(ax=None, to_label=True, show_many=True, **kwargs)
         Quick-look plots of E-SEDs, s * N(s), and apex cooling time.
 
@@ -969,14 +1022,9 @@ class ElectronsOnIBS: #!!!
                  emin_grid=1e8, emax_grid=5.1e14,
                  to_cut_e = True, 
                  to_cut_theta =  False, 
-                 where_cut_theta = pi/2):
-        """
-        We should provide the already initialized class ibs:IBS here with 
-        winds:Winds and orbit:Orbit in it. 
-        
-        But since currently ibs initialized WITH winds, we actually know the 
-        time since periastron we are at: it's self.ibs.t_forbeta
-        """
+                 where_cut_theta = pi/2,
+                 use_mimic_eta=False):
+        """Store the physical IBS snapshot and configure injection/loss models."""
         self.calculated = False
         self.ibs = ibs # must contain ibs.winds 
         self.cooling = cooling
@@ -1012,6 +1060,7 @@ class ElectronsOnIBS: #!!!
         self.to_cut_e = to_cut_e # whether to leave only the part emin < e < emax
         self.to_cut_theta = to_cut_theta # whether to inject only at theta < where_cut_theta
         self.where_cut_theta = where_cut_theta # see above
+        self.use_mimic_eta = use_mimic_eta
         
         self._check_and_set_ibs() #checks if there's right ibs and sets r_sp
 
@@ -1128,8 +1177,8 @@ class ElectronsOnIBS: #!!!
             eta_ic_eff *= self.ibs.s_interp(s_, 'soft_ph_abs')  
         return total_loss(ee = e_, 
                           B = self.ibs.s_interp(s_, 'b'), 
-                          Topt = self.ibs.winds.star.Topt,
-                          Ropt=self.ibs.winds.star.Ropt,
+                          T_s = self.ibs.winds.star.T_s,
+                          R_s=self.ibs.winds.star.R_s,
                           dist = self.ibs.s_interp(s_, 'r1'),
                           eta_flow = eta_adiab, 
                           eta_syn = self.eta_syn,
@@ -1322,7 +1371,7 @@ class ElectronsOnIBS: #!!!
         s_1d_touse = np.linspace(0, np.max(self.ibs.s_max_cm) * 1.02, 241)
         e_vals = loggrid(self.emin_grid, self.emax_grid, 201)
         ss_, ee_ = np.meshgrid(s_1d_touse, e_vals, indexing='ij')
-        f_se = ElectronsOnIBS.f_inject(self, ss_, ee_)
+        f_se = self.f_inject(ss_, ee_)
         f_s = trapz_loglog(f_se, e_vals, axis=-1)
         v_ = self.vel(s_1d_touse)
         res_ = cumulative_trapezoid(f_s/v_, s_1d_touse, initial=0)
@@ -1396,9 +1445,10 @@ class ElectronsOnIBS: #!!!
     def eta_flow_mimic(self, s):
         """eta_flow(s) for testing. Defined so that eta_flow(s)*dorb/c_light =
         = time of the bulk flow from apex to s = s.
-        s in [cm], Gamma is a terminal lorentz-factor, s_max_g [dimless] is s at 
-        which Gamma is reached, dorb is an
-        orbital separation"""
+        
+        s in [cm]
+
+        """
         _ga = self.ibs.gamma_max - 1.
         s_max_g_dimless = self.ibs.ibs_n.s_max_g 
         _x = _ga * s / s_max_g_dimless / self.r_sp
@@ -1406,32 +1456,32 @@ class ElectronsOnIBS: #!!!
         res_ = s_max_g_dimless / _ga**2 *( (x1**2 - 1.)**0.5 - np.log(x1 + (x1**2 - 1.)**0.5) )
         floor_eta_a_ = 1e-3
         res_[res_ < floor_eta_a_] = floor_eta_a_
-        return res_
+        return res_ * s / self.ibs.s_interp(s, 'r')
     
     def calculate_spec_stat(self, e=None, cooling_type='stat_ibs'):
+        """Solve the stationary one-arch transport problem on an energy grid."""
         allowed_types = ('stat_apex', 'stat_ibs', 'stat_mimic')
         if cooling_type not in allowed_types:
             raise ValueError(f"`cooling_type` should be one of: {allowed_types}.")
         if e is None:
             e = loggrid(self.emin_grid, self.emax_grid, 101)
         smesh, emesh = np.meshgrid(self.s_1d_dim, e, indexing = 'ij')
-        if cooling_type == 'stat_mimic':
-            eta_fl_new = ElectronsOnIBS.eta_flow_mimic(self, smesh) * self.eta_a
-            
-            
-        f_inj_se = ElectronsOnIBS.f_inject(self, smesh, emesh)
-        if cooling_type != 'stat_mimic':
-            edots_se = ElectronsOnIBS.edot(self, smesh, emesh)
+        if self.use_mimic_eta:
+            eta_fl_new = self.eta_flow_mimic(smesh) * self.eta_a
         else:
-            edots_se = ElectronsOnIBS.edot(self, smesh, emesh, eta_fl_new)
+            eta_fl_new = self.eta_a
+            
+        f_inj_se = self.f_inject(smesh, emesh,)
+        edots_se = self.edot(smesh, emesh, eta_fl_new)
         dNe_deds_IBS = np.zeros((self.s_1d_dim.size, e.size))
-                
-        for i_s in range(self.s_1d_dim.size):
-            if cooling_type == 'stat_apex':
-                f_inj_av = trapezoid(f_inj_se, self.s_1d_dim, axis=0) / np.max(self.s_1d_dim)
-                dNe_deds_IBS[i_s, :] = stat_distr(e, f_inj_av, edots_se[0, :])
-            if cooling_type in ('stat_ibs', 'stat_mimic'):
-                dNe_deds_IBS[i_s, :] = stat_distr(e, f_inj_se[i_s, :], edots_se[i_s, :])
+        
+        if cooling_type == 'stat_apex':
+            f_inj_av = trapezoid(f_inj_se, self.s_1d_dim, axis=0) / np.max(self.s_1d_dim)
+            _stat_apex_dndeds = stat_distr(e, f_inj_av, edots_se[0, :])
+            dNe_deds_IBS = np.array([_stat_apex_dndeds for _i in range(self.s_1d_dim.size)])
+        if cooling_type in ('stat_ibs', 'stat_mimic'):
+            dNe_deds_IBS = stat_distr(e, f_inj_se, edots_se)
+
         if cooling_type in ('stat_mimic', ):
             ntot = trapz_loglog(dNe_deds_IBS, e, axis=-1)
             dNe_deds_IBS *= (self.analyt_adv_Ntot_self() / ntot)[:, None]
@@ -1439,6 +1489,7 @@ class ElectronsOnIBS: #!!!
         return dNe_deds_IBS, e, smesh, emesh
     
     def calculate_spec_leak(self, e=None, cooling_type='leak_ibs'):
+        """Solve the one-arch stationary transport problem with leakage."""
         allowed_types = ('leak_apex', 'leak_ibs', 'leak_mimic')
         if cooling_type not in allowed_types:
             raise ValueError(f"`cooling_type` should be one of: {allowed_types}.")
@@ -1467,6 +1518,7 @@ class ElectronsOnIBS: #!!!
         return dNe_deds_IBS, e, smesh, emesh
     
     def calculate_spec_adv(self):
+        """Solve the one-arch advection--cooling transport problem."""
         edot_func = lambda s_, e_: self.edot(s_, e_)
         f_inject_func = lambda s_, e_: self.f_inject( s_, e_)
         vel_func = lambda s_: self.vel(s_)
@@ -1518,6 +1570,7 @@ class ElectronsOnIBS: #!!!
         self.dNe_deds_IBS_1horn = dNe_deds_IBS
         
     def _set_solution_onto_ibs(self):
+        """Map the one-arch solution to IBS cells and form segment spectra."""
         # we fill the 2nd horn with the values 
         # from the 1st horn
         self._vel = ElectronsOnIBS.vel(self, s=self.smesh)
@@ -1558,6 +1611,9 @@ class ElectronsOnIBS: #!!!
         if self.ibs.ndim == 2:
             dNe_de_mid_comov= np.zeros((self.ibs.s_mid.size, e_comov.size))
             for i_s, gamma in zip( range(self.ibs.s_mid.size), self.ibs.g_mid ):
+                # if (self.e_vals.size<2) or (self.dNe_de_mid[i_s, :].size<2):
+                #     raise ValueError(f'in e-trans, e-size={self.e_vals.size}, dnde size={self.dNe_de_mid[i_s, :].size}')
+                # print(self.e_vals.size, self.dNe_de_mid[i_s, :].size)    
                 e_, dn_comov_ = lor_trans_e_spec_iso(E_lab=self.e_vals,
                                                      dN_dE_lab=self.dNe_de_mid[i_s, :],
                                                      gamma=gamma,
@@ -1592,12 +1648,12 @@ class ElectronsOnIBS: #!!!
             self.dNe_deds_mid (same as dNe_deds_IBS but at midpoints of s-grid),
             self.dNe_ds_mid (tot number of e at midpoints, 1/cm),
             self.dNe_de_mid (e-spec for every segmens at midpoints, 1/eV).
-            self.n_i_tot (tot number of e in each segment of the IBS),
+            self.n_i_mid (total number of e in each segment of the IBS),
             self.ntot (tot number of e on the IBS),
             and parameters into the comoving frames:
             self.e_vals_comov,
             self.dNe_de_mid_comov.
-            self.n_i_tot_comov,
+            self.n_i_mid_comov,
             self.ntot_comov.
 
         Parameters
@@ -2133,8 +2189,8 @@ class NonstatElectronEvol: #!!!
         B_p_apex, B_s_apex = self.winds.magn_fields_apex(t=t_)
         return total_loss(ee = e_, 
                           B = B_p_apex + B_s_apex, 
-                          Topt = self.winds.star.Topt,
-                          Ropt=self.winds.star.Ropt,
+                          T_s = self.winds.star.T_s,
+                          R_s=self.winds.star.R_s,
                           dist = r_sa, 
                           eta_flow = self.eta_a, 
                           eta_syn = self.eta_syn,

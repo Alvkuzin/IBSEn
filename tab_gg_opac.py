@@ -21,8 +21,10 @@ def main():
                         help="T: Orbital system [days]")
     parser.add_argument("--e", type=float, required=True,
                         help="e: Orbit eccentricity")
-    parser.add_argument("--M", type=float, required=True,
-                        help="M: Total system mass [Msol]")
+    parser.add_argument("--M_s", type=float, required=True,
+                        help="M_s: optical-star mass [Msol]")
+    parser.add_argument("--M_p", type=float, required=True,
+                        help="M_p: pulsar mass [Msol]")
     parser.add_argument("--nu_los", type=float, required=True,
                         help="""
                         nu_los: angle between direction to periastron 
@@ -33,10 +35,10 @@ def main():
                         incl_los: Orbit inclination [deg] (angle between 
                         orbital angular velocity and lne of sight)
                         """)
-    parser.add_argument("--Topt", type=float, required=True,
-                        help="Topt: Optical star effective temperature [K]")
-    parser.add_argument("--Ropt", type=float, required=True,
-                        help="Ropt: Optical star radius [Rsol]")
+    parser.add_argument("--T_s", type=float, required=True,
+                        help="T_s: optical-star effective temperature [K]")
+    parser.add_argument("--R_s", type=float, required=True,
+                        help="R_s: optical-star radius [Rsol]")
     parser.add_argument("--fast", type=bool, required=True,
                         help="fast: Whether to calculate faster (True) or correct (False)")
     parser.add_argument("--filename", type=str, required=True,
@@ -65,7 +67,8 @@ def main():
     args = parser.parse_args()
     orb = Orbit(T = args.T * DAY,
                 e = args.e,
-                M = args.M * M_SOLAR,
+                M_s=args.M_s * M_SOLAR,
+                M_p=args.M_p * M_SOLAR,
                 nu_los = np.deg2rad(args.nu_los),
                 incl_los = np.deg2rad(args.incl_los),
                 )
@@ -73,8 +76,8 @@ def main():
                    nrho = args.nrho,
                    nphi = args.nphi,
                    ne = args.ne,
-                   Topt = args.Topt,
-                   Ropt = args.Ropt * R_SOLAR,
+                   T_s=args.T_s,
+                   R_s=args.R_s * R_SOLAR,
                    to_return=False,
                    fast = args.fast,
                    filename=args.filename)
