@@ -1,17 +1,18 @@
 [project]
 name = "ibsen"
-version = "0.5.13.1"
+version = "0.5.13.2"
 description = "IBS emission of a pulsar+OB-star binary"
 authors = [{name = "Lesha"}]
 requires-python = ">=3.9"
 
-dependencies = ["numpy<2.0", 
-                "scipy",
-                "astropy",
-                "matplotlib",
-                "joblib",
-                "xarray",
-                "naima==0.10.0",
+dependencies = [
+    "numpy>=2.0,<3",
+    "scipy",
+    "astropy",
+    "matplotlib",
+    "joblib",
+    "xarray",
+    "naima @ git+https://github.com/zblz/naima.git@ba20a6402e48c89be34ad316ade014f58a43de0c",
 ]
 
 [project.optional-dependencies]
