@@ -1,10 +1,25 @@
 [project]
 name = "ibsen"
-version = "0.5.12"
+version = "0.5.13"
 description = "IBS emission of a pulsar+OB-star binary"
 authors = [{name = "Lesha"}]
-dependencies = ["numpy", "scipy", "astropy"]
 requires-python = ">=3.9"
+
+dependencies = ["numpy<2.0", 
+                "scipy",
+                "astropy",
+                "matplotlib",
+                "joblib",
+                "xarray",
+                "naima==0.10.0",
+]
+
+[project.optional-dependencies]
+gui = [
+    "PySide6",
+    "imageio",
+    "imageio-ffmpeg",
+]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -20,9 +35,6 @@ build-backend = "setuptools.build_meta"
 [project.scripts]
 ibsen = "ibsen.gui.app:main"
 deconstruct-ibsen = "ibsen.gui.dec:main"
-
-[project.optional-dependencies]
-gui = ["pyside6"]
 
 [tool.setuptools.package-data]
 "ibsen" = ["tab_data/*.nc",

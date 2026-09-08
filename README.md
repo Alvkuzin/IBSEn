@@ -20,9 +20,10 @@ For the installation and contributing, replace the last line with
 pip install -e .
 ```
 
-After the installation, install the required packages with
+If you want to use the graphical interface and be able to save gifs, use instead
+
 ```bash
-pip install -r requirements.txt
+pip install -e ".[gui]"
 ```
 
 

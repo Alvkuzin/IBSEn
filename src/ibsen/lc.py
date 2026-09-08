@@ -7,7 +7,6 @@ from joblib import Parallel, delayed
 import multiprocessing
 
 import matplotlib.pyplot as plt
-import imageio.v2 as imageio
 
 from ibsen.get_obs_data import get_parameters, known_names
 from ibsen.utils import unpack_params, loggrid, fill_nans, trapz_loglog
@@ -1224,7 +1223,8 @@ class LightCurve: # !!!
         None.
 
         """
-    
+        import imageio.v2 as imageio
+
         colors = ['b', 'r', 'g', 'k', 'm']
         Nt = len(self.t)
     
