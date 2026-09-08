@@ -1022,7 +1022,8 @@ class ElectronsOnIBS: #!!!
                  emin_grid=1e8, emax_grid=5.1e14,
                  to_cut_e = True, 
                  to_cut_theta =  False, 
-                 where_cut_theta = pi/2):
+                 where_cut_theta = pi/2,
+                 use_mimic_eta=False):
         """Store the physical IBS snapshot and configure injection/loss models."""
         self.calculated = False
         self.ibs = ibs # must contain ibs.winds 
@@ -1059,6 +1060,7 @@ class ElectronsOnIBS: #!!!
         self.to_cut_e = to_cut_e # whether to leave only the part emin < e < emax
         self.to_cut_theta = to_cut_theta # whether to inject only at theta < where_cut_theta
         self.where_cut_theta = where_cut_theta # see above
+        self.use_mimic_eta = use_mimic_eta
         
         self._check_and_set_ibs() #checks if there's right ibs and sets r_sp
 
@@ -1464,23 +1466,22 @@ class ElectronsOnIBS: #!!!
         if e is None:
             e = loggrid(self.emin_grid, self.emax_grid, 101)
         smesh, emesh = np.meshgrid(self.s_1d_dim, e, indexing = 'ij')
-        if cooling_type == 'stat_mimic':
+        if self.use_mimic_eta:
             eta_fl_new = self.eta_flow_mimic(smesh) * self.eta_a
-            
+        else:
+            eta_fl_new = self.eta_a
             
         f_inj_se = self.f_inject(smesh, emesh,)
-        if cooling_type != 'stat_mimic':
-            edots_se = self.edot(smesh, emesh)
-        else:
-            edots_se = self.edot(smesh, emesh, eta_fl_new)
+        edots_se = self.edot(smesh, emesh, eta_fl_new)
         dNe_deds_IBS = np.zeros((self.s_1d_dim.size, e.size))
-                
-        for i_s in range(self.s_1d_dim.size):
-            if cooling_type == 'stat_apex':
-                f_inj_av = trapezoid(f_inj_se, self.s_1d_dim, axis=0) / np.max(self.s_1d_dim)
-                dNe_deds_IBS[i_s, :] = stat_distr(e, f_inj_av, edots_se[0, :])
-            if cooling_type in ('stat_ibs', 'stat_mimic'):
-                dNe_deds_IBS[i_s, :] = stat_distr(e, f_inj_se[i_s, :], edots_se[i_s, :])
+        
+        if cooling_type == 'stat_apex':
+            f_inj_av = trapezoid(f_inj_se, self.s_1d_dim, axis=0) / np.max(self.s_1d_dim)
+            _stat_apex_dndeds = stat_distr(e, f_inj_av, edots_se[0, :])
+            dNe_deds_IBS = np.array([_stat_apex_dndeds for _i in range(self.s_1d_dim.size)])
+        if cooling_type in ('stat_ibs', 'stat_mimic'):
+            dNe_deds_IBS = stat_distr(e, f_inj_se, edots_se)
+
         if cooling_type in ('stat_mimic', ):
             ntot = trapz_loglog(dNe_deds_IBS, e, axis=-1)
             dNe_deds_IBS *= (self.analyt_adv_Ntot_self() / ntot)[:, None]

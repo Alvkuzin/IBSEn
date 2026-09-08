@@ -387,6 +387,7 @@ class LightCurve: # !!!
                 emin_grid=1e8, emax_grid=5.1e14,
                 to_cut_theta =  False, 
                 where_cut_theta = pi/2,
+                use_mimic_eta=False,
 
                 puls_b_model = 'linear', puls_b_ref = 1, puls_r_ref = 1e13,
                 puls_L_spindown = None, puls_sigma_magn = None,
@@ -500,6 +501,7 @@ class LightCurve: # !!!
         self.to_cut_e = to_cut_e
         self.to_cut_theta = to_cut_theta
         self.where_cut_theta = where_cut_theta
+        self.use_mimic_eta = use_mimic_eta
         ################ ---- arguments from spec ----- #######################
         self.delta_power = delta_power
         self.lorentz_boost = lorentz_boost
@@ -681,6 +683,7 @@ class LightCurve: # !!!
                             to_cut_e = self.to_cut_e,
                             to_cut_theta = self.to_cut_theta,
                             where_cut_theta = self.where_cut_theta,
+                            use_mimic_eta = self.use_mimic_eta,
                             ) 
 
         e_vals_now, dNe_de_IBS_now = els_now.calculate(to_return=True, 

@@ -3,7 +3,7 @@ import numpy as np
 from scipy.interpolate import interp1d
 from scipy.integrate import trapezoid
 from scipy.optimize import minimize_scalar, brentq
-
+from scipy.special import gamma
 from numpy import pi, sin, cos, exp
 import warnings
 # import astropy.units as u
@@ -1572,6 +1572,17 @@ def l2_norm(xarr, yarr):
 
     """
     return ( trapezoid(yarr**2, xarr) )**0.5
+
+def alpha_syn(p):
+    return (2.0**(0.5 * (p - 1.)) / 8. *
+            np.sqrt(3. / pi) / 
+            (p - 1.) *
+            gamma( (3. * p - 1.) / 12.) * 
+            gamma( (3. * p + 19.) / 12.) * 
+            gamma( 0.25 * (p + 5.)) / 
+            gamma( 0.25 * (p + 7.) )
+            )
+
 
 
 """ #!!!
