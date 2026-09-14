@@ -1,6 +1,6 @@
 [project]
 name = "ibsen"
-version = "0.5.14"
+version = "0.5.14.1"
 description = "IBS emission of a pulsar+OB-star binary"
 authors = [{name = "Lesha"}]
 requires-python = ">=3.9"

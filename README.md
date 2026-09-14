@@ -43,7 +43,7 @@ Scripts now are mainly not suited for running from the command line... And I don
 python test_ibsen.py --testall True --ndim -1 > my_test.txt 
 
 ```
-Compare the output with the file `ibsen_test_results_0_5_13.txt`
+Compare the output with the file `ibsen_test_results_0_5_14.txt`
 
 ## Usage
 There is a poor attempt at the graphical interface: run it with
