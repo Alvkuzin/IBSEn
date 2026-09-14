@@ -205,7 +205,7 @@ full_spec : bool, optional
         of u_g and Teff. Default True.
     method : {'full', 'simple', 'apex'}, optional
         Per-segment Naima calculation, approximate rescaling calculation, or
-        an apex-only calculation. Default 'full'.
+        an apex-only calculation. Default 'full'.~
     abs_photoel : bool, optional
         Apply photoelectric absorption. Default True.
     abs_gg : bool, optional

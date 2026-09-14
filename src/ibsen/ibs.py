@@ -293,7 +293,7 @@ class IBS: #!!!
         self.symm_ax = n_from_v(r_sp_vec)
         self.scatter_angle_apex = vector_angle(self.symm_ax, self.unit_los)
         self.dopl_apex_eff = doppler_delta(self.gamma_max,
-                        vector_angle(self.winds.orbit.unit_los, self.symm_ax))
+                        vector_angle(self.unit_los, self.symm_ax))
         
 
         
@@ -982,7 +982,7 @@ class IBS3D: #!!!
 
         self.scatter_angle_apex = vector_angle(vec_s_apex, self.unit_los)
         self.dopl_apex_eff = doppler_delta(self.gamma_max,
-                        vector_angle(self.winds.orbit.unit_los, self.symm_ax))
+                        vector_angle(self.unit_los, self.symm_ax))
 
         
         
@@ -1099,7 +1099,7 @@ class IBS3D: #!!!
                            for _x, _y in zip(self.vec_sIBS[0, :, 0], self.vec_sIBS[0, :, 1])])
             gg_res = np.array([gg_res_1horn for _i in range(self.n_phi)])
         else:
-            proj_vecs = project_point_for_gg(self.vec_sIBS, self.winds.orbit.unit_los)
+            proj_vecs = project_point_for_gg(self.vec_sIBS, self.unit_los)
             xproj, yproj = np.average(proj_vecs[..., 0], axis=0), np.average(proj_vecs[..., 1], axis=0)
             gg_res_1horn = gg_tab(E=e_phot, x=xproj, y=yproj, 
                             orb=self.winds.orbit,
@@ -1142,7 +1142,7 @@ class IBS3D: #!!!
                            for _x, _y in zip(self.vec_sIBS_mid[0, :, 0], self.vec_sIBS_mid[0, :, 1])])
             gg_res = np.array([gg_res_1horn for _i in range(self.n_phi)])
         else:
-            proj_vecs_mid = project_point_for_gg(self.vec_sIBS_mid, self.winds.orbit.unit_los)
+            proj_vecs_mid = project_point_for_gg(self.vec_sIBS_mid, self.unit_los)
             xproj, yproj = np.average(proj_vecs_mid[..., 0], axis=0), np.average(proj_vecs_mid[..., 1], axis=0)
             gg_res_1horn = gg_tab(E=e_phot, x=xproj, y=yproj, 
                             orb=self.winds.orbit,

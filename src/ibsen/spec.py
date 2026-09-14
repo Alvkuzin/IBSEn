@@ -139,6 +139,8 @@ def doppler_transform_sed(sed_prime, delta, weights, e_big, e_out):
     the behaviour is undefined.
         
     """
+    delta = np.asarray(delta, dtype=float)
+    weights = np.asarray(weights, dtype=float)
     
     spatial_shape = delta.shape
     M = delta.size
@@ -606,7 +608,7 @@ class SpectrumIBS: #!!!
         self.symm_ax = self._ibs.symm_ax
         self.dopl_apex = self._ibs.dopl_apex_eff
         ##### ---------- extended zone props, incl dNe_de ----------- ####
-        if self.lorentz_boost:
+        if self.lorentz_boost and self.method != 'apex':
             b_2horns = self._ibs.b_mid_comov
             scat_ang_2horns = self._ibs.scattering_angle_mid_comov
             e_vals = self.els.e_vals_comov
@@ -683,17 +685,19 @@ class SpectrumIBS: #!!!
             Internal photon-energy grid [eV].
 
         """
-        
-        d_max = max(np.max(self.dopls), 1/np.min(self.dopls))
+        ### Introduce an auxillary extended grid over photon energries
         if self.method != 'apex':
-            ### Introduce an auxillary extended grid over photon energries
-            ndec_ = int(self.ne_mult * e_ph.size /
-                        np.log10(np.max(e_ph) / np.min(e_ph))
-                        )
-            e_ext = loggrid(np.min(e_ph)/d_max/1.05, np.max(e_ph)*d_max*1.05,
-                            ndec_)
+            d_max = max(np.max(self.dopls), 1. / np.min(self.dopls))
         else:
-            e_ext = e_ph
+            d_max = max(self.dopl_apex, 1. / self.dopl_apex)
+        
+            
+        ndec_ = int(self.ne_mult * e_ph.size /
+                    np.log10(np.max(e_ph) / np.min(e_ph))
+                    )
+        e_ext = loggrid(np.min(e_ph)/d_max/1.05, np.max(e_ph)*d_max*1.05,
+                        ndec_)
+
         return e_ext
     
     def sed_nonboosted_apex(self, e_ph, emiss_mechanism):
@@ -710,8 +714,8 @@ class SpectrumIBS: #!!!
 
         Returns
         -------
-        sed apex (e_ext.size, ); sed_s nonabs boosted (ibs.shape, e_ph.size);
-        sed_s absorbed boosted (ibs.shape, e_ph.size); sed (e_ph.size,)
+        The boosted and absorbed 'apex SED'
+        sed (e_ph.size,)
 
         """
         e_ext = self._extended_photon_energies(e_ph=e_ph)
@@ -742,21 +746,31 @@ class SpectrumIBS: #!!!
                                     **kwargs)
         
         # sed_here_nonboosted = sed_apex_nonboosted
-        absorb_to_use = self.abs_tot_apex[None, :]
-        sed_s_nonboosted = sed_apex[None, :]
-        dopls_to_use = np.asarray([self.dopl_apex])
-        
-        sed_s_nonabs_boosted = doppler_transform_sed(
-            sed_prime = sed_s_nonboosted,
-            delta = dopls_to_use, 
-            weights = dopls_to_use ** self.delta_power,
+        # absorb_to_use = self.abs_tot_apex[None, :]
+        # sed_s_nonboosted = sed_apex[None, :]
+        # dopls_to_use = np.asarray([self.dopl_apex])
+        sed_nonabs_boosted = doppler_transform_sed(
+            sed_prime = sed_apex,
+            delta = self.dopl_apex, 
+            weights = self.dopl_apex ** self.delta_power,
             e_big = e_ext, 
             e_out = e_ph)
         
-        sed_s_here = sed_s_nonabs_boosted * absorb_to_use
-        sed_here = np.sum(sed_s_here, axis=tuple(np.arange(sed_s_here.ndim - 1)))
+        sed_here = sed_nonabs_boosted * self.abs_tot_apex
         
-        return sed_apex, sed_s_nonabs_boosted, sed_s_here, sed_here
+        return sed_here
+        
+        # sed_s_nonabs_boosted = doppler_transform_sed(
+        #     sed_prime = sed_s_nonboosted,
+        #     delta = dopls_to_use, 
+        #     weights = dopls_to_use ** self.delta_power,
+        #     e_big = e_ext, 
+        #     e_out = e_ph)
+        
+        # sed_s_here = sed_s_nonabs_boosted * absorb_to_use
+        # sed_here = np.sum(sed_s_here, axis=tuple(np.arange(sed_s_here.ndim - 1)))
+        
+        # return sed_apex, sed_s_nonabs_boosted, sed_s_here, sed_here
     
     def sed_nonboosted_simple(self, e_ph, emiss_mechanism, ic_approx='KN'):
         """
@@ -1069,11 +1083,10 @@ class SpectrumIBS: #!!!
         for mechanism in self.mechanisms:
             emiss_key = _key_from_mechanism(mechanism, self.ic_ani)
             if self.method == 'apex':
-                (_,
-                 _,
-                 sed_s_here,
-                 sed_here) = self.sed_nonboosted_apex(e_ph=e_ph,
+                sed_here = self.sed_nonboosted_apex(e_ph=e_ph,
                                                 emiss_mechanism=emiss_key)
+                sed_s_here = sed_s_.copy()
+                
             elif self.method == 'simple':
                 (sed_s_here,
                  sed_here) = self.sed_nonboosted_simple(e_ph=e_ph,

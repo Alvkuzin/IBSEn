@@ -52,7 +52,7 @@ default_params = { "sys_name": "psrb",
               
               "cooling": "stat_mimic", "to_inject_e": "secpl", "beta_e": 2.0, "p_e": 2.2,
               "ecut": 3e13, "n_e_cut": 0.5, "eta_syn":1.0, "eta_ic": 1.0, 
-              "eta_a": 1.0,  'norm_e': Norm0, 
+              "eta_a": 1.0,  'norm_e': Norm0, 'epow_norm_e':1.0, 
 
 
               "lorentz_boost": True,
@@ -250,6 +250,18 @@ PARAMS = {
         "inverse": lambda x: 10**x,
         "bounds": (-1.3, 1.3),        
     },
+    "f_p": {
+        "forward": np.log10,
+        "inverse": lambda x: 10**x,
+        "bounds": (-2.5, -0.1),        
+    },
+    "eta_a": {
+        "forward": np.log10,
+        "inverse": lambda x: 10**x,
+        "bounds": (-2.0, 2.0),        
+    },
+    
+    
 }
 
 
