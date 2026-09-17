@@ -2,6 +2,7 @@ import numpy as np
 from ibsen.utils import  interplg, trapz_loglog
 import inspect
 from scipy.interpolate import interp1d
+from scipy.optimize import brentq
 
 DAY = 86400.
 T21 = 59254.867359    
@@ -230,11 +231,52 @@ def linear_slope(x, y):
     return ((_n * np.sum(x*y) - np.sum(x) * np.sum(y)) 
             / (_n * np.sum(x**2) - np.sum(x)**2))
         
-def _fit_norm_only_multi(ydata, dy_data, y0_normalized, return_err=False):
+def _fit_normalization_soft_l1(ydata, dy_data, y0_normalized):
+    """Return N minimizing sum(sqrt(1 + ((ydata - N*y0)/dy_data)**2) - 1).
+
+    The derivative is strictly increasing for a nonzero model. Its root is
+    bracketed by the smallest and largest ydata/y0 ratios, ignoring zero model
+    values, which contribute only a constant to the loss.
+    """
+    ydata, dy_data, y0_normalized = [
+        np.asarray(ar, dtype=float) for ar in (ydata, dy_data, y0_normalized)
+    ]
+    if not (ydata.shape == dy_data.shape == y0_normalized.shape):
+        raise ValueError('ydata, dy_data and y0_normalized must have matching shapes')
+    if not all(np.all(np.isfinite(ar)) for ar in (ydata, dy_data, y0_normalized)):
+        raise ValueError('soft_l1 requires finite data, errors and model values')
+    if np.any(dy_data <= 0):
+        raise ValueError('soft_l1 requires positive dy_data')
+
+    keep = y0_normalized != 0
+    if not np.any(keep):
+        raise ValueError('Cannot fit normalization: all model values are zero')
+    a = y0_normalized[keep] / dy_data[keep]
+    b = ydata[keep] / dy_data[keep]
+    ratios = ydata[keep] / y0_normalized[keep]
+    lo, hi = np.min(ratios), np.max(ratios)
+    if lo == hi:
+        return float(lo)
+
+    def derivative(norm):
+        residual = norm * a - b
+        return np.sum(a * (residual / np.hypot(1.0, residual)))
+
+    # Normalizations may be far below one; use relative stopping accuracy.
+    return brentq(derivative, lo, hi, xtol=np.finfo(float).tiny, rtol=1e-10)
+
+
+def _fit_norm_only_multi(ydata, dy_data, y0_normalized, return_err=False,
+                         metrics='chi2'):
     """
     Fits a multiplicative coefficient N: 
         y_obs = N * y0_normalized
+
+    metrics can be 'chi2' or 'soft_l1'. Both use the chi-square-based
+    approximation for the normalization error when return_err=True.
     """
+    if metrics not in ('chi2', 'soft_l1'):
+        raise ValueError("metrics must be 'chi2' or 'soft_l1'")
     if np.any(~np.isfinite(y0_normalized)):
         print("non-finite model!")
         
@@ -251,7 +293,10 @@ def _fit_norm_only_multi(ydata, dy_data, y0_normalized, return_err=False):
             f"min(y0)={np.min(y0_normalized)}, "
             f"max(y0)={np.max(y0_normalized)}"
         )
-    N_best = np.sum(w * y0_normalized * ydata) / denom
+    if metrics == 'soft_l1':
+        N_best = _fit_normalization_soft_l1(ydata, dy_data, y0_normalized)
+    else:
+        N_best = np.sum(w * y0_normalized * ydata) / denom
     if not return_err:
         return N_best, N_best * y0_normalized
     resid = ydata - N_best * y0_normalized
@@ -307,9 +352,10 @@ def _fit_norm_addit_and_multi(ydata, dy_data, y0_normalized, return_err=False):
     
     return N_best, C_best, model_best, sigma_N, sigma_C, cov
 
-def fit_norm(ydata, dy_data, y0_normalized, return_err=False, addit_const=False):
+def fit_norm(ydata, dy_data, y0_normalized, return_err=False, addit_const=False,
+             metrics='chi2'):
     """
-    Analytically finds N and C assuming 
+    Finds N and C assuming
             y = C + N * y0_normalized, 
     given data: ydata, dydata,
     and one model y0 calculated with N0 (y0_normalized = y0/N0)
@@ -327,6 +373,12 @@ def fit_norm(ydata, dy_data, y0_normalized, return_err=False, addit_const=False)
         Whether to estimate errors for parameters. Default False
     addit_const : bool, optional
         Whether to add an additive constant C. If False, C === 0. Default False
+    metrics : {'chi2', 'soft_l1'}, optional
+        Loss to minimize. Default 'chi2' uses the analytical solution.
+        'soft_l1' numerically minimizes sum(sqrt(1 + residual**2) - 1)
+        and requires addit_const=False. With return_err=True, its error is
+        approximated using the same chi-square-based formula as for 'chi2',
+        evaluated at the fitted normalization.
 
     Returns 
     -------
@@ -345,9 +397,14 @@ def fit_norm(ydata, dy_data, y0_normalized, return_err=False, addit_const=False)
     errors dn_best/dc_best are floats; re-normalized y_renorm is a np.ndarray
 
     """
+    if metrics not in ('chi2', 'soft_l1'):
+        raise ValueError("metrics must be 'chi2' or 'soft_l1'")
     if addit_const:
+        if metrics != 'chi2':
+            raise ValueError("metrics='soft_l1' requires addit_const=False")
         return _fit_norm_addit_and_multi(ydata, dy_data, y0_normalized, return_err)
-    return _fit_norm_only_multi(ydata, dy_data, y0_normalized, return_err)
+    return _fit_norm_only_multi(ydata, dy_data, y0_normalized, return_err,
+                                metrics=metrics)
 
 def powerlaw_approx(dnde, e, e1, e2):
     """
@@ -614,7 +671,7 @@ def avg(arr, weights=None, power=None, axis=None):
 def fit_norm_here( x_obs, y_obs, dy_obs,
     x_model, y_model, norm_init, 
     grid_scale='log', return_err=False,
-    add_const=False, c_init=None):
+    add_const=False, c_init=None, metrics='chi2'):
     """
     Fits normalization(s) of model to observation set(s).
 
@@ -624,7 +681,15 @@ def fit_norm_here( x_obs, y_obs, dy_obs,
 
     If lists are provided, normalization is fitted independently
     for each observational dataset.
+
+    metrics can be 'chi2' (default) or 'soft_l1'. The latter requires
+    add_const=False. With return_err=True, both use the chi-square-based
+    approximation for the normalization error.
     """
+    if metrics not in ('chi2', 'soft_l1'):
+        raise ValueError("metrics must be 'chi2' or 'soft_l1'")
+    if add_const and metrics != 'chi2':
+        raise ValueError("metrics='soft_l1' requires add_const=False")
 
     def _fit_single(x_obs_single, y_obs_single, dy_obs_single):
 
@@ -685,6 +750,7 @@ def fit_norm_here( x_obs, y_obs, dy_obs,
                     ydata=y_obs_ok,
                     dy_data=dy_obs_ok,
                     y0_normalized=y_model_normalized_in_xobs,
+                    metrics=metrics,
                 )
                 y_model_renorm = y_model_normalized * norm_opt
                 return norm_opt, y_model_renorm
@@ -694,6 +760,7 @@ def fit_norm_here( x_obs, y_obs, dy_obs,
                 dy_data=dy_obs_ok,
                 y0_normalized=y_model_normalized_in_xobs,
                 addit_const=add_const,
+                metrics=metrics,
             )
             y_model_renorm = c_opt + norm_opt * y_model_normalized
             return norm_opt, c_opt, y_model_renorm
@@ -704,6 +771,7 @@ def fit_norm_here( x_obs, y_obs, dy_obs,
                     dy_data=dy_obs_ok,
                     y0_normalized=y_model_normalized_in_xobs,
                     return_err=True,
+                    metrics=metrics,
                 )
     
                 dn_rel = dnorm_opt / norm_opt
@@ -723,6 +791,7 @@ def fit_norm_here( x_obs, y_obs, dy_obs,
                 y0_normalized=y_model_normalized_in_xobs,
                 return_err=True,
                 addit_const=add_const,
+                metrics=metrics,
             )
             _f = y_model_normalized
             y_model_renorm  = c_opt + norm_opt * y_model_normalized

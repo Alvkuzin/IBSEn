@@ -620,7 +620,36 @@ class Orbit:
         
         
         self.nu_truetab = self.true_an( t_tab)
+        
+    def timegrid_lin_in_anomaly(self, t_start=None, t_end=None, n_samples=100):
+        """
+        Create a time grid so that the true anomalies are equally sampled. If
+        no start/end times are provided, the timegrid is created for (-T/2, T/2).
 
+        Parameters
+        ----------
+        t_start : float, optional
+            Start time [s]. If None, taken as -T/2. The default is None.
+        t_end : TYPE, optional
+            End time [s]. If None, taken as -T/2. The default is None.
+        n_samples : int, optional
+            Number of samples. The default is 100.
+
+        Returns
+        -------
+        t_grid : np.array (n_samples,)
+            The array of times such that the true anomalies are equidistant.
+
+        """
+        if t_start is None:
+            t_start = - self.T * 0.49999
+        if t_end is None:
+            t_end = self.T * 0.49999
+            
+        nu_start, nu_end = self.true_an(t_start), self.true_an(t_end)
+        nu_grid = np.linspace(nu_start, nu_end, n_samples)
+        return self.t_from_true_an(nu_grid)
+        
     def peek(self, ax=None,
              showtime = None,
              times_pos = (),
