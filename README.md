@@ -33,17 +33,30 @@ This project requires:
  - [Naima](https://naima.readthedocs.io/en/latest/installation.html),
  - And some standard scientific and graphic libraries. 
 
-**Note on Naima.** If you have both Naima and numpy installed and they are not in conflict with each other and with your python, you are good to go. But it is a good idea to create a separate environment for IBSEn where the numpy<2 and  Naima will be installed.
+**Note on Naima.** I realized there are sometimes unexpected conflicts with Naima dependencies. That's why the IBSEn dependence includes one particular Naima commit. 
 
 
 ### Test the installation
 
-Scripts now are mainly not suited for running from the command line... And I don't have proper tests yet, so to find out if the installation works, try running a very basic python script that simply initializes a lot of classes with more or less default parameters and stores the output in a file:
+The regression tests compare explicit tabulated results of calculations for orbit,
+ wind, IBS, electron, spectrum, light-curve, and absorption. Mostly, for PSRB1259.
+with saved reference tables:
+
+```bash
+python -m pip install -e '.[test]'
+python -m pytest
+```
+
+See [src/ibsen/tests/README.md](src/ibsen/tests/README.md) for table contents, tolerances, and how to
+regenerate the references.
+
+The quick smoke-test script performs the full calculation chain and prints
+results for manual comparison:
 ```bash
 python test_ibsen.py --testall True --ndim -1 > my_test.txt 
 
 ```
-Compare the output with the file `ibsen_test_results_0_5_14.txt`
+Compare the output with the file `ibsen_test_results_0_5_15.txt`
 
 ## Usage
 There is a poor attempt at the graphical interface: run it with
@@ -52,7 +65,7 @@ ibsen
 ```
 You can explore how the IBS, SEDs, and light curves change for different parameters there, as well as display some data together with a model, and perform a simple normalization fitting to SEDs / LCs. 
 
-Mainly, though, the package is meant to be ran as a part of a python script.
+The graphical interface is mainly for amusement; do not use it for scientific results. The package is meant to be ran as a part of a python script.
 
 The package consists of six main classes, you can find their description and usage examples in ``tutorials``. The general idea is this: you define
 an orbit of the binary, then the outflows ("winds") properties, then the intrabinary shock (IBS), then compute the electrons evolution/transport over IBS,
@@ -140,5 +153,3 @@ It'd be a good idea to actually make it so.
 
 This project is licensed under the MIT License. See the LICENSE file for details.
 ---
-
-

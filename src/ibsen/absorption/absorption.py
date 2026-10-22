@@ -1,6 +1,6 @@
 import numpy as np
 from numpy import pi, sin, cos
-from scipy.interpolate import  interp1d
+from scipy.interpolate import interp1d, RegularGridInterpolator
 from scipy.integrate import  dblquad
 from ibsen.get_obs_data import known_names
 import xarray as xr
@@ -18,6 +18,7 @@ K_BOLTZ = float(const.k_B.cgs.value)
 M_E = float(const.m_e.cgs.value)
 E_ELECTRON = 4.803204e-10
 MC2E = M_E * C_LIGHT**2
+MC2_EV = float((const.m_e * const.c**2).to("eV").value)
 sigma_t = 8/3 * pi * (E_ELECTRON**2 / MC2E)**2
 
 DAY = 86400.
@@ -50,9 +51,9 @@ spl_phe_wilm = interp1d(np.log10(_e_wilm), np.log10(_sgm_wilm), 'linear')
 
 
 ### ----------------- For gg-absorption PSR B1259-63 ----------------------- ###
-name_gg_psrb = _tabdata / "gg_abs_psrb.nc"
-ds_gg_psrb = xr.open_dataset(name_gg_psrb)
-ds_gg_psrb = ds_gg_psrb.rename({'__xarray_dataarray_variable__': 'data'})
+# name_gg_psrb = _tabdata / "gg_abs_psrb.nc"
+# ds_gg_psrb = xr.open_dataset(name_gg_psrb)
+# ds_gg_psrb = ds_gg_psrb.rename({'__xarray_dataarray_variable__': 'data'})
 
 def sigma_gg(e_star, e_g, mu):
     """
@@ -129,21 +130,21 @@ def f_helper(mu0, d0):
         1/sqrt_ * (pi/2 - np.arctan(mu0/sqrt_) ) - 1
         )
 
-def phi_helper(eg, R_star, T_star):
+def phi_helper(eg, R_s, T_s):
     """
     Phase-independent helper for a Suchch & van Soelen analytical gg-absorption
     """
-    overall_coef = 64*pi / 3 / (H_PLANCK * C_LIGHT)**3 * sigma_t * R_star**2
-    exp_ = np.exp(-2 * MC2E / eg / K_BOLTZ / T_star)
+    overall_coef = 64*pi / 3 / (H_PLANCK * C_LIGHT)**3 * sigma_t * R_s**2
+    exp_ = np.exp(-2 * MC2E / eg / K_BOLTZ / T_s)
     return (  overall_coef * 
               (MC2E / eg)**3 * 
               exp_ / (1 - exp_)
               )
 
-def gg_analyt(eg, x, y, R_star, T_star, nu_los, incl_los):
+def gg_analyt(eg, x, y, R_s, T_s, nu_los, incl_los):
     """
-    Gamma-gamma absorption coefficient (e^-tau) on the seed photon field  of 
-    the star.
+    Gamma-gamma absorption by Suchch & van Soelen analytical approximation
+    on the seed photon field  of the star.
 
     Parameters
     ----------
@@ -153,9 +154,9 @@ def gg_analyt(eg, x, y, R_star, T_star, nu_los, incl_los):
         X-coordinate in the pulsar orbit [cm] of the VHE photon emission.
     y : float
         Y-coordinate in the pulsar orbit [cm] of the VHE photon emission.
-    R_star : float
+    R_s : float
         Optical star radius [cm].
-    T_star : float
+    T_s : float
         Optical star effective temperature.
     nu_los : float
         The angle in the pulsar plane between the direction from
@@ -170,7 +171,7 @@ def gg_analyt(eg, x, y, R_star, T_star, nu_los, incl_los):
     Returns
     -------
     np.ndarray (Ne, )
-        Coeffifient e^tau <1 for the gamma-gamma absorption.
+        Coeffifient e^-tau <1 for the gamma-gamma absorption.
         
     Notes:
         There is a pseuso-vectorization for the x- and y-coordinates. It works 
@@ -198,12 +199,12 @@ def gg_analyt(eg, x, y, R_star, T_star, nu_los, incl_los):
         n_los = n_from_v(rotated_vector(alpha=nu_los, incl=incl_los))
         mu_init = mydot(n_init, n_los) 
     return np.exp(-2 * pi * 
-                  phi_helper(eg, R_star, T_star) *
+                  phi_helper(eg, R_s, T_s) *
                   f_helper(mu_init, r_init)
                   )
     
 
-def tau_gg_iso_2d(eg, x, y, R_star, T_star, incl_los, nu_los, fast=False, z=0.):
+def tau_gg_iso_2d(eg, x, y, R_s, T_s, incl_los, nu_los, fast=False, z=0.):
     """
     Optical depth due to gamma-gamma pair production for a photon of energy
     eg (in units of electron rest-energy) emitted from the position (x, y, z)
@@ -222,9 +223,9 @@ def tau_gg_iso_2d(eg, x, y, R_star, T_star, incl_los, nu_los, fast=False, z=0.):
         x coordinate of the emission.
     y : float
         y coordinte of emission
-    R_star : float
+    R_s : float
         The radius of a star.
-    T_star : float
+    T_s : float
         The effective temperature of a star.
     incl_los : float
         Inclination of the LoS to the normal to the pulsar plane.
@@ -248,15 +249,66 @@ def tau_gg_iso_2d(eg, x, y, R_star, T_star, incl_los, nu_los, fast=False, z=0.):
     n_init = n_from_v(vec_init)
     n_los = n_from_v(rotated_vector(alpha=nu_los, incl=incl_los))
     mu_init = mydot(n_init, n_los)
-    dist_to_s = lambda l_: np.sqrt(r_init**2 + l_**2 + 2. * r_init * l_ * mu_init) 
-    exp_ = lambda e_: np.exp(-MC2E * e_ / K_BOLTZ / T_star)
+    return tau_gg_mu_d(
+        eg=eg, r_init=r_init, mu_init=mu_init,
+        R_s=R_s, T_s=T_s, fast=fast,
+    )
+
+def tau_gg_mu_d(eg, r_init, mu_init, R_s, T_s, fast=False):
+    """
+    Optical depth due to gamma-gamma pair production for a photon of energy
+    eg (in units of electron rest-energy) emitted from the position at the
+    distance r_init from the star, with an initial cos psi = mu_init.
+
+    Parameters
+    ----------
+    eg : float
+        Photon energy in units of electron rest energy: E_g / (m_e c^2).
+    r_init : float
+        Distance from the emission point to the star
+    mu_init : float
+        Cosine of the initial scattering angle (between the line
+            from the star to the emission Zone and the direction of LoS)
+    R_s : float
+        The radius of a star.
+    T_s : float
+        The effective temperature of a star.
+    fast : bool, optional
+        Whether to calculate fast or properly. Default False
+
+    Returns
+    -------
+    tau_gg : float
+        Optical depth at energy eg.
+
+    """
+
+    r_init = float(r_init)
+    mu_init = float(mu_init)
+    if not np.isfinite(r_init) or r_init <= 0.:
+        raise ValueError("`r_init` must be a positive finite distance.")
+    if not np.isfinite(mu_init) or mu_init < -1. or mu_init > 1.:
+        raise ValueError("`mu_init` must be finite and lie in [-1, 1].")
+    if mu_init == 1.:
+        return 0.0
+    if mu_init == -1.:
+        # The ray passes through the stellar centre. In the point-source
+        # radiation-field approximation the optical depth is singular.
+        return np.inf
+
+    dist_to_s = lambda l_: np.sqrt(r_init**2 + l_**2 + 2. * r_init * l_ * mu_init)
+    exp_ = lambda e_: np.exp(-MC2E * e_ / K_BOLTZ / T_s)
     n_ph_here_reduced = lambda e_: (
          e_**2 *
         exp_(e_) / (1 - exp_(e_)) 
         )
-    mu_imp = lambda l_: np.sqrt(1.0 - r_init**2 / dist_to_s(l_)**2 *
-                                (1. - mu_init**2)
-                                )
+    # Signed cosine between the gamma ray and a stellar photon at distance l.
+    # The former sqrt expression was its absolute value and therefore gave the
+    # wrong collision angle before closest approach when mu_init < 0.
+    mu_imp = lambda l_: np.clip(
+        (l_ + r_init * mu_init) / dist_to_s(l_), -1.0, 1.0
+    )
+    # mu_imp = lambda l_: np.sqrt(1. - r_init**2 / dist_to_s(l_)**2 * (1. - mu_init**2) )
                                     
     sigma_here = lambda e_, l_: (
         sigma_gg(e_star = e_ , e_g = eg, mu = mu_imp(l_))
@@ -266,11 +318,10 @@ def tau_gg_iso_2d(eg, x, y, R_star, T_star, incl_los, nu_los, fast=False, z=0.):
     under_int = lambda e_, l_: ( n_ph_here_reduced(e_) *
                                      sigma_here(e_, l_) *
                                      (1 - mu_imp(l_)) * 
-                                     R_star**2 / dist_to_s(l_)**2
+                                     R_s**2 / dist_to_s(l_)**2
                                      )
 
     low_inner = lambda l_: 2 / eg / (1 - mu_imp(l_)) #* (1 + 1e-6)
-    # hi_inner = lambda l_: low_inner(l_) * 1e3
     res = 0.0
     ### improving integration by refining the grid over e and l
     if not fast:
@@ -288,10 +339,241 @@ def tau_gg_iso_2d(eg, x, y, R_star, T_star, incl_los, nu_los, fast=False, z=0.):
          low_inner, lambda l_: low_inner(l_)*1e3, epsrel = 1e-3)[0] * overall_coef
     return res
 
+
+def _gg_table_path(filename):
+    """Resolve a gamma-gamma table basename or path."""
+    path = Path(filename)
+    if path.parent == Path('.') and path.name in known_names:
+        path = Path(f'gg_abs_{path.name}_d_mu.nc')
+    if path.suffix != '.nc':
+        path = path.with_suffix('.nc')
+    return path if path.is_absolute() else _tabdata / path
+
+
+def tabulate_absgg_d_mu(nr, nmu, ne, T_s, R_s, rmin=1., rmax=1000.,
+                        emin=1e9, emax=1e14, to_save=True,
+                        filename='gg_abs_d_mu', to_return=False,
+                        n_cores=None, fast=False):
+    """Tabulate gamma-gamma optical depth on ``(log10(r), mu, log10(E))``.
+
+    ``rmin`` and ``rmax`` are in stellar radii; the saved ``logr`` coordinate
+    contains the physical distance in cm. ``mu`` is
+    ``dot(r_init / |r_init|, n_los)``. The table therefore depends on the
+    stellar properties but not on an orbit or line-of-sight orientation.
+
+    When ``to_return`` is true, return ``(tau, r, mu, E)`` with shapes
+    ``(nr, nmu, ne)``, ``(nr,)``, ``(nmu,)``, and ``(ne,)`` respectively.
+    """
+    if min(nr, nmu, ne) < 2:
+        raise ValueError("`nr`, `nmu`, and `ne` must each be at least 2.")
+
+    r_inits = np.geomspace(rmin * R_s, rmax * R_s, nr)
+    mu_inits = np.linspace(-1., 1., nmu)
+    es = np.geomspace(emin, emax, ne)
+    res = np.zeros((r_inits.size, mu_inits.size, es.size))
+
+    if n_cores == 'all':
+        n_cores_use = min(multiprocessing.cpu_count(), 20)
+    elif isinstance(n_cores, int) and not isinstance(n_cores, bool) and n_cores > 0:
+        n_cores_use = min(n_cores, 20)
+    elif n_cores is None:
+        n_cores_use = None
+    else:
+        raise ValueError("`n_cores` must be None, a positive integer, or 'all'.")
+
+    for ir, r_init in enumerate(r_inits):
+        for imu, mu_init in enumerate(mu_inits):
+            def to_parall(ie):
+                return tau_gg_mu_d(eg=es[ie] / MC2_EV,
+                                   r_init=r_init,
+                                   mu_init=mu_init,
+                                   R_s=R_s,
+                                   T_s=T_s,
+                                   fast=fast)
+            if n_cores_use is None:
+                res[ir, imu, :] = [to_parall(ie) for ie in range(es.size)]
+            else:
+                res[ir, imu, :] = Parallel(n_jobs=n_cores_use)(
+                    delayed(to_parall)(ie) for ie in range(es.size)
+                )
+
+    if to_save:
+        da = xr.DataArray(
+            res.astype("float32"),
+            coords=[
+                ('logr', np.log10(r_inits)),
+                ('mu', mu_inits),
+                ('loge', np.log10(es)),
+            ],
+            name="data",
+            attrs={
+                'coordinate_system': 'r_init_mu_init',
+                'r_unit': 'cm',
+                'energy_unit': 'eV',
+                'R_s_cm': float(R_s),
+                'T_s_K': float(T_s),
+                'mu_definition': 'dot(r_hat, n_los)',
+                'singular_mu_minus_one': 1,
+            },
+        )
+        path_here = _tabdata / str(filename + '.nc')
+        da.to_netcdf(path_here, encoding={'data': {'dtype': 'float32'}})
+
+    if to_return:
+        return res, r_inits, mu_inits, es
+
+
+_gg_d_mu_interpolator_cache = {}
+
+
+def _load_gg_d_mu_interpolator(filename, method):
+    """
+    Util for loading tabulated gg-opacities and creating an interpolator. 
+    """
+    path = _gg_table_path(filename)
+    cache_key = (str(path.resolve()), path.stat().st_mtime_ns, method)
+    cached = _gg_d_mu_interpolator_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    with xr.open_dataset(path) as ds:
+        if 'data' in ds.data_vars:
+            da = ds['data']
+        elif len(ds.data_vars) == 1:
+            da = next(iter(ds.data_vars.values()))
+        else:
+            raise ValueError(f"Cannot identify the opacity data variable in {path}.")
+        required = ('logr', 'mu', 'loge')
+        if not all(dim in da.dims for dim in required):
+            raise ValueError(
+                f"{path} is not an (r_init, mu_init, E) table; expected dimensions {required}."
+            )
+        da = da.transpose(*required).load()
+        axes = tuple(np.asarray(da.coords[name].values, dtype=float) for name in required)
+        values = np.asarray(da.values, dtype=float)
+        attrs = dict(da.attrs)
+
+    # tau(mu=-1) is singular in the point-source approximation. It is handled
+    # explicitly in gg_tab_d_mu; use the neighbouring finite slice solely to
+    # keep the regular-grid interpolator well defined near that boundary.
+    singular_mu_minus_one = bool(attrs.get('singular_mu_minus_one', False))
+    if singular_mu_minus_one and axes[1][0] == -1.:
+        values = values.copy()
+        values[:, 0, :] = values[:, 1, :]
+    if not np.all(np.isfinite(values)):
+        raise ValueError(f"The interpolation data in {path} contain non-finite values.")
+
+    interpolator = RegularGridInterpolator(
+        axes, values, method=method, bounds_error=False, fill_value=np.nan,
+    )
+    result = interpolator, axes, singular_mu_minus_one
+    _gg_d_mu_interpolator_cache.clear()
+    _gg_d_mu_interpolator_cache[cache_key] = result
+    return result
+
+
+def gg_tab_d_mu(E, vec_init, n_los, filename='gg_abs_d_mu',
+                what_return='abs', method='linear'):
+    """Interpolate a gamma-gamma table using arbitrary 3-D emission vectors.
+
+    Parameters
+    ----------
+    E : float or array_like, shape (Ne,)
+        Photon energies in eV. A scalar is treated as a one-element energy axis.
+    vec_init : array_like, shape (..., 3)
+        Emission positions relative to the star, in cm.
+    n_los : array_like, shape (3,)
+        Direction from the source toward the observer; it need not be normalized.
+    filename : str or path-like, optional
+        Table written by :func:`tabulate_absgg_d_mu`.
+    what_return : {'abs', 'tau'}, optional
+        Return transmission ``exp(-tau)`` or optical depth tau.
+    method : str, optional
+        Method accepted by :class:`scipy.interpolate.RegularGridInterpolator`.
+
+    Returns
+    -------
+    ndarray, shape (..., Ne)
+        The spatial shape of ``vec_init`` followed by an energy axis. Optical
+        depth is zero outside the tabulated energy interval and for radii above
+        the largest tabulated radius.
+    """
+    if what_return not in ('abs', 'tau'):
+        raise ValueError("`what_return` must be either 'abs' or 'tau'.")
+
+    energies = np.asarray(E, dtype=float)
+    if energies.ndim > 1:
+        raise ValueError("`E` must be a scalar or a one-dimensional array.")
+    energies = np.atleast_1d(energies)
+
+    vectors = np.asarray(vec_init, dtype=float)
+    if vectors.ndim == 0 or vectors.shape[-1] != 3:
+        raise ValueError("`vec_init` must have shape (3,) or (..., 3).")
+
+    spatial_shape = vectors.shape[:-1]
+    flat_vectors = vectors.reshape(-1, 3)
+    radii = absv(flat_vectors)
+    if np.any(radii == 0.):
+        raise ValueError("Emission positions at the stellar centre are undefined.")
+
+    los = np.asarray(n_los, dtype=float)
+    los = n_from_v(los)
+    mu = np.clip(mydot(n_from_v(flat_vectors), los), 
+                 -1.0, 1.0)
+
+    interpolator, axes, singular_mu_minus_one = _load_gg_d_mu_interpolator(
+        filename, method
+    )
+    logr_axis, _, loge_axis = axes
+    r_min, r_max = 10.**logr_axis[[0, -1]]
+    e_min, e_max = 10.**loge_axis[[0, -1]]
+    radius_at_min = np.isclose(radii, r_min, rtol=1e-6, atol=0.)
+    if np.any((radii < r_min) & ~radius_at_min):
+        raise ValueError(
+            f"An emission radius is below the table minimum ({r_min:.6g} cm)."
+        )
+
+    tau = np.zeros((radii.size, energies.size), dtype=float)
+    position_indices = np.flatnonzero(
+        (radii <= r_max) | np.isclose(radii, r_max, rtol=1e-6, atol=0.)
+    )
+    energy_indices = np.flatnonzero(
+        ((energies >= e_min) | np.isclose(energies, e_min, rtol=1e-6, atol=0.))
+        & ((energies <= e_max) | np.isclose(energies, e_max, rtol=1e-6, atol=0.))
+    )
+    if position_indices.size and energy_indices.size:
+        log_r = np.clip(np.log10(radii[position_indices]), logr_axis[0], logr_axis[-1])
+        mu_query = mu[position_indices]
+        log_e = np.clip(np.log10(energies[energy_indices]), loge_axis[0], loge_axis[-1])
+        points = np.column_stack((
+            np.repeat(log_r, log_e.size),
+            np.repeat(mu_query, log_e.size),
+            np.tile(log_e, log_r.size),
+        ))
+        values = interpolator(points).reshape(log_r.size, log_e.size)
+        if np.any(np.isnan(values)):
+            raise ValueError("Interpolation unexpectedly produced NaN inside the table bounds.")
+        tau[np.ix_(position_indices, energy_indices)] = np.maximum(values, 0.)
+
+        if singular_mu_minus_one:
+            behind = np.isclose(mu_query, -1., rtol=0., atol=1e-14)
+            if np.any(behind):
+                tau[np.ix_(position_indices[behind], energy_indices)] = np.inf
+
+    result = tau if what_return == 'tau' else np.exp(-tau)
+    return result.reshape(spatial_shape + (energies.size,))
+
+"""
+Some legacy functions for tabulating and accessing data on the orbital 
+plane.
+"""
+
 def tabulate_absgg(orb, nrho, nphi, ne, T_s, R_s, rhomin=0.1, rhomax=5.5, emin=1e9,
                    emax=1e14, to_save=True, filename='gg_abs', to_return=False,
                    n_cores=None, fast=False):
     """
+    LEGACY FUNCTION. DO NOT USE IF YOU DON'T KNOW WHAT YOU'RE DOING.
+
     Precompute and tabulate gamma–gamma absorption optical depths on a (log10 rho, phi, log10 E) grid,
     and optionally save the 3D table to a NetCDF file via xarray.
     
@@ -370,7 +652,7 @@ def tabulate_absgg(orb, nrho, nphi, ne, T_s, R_s, rhomin=0.1, rhomax=5.5, emin=1
     """
     _eps = 1e-4
     rhos = np.geomspace(rhomin, rhomax, nrho)
-    phis = np.linspace(0, 2*pi * (1.-_eps), nphi, endpoint=True) # !!!
+    phis = np.linspace(0, 2*pi * (1.-_eps), nphi, endpoint=True) 
     r_reals = orb.r(t=orb.t_from_true_an(nu=phis)) # true orb separations at nu_true=phis
     es = np.geomspace(emin, emax, ne)
     res = np.zeros((rhos.size, phis.size, es.size))
@@ -384,8 +666,8 @@ def tabulate_absgg(orb, nrho, nphi, ne, T_s, R_s, rhomin=0.1, rhomax=5.5, emin=1
             yy[ir, iphi] = y
             
             def to_parall(ie):
-                return tau_gg_iso_2d(eg = es[ie]/5.11e5, x=x, y=y, R_star=R_s,
-                            T_star=T_s, incl_los=orb.incl_los,
+                return tau_gg_iso_2d(eg = es[ie]/5.11e5, x=x, y=y, R_s=R_s,
+                            T_s=T_s, incl_los=orb.incl_los,
                             nu_los=orb.nu_los, fast=fast)
             if n_cores is None:
                 res[ir, iphi, :] = np.array([
@@ -424,6 +706,8 @@ def tabulate_absgg(orb, nrho, nphi, ne, T_s, R_s, rhomin=0.1, rhomax=5.5, emin=1
 
 def gg_tab(E, x, y, orb, filename='psrb', what_return='abs'):
     """
+    LEGACY FUNCTION. DO NOT USE IF YOU DON'T KNOW WHAT YOU'RE DOING.
+    
     Interpolate gamma–gamma absorption from a precomputed (log10 rho, phi, log10 E) table
     at user-provided energy(ies) and sky position(s).
     

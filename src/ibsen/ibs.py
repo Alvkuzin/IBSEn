@@ -8,7 +8,7 @@ from ibsen.utils import plot_with_gradient, \
  lor_trans_ug_iso, lor_trans_b_iso, lor_trans_Teff_iso, rotated_vector, absv, \
      plot_surface_quads, vector_angle, n_from_v, vec_between, trapz_loglog, doppler_delta,\
          project_point_for_gg
-from ibsen.absorption.absorption import gg_analyt, gg_tab
+from ibsen.absorption.absorption import gg_analyt, gg_tab_d_mu
 from ibsen.get_obs_data import known_names
 
 from astropy import constants as const
@@ -400,14 +400,18 @@ class IBS: #!!!
         if analyt:
             gg_res = np.array([gg_analyt(eg = e_phot / 5.11e5,
                          x = self.x[i]-self.x_s, y = self.y[i]-self.y_s,
-                         R_star=self.winds.star.R_s, T_star = self.winds.star.T_s,
+                         R_s=self.winds.star.R_s, T_s = self.winds.star.T_s,
                          nu_los=self.winds.orbit.nu_los,
                          incl_los=self.winds.orbit.incl_los)
                            for i in range(self.x.size)])
         else:
-            gg_res = gg_tab(E=e_phot, x=self.x-self.x_s[None], y=self.y-self.y_s[None],
-                            orb=self.winds.orbit,
-                            filename=filename, what_return=what_return)
+            # gg_res = gg_tab(E=e_phot, x=self.x-self.x_s[None], y=self.y-self.y_s[None],
+            #                 orb=self.winds.orbit,
+            #                 filename=filename, what_return=what_return)
+            gg_res = gg_tab_d_mu(E = e_phot, vec_init=self.vec_sIBS,
+                                 n_los=self.winds.orbit.unit_los,
+                                 filename=filename, what_return=what_return)
+            
         return gg_res
     
     
@@ -445,14 +449,21 @@ class IBS: #!!!
         if analyt:
             gg_res = np.array([gg_analyt(eg = e_phot / 5.11e5,
                          x = self.x_mid[i]-self.x_s, y = self.y_mid[i]-self.y_s,
-                         R_star=self.winds.star.R_s, T_star = self.winds.star.T_s,
+                         R_s=self.winds.star.R_s, T_s = self.winds.star.T_s,
                          nu_los=self.winds.orbit.nu_los,
                          incl_los=self.winds.orbit.incl_los)
                            for i in range(self.x_mid.size)])
         else:
-            gg_res = gg_tab(E=e_phot, x=self.x_mid-self.x_s[None], y=self.y_mid-self.y_s[None],
-                            orb=self.winds.orbit,
-                            filename=filename, what_return=what_return)
+            # gg_res = gg_tab(E=e_phot, x=self.x_mid-self.x_s[None], y=self.y_mid-self.y_s[None],
+            #                 orb=self.winds.orbit,
+            #                 filename=filename, what_return=what_return)
+            # gg_res = gg_tab(E=e_phot, x=self.x_mid-self.x_s[None], y=self.y_mid-self.y_s[None],
+            #                 orb=self.winds.orbit,
+            #                 filename=filename, what_return=what_return)
+            gg_res = gg_tab_d_mu(E = e_phot, vec_init=self.vec_sIBS_mid,
+                                 n_los=self.winds.orbit.unit_los,
+                                 filename=filename, what_return=what_return)
+            
         return gg_res
     
     def gg_abs_apex(self, e_phot, analyt=False, what_return='abs'):
@@ -488,15 +499,30 @@ class IBS: #!!!
             gg_res = gg_analyt(eg = e_phot / 5.11e5,
                          x = self.x_apex_coord - self.x_s,
                          y = self.y_apex_coord - self.y_s,
-                         R_star=self.winds.star.R_s, T_star = self.winds.star.T_s,
+                         R_s=self.winds.star.R_s, T_s = self.winds.star.T_s,
                          nu_los=self.winds.orbit.nu_los,
                          incl_los=self.winds.orbit.incl_los)
         else:
-            gg_res = gg_tab(E=e_phot,
-                            x=self.x_apex_coord - self.x_s,
-                            y=self.y_apex_coord - self.y_s,
-                            orb=self.winds.orbit,
-                            filename=filename, what_return=what_return)
+            # gg_res = gg_tab(E=e_phot,
+            #                 x=self.x_apex_coord - self.x_s,
+            #                 y=self.y_apex_coord - self.y_s,
+            #                 orb=self.winds.orbit,
+            #                 filename=filename, what_return=what_return)
+            # gg_res = gg_tab_d_mu(E = e_phot, vec_init=self.vec_sIBS,
+            #                      n_los=self.winds.orbit.unit_los,
+            #                      filename=filename, what_return=what_return)
+            
+            apex_vec = np.array([self.x_apex_coord - self.x_s,
+                                 self.y_apex_coord - self.y_s,
+                                 0.])
+            gg_res = gg_tab_d_mu(E=e_phot, 
+                            # x=self.x_apex_coord - self.vec_s[0],
+                            # y=self.y_apex_coord - self.vec_s[1],
+                            # orb=self.winds.orbit,
+                            vec_init=apex_vec,
+                            filename=filename, 
+                            n_los=self.winds.orbit.unit_los,
+                            what_return=what_return)
         return gg_res
     
     
@@ -895,7 +921,11 @@ class IBS3D: #!!!
             self.r_pe = self.r_sp - self.r_se
             self.symm_ax = n_from_v(self.winds.orbit.vector_sp(self.t_forbeta))
         else:
-            vec_pe_3d = self.winds.vec_pe_3d(self.t_forbeta) 
+            ### !!! A BUG! orientation=self.orientation should be substituted
+            ### For now, I left it as it is. But it should be investigated!
+            vec_pe_3d = self.winds.vec_pe_3d(self.t_forbeta,
+                                             # orientation=self.orientation,
+                                             ) 
             self.r_pe = absv(vec_pe_3d)
             self.r_se = absv(vec_pe_3d + vec_sp)
             self.symm_ax = -n_from_v(vec_pe_3d)
@@ -978,6 +1008,8 @@ class IBS3D: #!!!
         vec_apex = self.winds.orbit.vector_p(self.t_forbeta) + (-self.symm_ax) * self.r_pe 
         self.x_apex_coord = vec_apex[0]
         self.y_apex_coord = vec_apex[1]
+        self.z_apex_coord = vec_apex[2]
+        
         vec_s_apex = (-r_s_vec) + vec_apex
 
         self.scatter_angle_apex = vector_angle(vec_s_apex, self.unit_los)
@@ -1093,18 +1125,21 @@ class IBS3D: #!!!
         if analyt:
             gg_res_1horn = np.array([gg_analyt(eg = e_phot / 5.11e5,
                          x = _x, y = _y,
-                         R_star=self.winds.star.R_s, T_star = self.winds.star.T_s,
+                         R_s=self.winds.star.R_s, T_s = self.winds.star.T_s,
                          nu_los=self.winds.orbit.nu_los,
                          incl_los=self.winds.orbit.incl_los)
                            for _x, _y in zip(self.vec_sIBS[0, :, 0], self.vec_sIBS[0, :, 1])])
             gg_res = np.array([gg_res_1horn for _i in range(self.n_phi)])
         else:
-            proj_vecs = project_point_for_gg(self.vec_sIBS, self.unit_los)
-            xproj, yproj = np.average(proj_vecs[..., 0], axis=0), np.average(proj_vecs[..., 1], axis=0)
-            gg_res_1horn = gg_tab(E=e_phot, x=xproj, y=yproj, 
-                            orb=self.winds.orbit,
-                            filename=filename, what_return=what_return)
-            gg_res = np.array([gg_res_1horn for _i in range(self.n_phi)])
+            # proj_vecs = project_point_for_gg(self.vec_sIBS, self.unit_los)
+            # xproj, yproj = np.average(proj_vecs[..., 0], axis=0), np.average(proj_vecs[..., 1], axis=0)
+            # gg_res_1horn = gg_tab(E=e_phot, x=xproj, y=yproj, 
+                            # orb=self.winds.orbit,
+                            # filename=filename, what_return=what_return)
+            # gg_res = np.array([gg_res_1horn for _i in range(self.n_phi)])
+            gg_res = gg_tab_d_mu(E = e_phot, vec_init=self.vec_sIBS,
+                                 n_los=self.winds.orbit.unit_los,
+                                 filename=filename, what_return=what_return)
         
         return gg_res
     
@@ -1136,18 +1171,21 @@ class IBS3D: #!!!
         if analyt:
             gg_res_1horn = np.array([gg_analyt(eg = e_phot / 5.11e5,
                          x = _x, y = _y,
-                         R_star=self.winds.star.R_s, T_star = self.winds.star.T_s,
+                         R_s=self.winds.star.R_s, T_s = self.winds.star.T_s,
                          nu_los=self.winds.orbit.nu_los,
                          incl_los=self.winds.orbit.incl_los)
                            for _x, _y in zip(self.vec_sIBS_mid[0, :, 0], self.vec_sIBS_mid[0, :, 1])])
             gg_res = np.array([gg_res_1horn for _i in range(self.n_phi)])
         else:
-            proj_vecs_mid = project_point_for_gg(self.vec_sIBS_mid, self.unit_los)
-            xproj, yproj = np.average(proj_vecs_mid[..., 0], axis=0), np.average(proj_vecs_mid[..., 1], axis=0)
-            gg_res_1horn = gg_tab(E=e_phot, x=xproj, y=yproj, 
-                            orb=self.winds.orbit,
-                            filename=filename, what_return=what_return)
-            gg_res = np.array([gg_res_1horn for _i in range(self.n_phi)])
+            # proj_vecs_mid = project_point_for_gg(self.vec_sIBS_mid, self.unit_los)
+            # xproj, yproj = np.average(proj_vecs_mid[..., 0], axis=0), np.average(proj_vecs_mid[..., 1], axis=0)
+            # gg_res_1horn = gg_tab(E=e_phot, x=xproj, y=yproj, 
+            #                 orb=self.winds.orbit,
+            #                 filename=filename, what_return=what_return)
+            # gg_res = np.array([gg_res_1horn for _i in range(self.n_phi)])
+            gg_res = gg_tab_d_mu(E = e_phot, vec_init=self.vec_sIBS_mid,
+                                 n_los=self.winds.orbit.unit_los,
+                                 filename=filename, what_return=what_return)
         return gg_res
     
     def gg_abs_apex(self, e_phot, analyt=False, what_return='abs'):
@@ -1183,17 +1221,29 @@ class IBS3D: #!!!
             gg_res = gg_analyt(eg = e_phot / 5.11e5,
                          x = self.x_apex_coord - self.vec_s[0],
                          y = self.y_apex_coord - self.vec_s[1],
-                         R_star=self.winds.star.R_s,
-                         T_star = self.winds.star.T_s,
+                         R_s=self.winds.star.R_s,
+                         T_s = self.winds.star.T_s,
                          nu_los=self.winds.orbit.nu_los,
                          incl_los=self.winds.orbit.incl_los)
         else:
-            gg_res = gg_tab(E=e_phot, 
-                            x=self.x_apex_coord - self.vec_s[0],
-                            y=self.y_apex_coord - self.vec_s[1],
-                            orb=self.winds.orbit,
+            # gg_res = gg_tab(E=e_phot, 
+                            # x=self.x_apex_coord - self.vec_s[0],
+                            # y=self.y_apex_coord - self.vec_s[1],
+                            # orb=self.winds.orbit,
+                            # filename=filename, 
+                            # what_return=what_return)
+            apex_vec = np.array([self.x_apex_coord - self.vec_s[0],
+                                 self.y_apex_coord - self.vec_s[1],
+                                 self.z_apex_coord - self.vec_s[2]])
+            gg_res = gg_tab_d_mu(E=e_phot, 
+                            # x=self.x_apex_coord - self.vec_s[0],
+                            # y=self.y_apex_coord - self.vec_s[1],
+                            # orb=self.winds.orbit,
+                            vec_init=apex_vec,
                             filename=filename, 
+                            n_los=self.winds.orbit.unit_los,
                             what_return=what_return)
+            
         return gg_res
     
     @property
@@ -1453,7 +1503,7 @@ class IBS3D: #!!!
              edgecolor='k', linewidth=0.1,
              alpha=0.5, colorbar=True,
              showtime=None, E_for_gg=1e12,
-             scale='linear',
+             scale='linear', bar_label=None,
              show_star=False):
         import matplotlib.colors as mcolors
         import matplotlib.pyplot as plt
@@ -1462,34 +1512,36 @@ class IBS3D: #!!!
         if ax is None:
             fig = plt.figure()
             ax = fig.add_subplot(111, projection="3d")   
+        
         if ibs_color == 'doppler':
             color_param = self.dopl
-            bar_label = r'doppler factor $\delta$'
+            bar_label_ = r'doppler factor $\delta$'
         elif ibs_color in ('scattering', 'scatter'):
             color_param = self.scattering_angle
-            bar_label = r'scattering angle / $\pi$'
+            bar_label_ = r'scattering angle / $\pi$'
         elif ibs_color == 'scattering_comoving':
             color_param = self.scattering_angle_comov
-            bar_label = r'comoving scattering angle / $\pi$'
+            bar_label_ = r'comoving scattering angle / $\pi$'
         elif ibs_color == 'gg_abs':
             color_param = self.gg_abs(e_phot=E_for_gg)
-            bar_label = r'$e^{-\tau} \gamma-\gamma $'
+            bar_label_ = r'$e^{-\tau} \gamma-\gamma $'
         elif ibs_color == 'gg_tau':
             color_param = self.gg_abs(e_phot=E_for_gg,
                                      what_return='tau')
-            bar_label = r'$\tau \gamma-\gamma $'
+            bar_label_ = r'$\tau \gamma-\gamma $'
         elif hasattr(self, ibs_color):
             color_param = getattr(self, ibs_color)
-            bar_label = ibs_color
+            bar_label_ = ibs_color
         elif mcolors.is_color_like(ibs_color):
             color_param = ibs_color
-            bar_label = None
+            bar_label_ = None
             colorbar = False
         else:
             raise ValueError(f"""ibs_color={ibs_color} is invalid; it should be
                              \neither one of the IBS3D class attributes, or a 
                              \nvalid matplotlib color.""")
-        
+        if bar_label is not None:
+            bar_label_ = bar_label
         if scale in ('lin', 'linear'):
             pass
         elif scale == 'log':
@@ -1537,7 +1589,7 @@ class IBS3D: #!!!
         
         plot_surface_quads(ax=ax, coords=self.r_vec, param=color_param, linewidth=linewidth,
                            edgecolor=edgecolor, colorbar=colorbar, phi_close=True,
-                           cbar_label=bar_label, alpha=alpha,
+                           cbar_label=bar_label_, alpha=alpha,
                            )
         # ax.scatter(xstar_, ystar_, zstar_, color='b')
         # ax.set_xlim(-2, 2)

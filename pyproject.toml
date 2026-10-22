@@ -1,6 +1,6 @@
 [project]
 name = "ibsen"
-version = "0.5.14.2"
+version = "0.5.15"
 description = "IBS emission of a pulsar+OB-star binary"
 authors = [{name = "Lesha"}]
 requires-python = ">=3.9"
@@ -16,11 +16,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+test = ["pytest>=7,<9"]
 gui = [
     "PySide6",
     "imageio",
     "imageio-ffmpeg",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["src/ibsen/tests"]
+pythonpath = ["src"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -41,5 +46,4 @@ deconstruct-ibsen = "ibsen.gui.dec:main"
 "ibsen" = ["tab_data/*.nc",
            "absorption/absorp_tab/*.txt",
            "absorption/absorp_tab/*.nc"]
-
-
+"ibsen.tests" = ["reference/*/*.txt", "README.md"]

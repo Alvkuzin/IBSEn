@@ -20,7 +20,7 @@ Ppsrb=1236.72453
 c_light = 3e10
 
 
-Norm0 = 3e37
+Norm0 = 8e35
 SMAX = 1.0
 # ALPHA_DISK = 14.
 
@@ -58,7 +58,6 @@ default_params = { "sys_name": "psrb",
               "lorentz_boost": True,
               "mechanisms": ['s', 'i'], 
               "method" : "simple",
-              # 'method': 'apex', # !!!
               "abs_gg": True,
               "ic_ani": True, "bands": [[1e3, 1e4], [4e11, 1e13]], 
               "to_parall": True, "n_cores": 10,

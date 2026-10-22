@@ -101,11 +101,11 @@ def ic_loss(Ee, T_s, R_s, dist):
         IC losses for a single electron dE/dt [eV/s].
 
     """
-    kappa = (R_s / 2 / dist)**2
+    kappa = (R_s / 2. / dist)**2 # approximation
     T_me = (K_BOLTZ * T_s / MC2E)
     Ee_me = Ee  / ERG_TO_EV / MC2E
-    coef = 2 * R_ELECTRON**2 * M_E**3 * C_LIGHT**4 * kappa * T_me**2 / pi / HBAR**3 # 1/s
-    Edot = coef * MC2E * ERG_TO_EV * Giso_full(4 * T_me * Ee_me) #[eV/s]
+    coef = 2. * R_ELECTRON**2 * M_E**3 * C_LIGHT**4 * kappa * T_me**2 / pi / HBAR**3 # 1/s
+    Edot = coef * MC2E * ERG_TO_EV * Giso_full(4. * T_me * Ee_me) #[eV/s]
     return -Edot #[eV/s]
 
     
@@ -849,6 +849,9 @@ class ElectronsOnIBS: #!!!
         If True, inject only for |θ| < ``where_cut_theta``. Default False.
     where_cut_theta : float, optional
         Angular cut (radians) if ``to_cut_theta`` is True. Default π/2.
+    use_mimic_eta : bool, optional
+        Whether to use the specially defined eta_a(s) when cooling='stat_mimic'.
+        Default False
 
     Attributes
     ----------
@@ -1591,6 +1594,7 @@ class ElectronsOnIBS: #!!!
         self.dNe_ds_mid = trapz_loglog(self.dNe_deds_mid, self.e_vals, axis=-1)
         self.dNe_de_mid = np.abs(self.dNe_deds_mid * self.ibs.ds[..., None])
         self.e2dNe_de_mid =  np.abs(self.dNe_de_mid) * (self.e_vals**2)[..., :]
+        self.dNe_de_tot = np.sum(self.dNe_de_mid, axis=tuple(range(self.dNe_de_mid.ndim-1)))
         self.n_i_mid = trapz_loglog(np.abs(self.dNe_de_mid),
                                         self.e_vals, axis=-1) 
         self.ntot = np.sum(self.n_i_mid) 
@@ -1634,6 +1638,7 @@ class ElectronsOnIBS: #!!!
         
         self.n_i_mid_comov = trapz_loglog(np.abs(self.dNe_de_mid_comov),
                                         e_comov, axis=-1) 
+        self.dNe_de_tot_comov = np.sum(self.dNe_de_mid_comov, axis=tuple(range(self.dNe_de_mid_comov.ndim-1)))
         self.ntot_comov = np.sum(self.n_i_mid_comov)
         
     def calculate(self, to_return=False, require_lorentz=True):
@@ -1733,7 +1738,7 @@ class ElectronsOnIBS: #!!!
         else:
             raise NotImplementedError("'low_mid'  is not defined for a 3D IBS.")
             
-    def dne_de_tot(self, comov=True, return_e_el=True):
+    def dne_de_tot_calculate(self, comov=True, return_e_el=True):
         """
         The total dNe/de, summed over the IBS. 
 

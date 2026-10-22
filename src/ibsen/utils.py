@@ -1110,14 +1110,14 @@ def lor_trans_ug_iso(ug_iso, gamma): # Relativistic jets... eq. (2.57)
         co-moving frame.
 
     """
-    return ug_iso * gamma**2 * (3. + beta_from_g(gamma)) / 3.
+    return ug_iso * gamma**2 * (3. + beta_from_g(gamma)**2) / 3.
 
 def lor_trans_Teff_iso(Teff_iso, gamma): # assuming u ~ T^4
     """
     Transforms an effective temperature of a photon field into the co-moving 
     system. Fully analogous to lor_trans_ug_iso. Assumes T \propto u^{1/4}
     """
-    return Teff_iso * (gamma**2 * (3. + beta_from_g(gamma)) / 3.)**0.25
+    return Teff_iso * (gamma**2 * (3. + beta_from_g(gamma)**2) / 3.)**0.25
 
 
 def lor_trans_vec(vec_n, vec_beta, eps=1e-5):
