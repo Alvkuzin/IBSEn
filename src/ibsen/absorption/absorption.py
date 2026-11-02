@@ -48,13 +48,6 @@ per_wilm = np.argsort(_e_wilm)
 _e_wilm, _sgm_wilm = _e_wilm[per_wilm], _sgm_wilm[per_wilm]
 spl_phe_wilm = interp1d(np.log10(_e_wilm), np.log10(_sgm_wilm), 'linear')
 
-
-
-### ----------------- For gg-absorption PSR B1259-63 ----------------------- ###
-# name_gg_psrb = _tabdata / "gg_abs_psrb.nc"
-# ds_gg_psrb = xr.open_dataset(name_gg_psrb)
-# ds_gg_psrb = ds_gg_psrb.rename({'__xarray_dataarray_variable__': 'data'})
-
 def sigma_gg(e_star, e_g, mu):
     """
     Cross-section of anisotropic gamma gamma --> e+ e- conversion.
@@ -78,9 +71,8 @@ def sigma_gg(e_star, e_g, mu):
         gamma-gamma cross-section [cm^2].
 
     """
-    b =  (1 - 2 / e_g / e_star / (1 - mu))**0.5
-    return 3/16 * (1 - b**2) * ( (3 - b**4) * np.log( (1 + b) / (1 - b) ) - 2 * b * (2 - b**2) ) * sigma_t
-
+    b =  np.sqrt(1. - 2. / e_g / e_star / (1. - mu))
+    return 0.1875 * (1. - b**2) * ( (3. - b**4) * np.log( (1. + b) / (1. - b) ) - 2. * b * (2. - b**2) ) * sigma_t
 
 
 def abs_photoel(E, Nh, abund='wilm'): 
@@ -338,7 +330,6 @@ def tau_gg_mu_d(eg, r_init, mu_init, R_s, T_s, fast=False):
         res = dblquad( under_int, 0., 100. * r_init,
          low_inner, lambda l_: low_inner(l_)*1e3, epsrel = 1e-3)[0] * overall_coef
     return res
-
 
 def _gg_table_path(filename):
     """Resolve a gamma-gamma table basename or path."""

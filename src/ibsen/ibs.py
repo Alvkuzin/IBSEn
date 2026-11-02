@@ -921,10 +921,8 @@ class IBS3D: #!!!
             self.r_pe = self.r_sp - self.r_se
             self.symm_ax = n_from_v(self.winds.orbit.vector_sp(self.t_forbeta))
         else:
-            ### !!! A BUG! orientation=self.orientation should be substituted
-            ### For now, I left it as it is. But it should be investigated!
             vec_pe_3d = self.winds.vec_pe_3d(self.t_forbeta,
-                                             # orientation=self.orientation,
+                                             orientation=self.orientation,
                                              ) 
             self.r_pe = absv(vec_pe_3d)
             self.r_se = absv(vec_pe_3d + vec_sp)

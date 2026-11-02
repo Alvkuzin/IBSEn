@@ -4,7 +4,7 @@ from ibsen.ibs_norm import IBS_norm, IBS_norm3D
 from ibsen.ibs import IBS, IBS3D
 from ibsen.el_ev import ElectronsOnIBS
 from ibsen.spec import SpectrumIBS
-from ibsen.lc import LightCurve
+from ibsen.lc import ALLOWED_FOR_MULTIPLICATION, LightCurve
 
 __all__ = ["Orbit",
            "Winds", "Pulsar", "OpticalStar", 
@@ -12,4 +12,4 @@ __all__ = ["Orbit",
            "IBS", "IBS3D",
            "ElectronsOnIBS",
            "SpectrumIBS", 
-           "LightCurve"]
+           "LightCurve", "ALLOWED_FOR_MULTIPLICATION"]

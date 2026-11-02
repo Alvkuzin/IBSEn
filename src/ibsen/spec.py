@@ -838,8 +838,13 @@ class SpectrumIBS: #!!!
         else:
             emiss_function = InverseCompton
             _e_soft_avg = np.average( (self.temp_eff * K_BOLTZ * u.erg).to('eV').value)
-            e_el_ic_low, e_el_ic_high = (e_ic_el(e_ph=1e12, e_soft=_e_soft_avg, return_dim='eV', numerical_coef=4./3.),
-                                         e_ic_el(e_ph=1e13, e_soft=_e_soft_avg, return_dim='eV', numerical_coef=4./3.))
+            one_minus_cos_psi = 1. - np.cos(self.scat_ang)
+            psi_avg = np.arccos(np.clip(1. - avg(one_minus_cos_psi),
+                                                 -0.99, 0.99)
+                                )
+            # psi_avg = avg(self.scat_ang)
+            e_el_ic_low, e_el_ic_high = (e_ic_el(e_ph=4e11, e_soft=_e_soft_avg, return_dim='eV', psi=psi_avg*u.rad),
+                                         e_ic_el(e_ph=1e13, e_soft=_e_soft_avg, return_dim='eV', psi=psi_avg*u.rad))
 
             pe_u = index(dne_de_tot, self.e_el, e_el_ic_low/5., e_el_ic_high*5.)
             if ic_approx.lower() == 'kn':
@@ -851,31 +856,28 @@ class SpectrumIBS: #!!!
             else:
                 raise ValueError("ic_approx should be either KN or Thompson.")
 
-            ic_r = (self.e_el > e_el_ic_low)  & (self.e_el < e_el_ic_high)
+            ic_r = (self.e_el > e_el_ic_low/5.)  & (self.e_el < e_el_ic_high*5.)
             n_i_ic = trapz_loglog(self.dne_de[..., ic_r]*self.e_el[ic_r], self.e_el[ic_r], axis=-1)
             n_norm_ic = n_i_ic / np.sum(n_i_ic) 
             dopl_pow = self.delta_power + sed_ic_slope
             
             if emiss_mechanism in ('ic', ):
-                
                 w_ic = self.dopls**dopl_pow * n_i_ic
                 temp_eff_eff = avg(self.temp_eff, power=T_pow, weights=w_ic)
-                u_eff = avg(self.u, power = 0.25 * T_pow, weights=w_ic)
-                rescale_coef = (self.temp_eff / temp_eff_eff) ** T_pow * n_norm_ic #* (self.u / u_eff) 
+                u_eff = avg(self.u, power = 1.0, weights=w_ic)
+                rescale_coef = (self.temp_eff / temp_eff_eff) ** T_pow * n_norm_ic * (self.u / u_eff) 
                 kwargs = dict(seed_photon_fields=[['star',
                                     temp_eff_eff * u.K,
                                     u_eff * u.erg / u.cm**3]],
                               nEed=self.nEed_ic)
                 
             if emiss_mechanism == 'ic_ani':
-                one_minus_cos_psi = 1. - np.cos(self.scat_ang)
                 w_ic_a = self.dopls**dopl_pow * n_i_ic * one_minus_cos_psi  
-    
                 temp_eff_eff = avg(self.temp_eff, power=T_pow, weights=w_ic_a) 
-                u_eff = avg(self.u, power=0.5 * T_pow, weights=w_ic_a)
-                rescale_coef = (self.temp_eff / temp_eff_eff) ** T_pow * n_norm_ic# * (self.u / u_eff) 
+                u_eff = avg(self.u, power=1.0, weights=w_ic_a)
+                rescale_coef = (self.temp_eff / temp_eff_eff) ** T_pow * n_norm_ic * (self.u / u_eff) 
                 one_minus_cos_psi_eff = avg(one_minus_cos_psi,
-                                             power=None, 
+                                             power=1.0, 
                                              weights=w_ic_a,
                                             )
                 scat_ang_eff = np.arccos(1. - one_minus_cos_psi_eff)

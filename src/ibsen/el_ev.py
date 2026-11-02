@@ -5,6 +5,7 @@ import astropy.units as u
 from astropy import constants as const
 from scipy.integrate import trapezoid, cumulative_trapezoid, solve_ivp
 from scipy.interpolate import interp1d
+from scipy.optimize import brentq
 
 from ibsen.utils import  beta_from_g, loggrid, t_avg_func, \
     trapz_loglog, lor_trans_e_spec_iso, pl, ecpl, secpl, bkpl, interplg_positive, \
@@ -58,7 +59,7 @@ def gfunc(x, a = -0.362, b = 0.826, alpha = 0.682, beta = 1.281):
     """
     Auxillary function from 1310.7971
     """
-    return (1 +  (a * x**alpha) / (1 + b * x**beta) )**(-1)
+    return 1. / (1. +  (a * x ** alpha) / (1. + b * x ** beta) )
     
 def Gani(u_, c = 6.13):
     """
@@ -206,7 +207,8 @@ def e_syn_el(e_ph, b, return_dim = 'eV'):
     e_syn_el = MC2E * np.sqrt(e_ph_erg * 2./3. * M_E * C_LIGHT / E_ELECTRON / HBAR / b)
     return (e_syn_el * u.erg).to(return_dim).value
 
-def e_ic_ph(e_el, e_soft, return_dim = 'eV', numerical_coef=4.0):
+def e_ic_ph(e_el, e_soft, return_dim = 'eV', numerical_coef=4.0, use_rel=True,
+            psi=90. * u.deg):
     """
     Inverse Compton photon energy as a function of an electron energy. 
     Defined as e_soft * numerical_coef * (e_el / me c^2)^2.
@@ -214,6 +216,9 @@ def e_ic_ph(e_el, e_soft, return_dim = 'eV', numerical_coef=4.0):
     e_el, e_soft : float | np.ndarray in [eV] OR Quantity.
     return_dim: 'eV' or 'erg' or any other str of energy. Default 'eV'.
     numerical_coef : float, default 4.0
+    
+    use_rel: whether to use the relativistic approximation by Khangulyan+14.
+        If true, then `psi` [rad] is used. 
     
     returns float | np ndarray in units of `return_dim`.
     """
@@ -227,10 +232,30 @@ def e_ic_ph(e_el, e_soft, return_dim = 'eV', numerical_coef=4.0):
     except:
         e_soft_erg = (e_soft * u.eV).to('erg').value
         
-    e_ic_ph = numerical_coef * e_soft_erg * (e_el_erg / MC2E)**2
+    try:
+        psi_rad = psi.to('rad').value
+    except:
+        psi_rad = psi
+        
+    
+    if not use_rel:
+        e_ic_ph = numerical_coef * e_soft_erg * (e_el_erg / MC2E)**2
+    else:
+        gamma = (e_el_erg / MC2E)
+        theta = psi_rad
+        dimensionless_temperature = e_soft_erg / MC2E
+        t_theta = 2.0 * gamma * dimensionless_temperature * (1.0 - np.cos(theta))
+        z_mean = (
+            t_theta
+            / (t_theta + 0.2)
+            * np.log1p(t_theta / 2.0)
+            / np.log1p(2.0 * t_theta)
+        )
+        e_ic_ph = z_mean * e_el_erg
     return (e_ic_ph * u.erg).to(return_dim).value
 
-def e_ic_el(e_ph, e_soft, return_dim = 'eV', numerical_coef=4.0):
+def e_ic_el(e_ph, e_soft, return_dim = 'eV', numerical_coef=4.0, use_rel=True,
+            psi=90. * u.deg):
     """
     Inverse Compton electron energy as a function of a photon energy. 
     Calculated from: e_ic_ph = e_soft * numerical_coef * (e_el / me c^2)^2.
@@ -238,6 +263,9 @@ def e_ic_el(e_ph, e_soft, return_dim = 'eV', numerical_coef=4.0):
     e_ph, e_soft : float | np.ndarray in [eV] OR Quantity.
     return_dim: 'eV' or 'erg' or any other str of energy. Default 'eV'.
     numerical_coef : float, default 4.0
+    
+    use_rel: whether to use the relativistic approximation by Khangulyan+14.
+        If true, then `psi` [rad] is used. 
     
     returns float | np ndarray in units of `return_dim`.
     """
@@ -250,8 +278,24 @@ def e_ic_el(e_ph, e_soft, return_dim = 'eV', numerical_coef=4.0):
         e_soft_erg = e_soft.to('erg').value
     except:
         e_soft_erg = (e_soft * u.eV).to('erg').value
+        
 
-    e_ic_el = MC2E * np.sqrt(e_ph_erg / numerical_coef / e_soft_erg)
+    
+    if not use_rel:
+        e_ic_el = MC2E * np.sqrt(e_ph_erg / numerical_coef / e_soft_erg)
+    else:
+        try:
+            psi_rad = psi.to('rad').value
+        except:
+            psi_rad = psi
+        psi_cl = max(psi_rad, 1e-2)
+        to_solve = lambda _e: e_ph_erg - e_ic_ph(_e*u.erg, e_soft_erg*u.erg,
+                                                 return_dim = 'erg',
+                                                 numerical_coef=numerical_coef,
+                                                 use_rel=use_rel, psi=psi_cl*u.rad)
+        emin = e_ph_erg/1.1
+        emax = emin * 1e4
+        e_ic_el = brentq(to_solve, emin, emax, xtol=1e-100, rtol=1e-6)
     return (e_ic_el * u.erg).to(return_dim).value
 
         

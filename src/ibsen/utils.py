@@ -1576,7 +1576,7 @@ def l2_norm(xarr, yarr):
 def alpha_syn(p):
     return (2.0**(0.5 * (p - 1.)) / 8. *
             np.sqrt(3. / pi) / 
-            (p - 1.) *
+            (p + 1.) *
             gamma( (3. * p - 1.) / 12.) * 
             gamma( (3. * p + 19.) / 12.) * 
             gamma( 0.25 * (p + 5.)) / 

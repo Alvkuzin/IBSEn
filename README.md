@@ -56,7 +56,7 @@ results for manual comparison:
 python test_ibsen.py --testall True --ndim -1 > my_test.txt 
 
 ```
-Compare the output with the file `ibsen_test_results_0_5_15.txt`
+Compare the output with the file `ibsen_test_results_0_5_16.txt`
 
 ## Usage
 There is a poor attempt at the graphical interface: run it with

@@ -662,6 +662,8 @@ def avg(arr, weights=None, power=None, axis=None):
         Averaged array.
 
     """
+    if weights is None:
+        weights = np.ones(arr.shape)
     if power is None:
         return (np.sum(arr * weights, axis=axis) / 
                 np.sum(weights, axis=axis))

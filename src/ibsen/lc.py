@@ -2,6 +2,7 @@
 import numpy as np
 from numpy import pi
 from scipy.interpolate import interp1d
+import warnings
 
 from joblib import Parallel, delayed
 import multiprocessing
@@ -17,6 +18,18 @@ import astropy.units as u
 
 DAY = 86400.
 sed_unit = u.erg / u.s / u.cm**2
+
+
+ALLOWED_FOR_MULTIPLICATION = [
+    # IBS
+    'gamma_max', 's_max', 's_max_g', 'coef_quench', 'shield_star',
+    # ElectronsOnIBS
+    'ecut', 'ebr', 'p_e', 'norm_e', 'beta_e', 'delta_p_e',
+    'epow_norm_e', 'n_e_cut', 'eta_a', 'eta_syn', 'eta_ic',
+    'where_cut_theta',
+    # SpectrumIBS
+    'delta_power', 'nh_tbabs', 'distance',
+]
 
 def _t_to_nu(orbit, times):
     """
@@ -61,6 +74,17 @@ epows : None | scalar | iterable, optional
     (the result will be in [erg^epow_i / s / cm2]).
     If None, epow=1 is used for all bands. 
     If scalar, the same epow is used for all; if iterable, must match ``len(bands)``.
+time_multipliers : iterable of dict, optional
+    Time-dependent multiplicative modifiers. Each item must contain
+    ``{{'parameter': name, 'func': callable}}``; the callable is evaluated as
+    ``func(t_i)`` during initialization and the effective value is
+    ``parameter * func(t_i)``. Multiple entries for the same parameter are
+    composed multiplicatively. Allowed parameters are: ``gamma_max``,
+    ``s_max``, ``s_max_g``, ``coef_quench``, ``shield_star``, ``ecut``,
+    ``ebr``, ``p_e``, ``norm_e``, ``beta_e``, ``delta_p_e``,
+    ``epow_norm_e``, ``n_e_cut``, ``eta_a``, ``eta_syn``, ``eta_ic``,
+    ``where_cut_theta``, ``delta_power``, ``nh_tbabs``, and ``distance``.
+    Unknown parameters are ignored with a warning.
 to_parall : bool, optional
     If True, compute times in parallel with joblib. Default False.
 n_cores : int, or 'all', or None, optional
@@ -353,6 +377,7 @@ class LightCurve: # !!!
                  times, 
                  bands = ( [3e2, 1e4], ), bands_ind = ( [3e3, 1e4], ),
                  epows=None,
+                 time_multipliers=None,
                     to_parall=False, # lc itself
                     n_cores=None,
                  full_spec = False,
@@ -517,10 +542,116 @@ class LightCurve: # !!!
         self.ne_mult = ne_mult
         self.nEed_syn = nEed_syn
         self.nEed_ic = nEed_ic
+
+        # Store only the calculated values, not the callables. This keeps user
+        # functions out of the LightCurve object serialized by joblib workers.
+        self._precalculate_effective_values(time_multipliers)
         
         ####################################################################
         self.orbit = None
         self.set_orbit()
+
+    def _precalculate_effective_values(self, time_multipliers):
+        """Evaluate and store all configured time multipliers on ``self.t``."""
+        self._effective_values = {}
+        if time_multipliers is None:
+            return
+
+        try:
+            rules = list(time_multipliers)
+        except TypeError:
+            warnings.warn(
+                "Ignoring time_multipliers because it is not iterable.",
+                UserWarning,
+                stacklevel=2,
+            )
+            return
+
+        for i_rule, rule in enumerate(rules):
+            if not isinstance(rule, dict):
+                warnings.warn(
+                    f"Ignoring time_multipliers[{i_rule}]: expected a dict.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                continue
+
+            parameter = rule.get('parameter')
+            if parameter not in ALLOWED_FOR_MULTIPLICATION:
+                warnings.warn(
+                    f"Ignoring time multiplier for {parameter!r}: parameter is "
+                    "not in ALLOWED_FOR_MULTIPLICATION.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                continue
+
+            func = rule.get('func')
+            if not callable(func):
+                warnings.warn(
+                    f"Ignoring time multiplier for {parameter!r}: 'func' is "
+                    "not callable.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                continue
+
+            factors = []
+            for i_t, t_i in enumerate(self.t):
+                factor = np.asarray(func(t_i))
+                if factor.ndim != 0:
+                    raise ValueError(
+                        f"time multiplier for {parameter!r} returned a "
+                        f"non-scalar value at time index {i_t}"
+                    )
+                factor = factor.item()
+                try:
+                    finite = np.isfinite(factor)
+                except TypeError as exc:
+                    raise TypeError(
+                        f"time multiplier for {parameter!r} returned a "
+                        f"non-numeric value at time index {i_t}"
+                    ) from exc
+                if not finite:
+                    raise ValueError(
+                        f"time multiplier for {parameter!r} returned a "
+                        f"non-finite value at time index {i_t}"
+                    )
+                factors.append(factor)
+
+            if parameter in self._effective_values:
+                base_values = self._effective_values[parameter]
+            else:
+                base_value = getattr(self, parameter)
+                if base_value is None:
+                    raise TypeError(
+                        f"cannot apply a time multiplier to {parameter!r} "
+                        "because its base value is None"
+                    )
+                base_values = np.full(len(self.t), base_value)
+            try:
+                effective_values = base_values * np.asarray(factors)
+                finite_effective = np.isfinite(effective_values)
+            except (TypeError, ValueError) as exc:
+                raise TypeError(
+                    f"cannot multiply parameter {parameter!r} by its "
+                    "time-dependent factors"
+                ) from exc
+            if not np.all(finite_effective):
+                raise ValueError(
+                    f"effective values for {parameter!r} are not finite"
+                )
+            self._effective_values[parameter] = effective_values
+
+    def _effective(self, attribute, i_t=None):
+        """Return a base parameter or its precomputed value at time index ``i_t``."""
+        if attribute not in self._effective_values:
+            return getattr(self, attribute)
+        if i_t is None:
+            raise ValueError(
+                f"time index is required for time-dependent parameter {attribute!r}"
+            )
+        return self._effective_values[attribute][i_t]
 
     ############################################################
     def set_orbit(self):
@@ -589,7 +720,7 @@ class LightCurve: # !!!
         self.winds = winds
         
 
-    def calculate_at_time(self, t_):
+    def calculate_at_time(self, t_, i_t=None):
         """
         Auxillary function to calculate a lot of stuff at one moment of time.
         Initializes IBS, then ElectronsOnIBS, then SpectrumIBS, and calculates
@@ -599,6 +730,10 @@ class LightCurve: # !!!
         ----------
         t : float
             Time to calculate verything at [s].
+        i_t : int or None, optional
+            Index of ``t`` in the configured time grid. Used internally to
+            retrieve precomputed time-dependent parameters. If omitted while
+            multipliers are active, the index is inferred from ``t``.
 
         Returns
         -------
@@ -623,28 +758,37 @@ class LightCurve: # !!!
 
         """
         
+        if i_t is None and self._effective_values:
+            matching_indexes = np.flatnonzero(np.asarray(self.t) == t_)
+            if matching_indexes.size == 0:
+                raise ValueError(
+                    "calculate_at_time requires a time from the configured "
+                    "time grid when time_multipliers are used"
+                )
+            i_t = int(matching_indexes[0])
+
         if self.ibs_ndim == 2:
             ibs_now = IBS(winds=self.winds, 
-                    gamma_max=self.gamma_max, 
-                    s_max=self.s_max, 
-                    s_max_g=self.s_max_g, 
+                    gamma_max=self._effective('gamma_max', i_t),
+                    s_max=self._effective('s_max', i_t),
+                    s_max_g=self._effective('s_max_g', i_t),
                     n=self.n_ibs, 
                     t_to_calculate_beta_eff=t_,
                     abs_gg_filename=self.abs_gg_filename,
-                    coef_quench=self.coef_quench,
+                    coef_quench=self._effective('coef_quench', i_t),
                 )
         if self.ibs_ndim == 3:
             ibs_now = IBS3D(winds=self.winds, 
-                    gamma_max=self.gamma_max, 
-                    s_max=self.s_max, 
-                    s_max_g=self.s_max_g, 
+                    gamma_max=self._effective('gamma_max', i_t),
+                    s_max=self._effective('s_max', i_t),
+                    s_max_g=self._effective('s_max_g', i_t),
                     n=self.n_ibs, 
                     n_phi = self.n_phi,
                     t_to_calculate_beta_eff=t_,
                     abs_gg_filename=self.abs_gg_filename,
                     orientation=self.orientation,
-                    coef_quench=self.coef_quench,
-                    shield_star=self.shield_star
+                    coef_quench=self._effective('coef_quench', i_t),
+                    shield_star=self._effective('shield_star', i_t)
                 )
             
         r_sp_now = self.orbit.r(t=t_)
@@ -662,42 +806,42 @@ class LightCurve: # !!!
 
         els_now = ElectronsOnIBS(ibs = ibs_now,
                             cooling=self.cooling,
-                            eta_a = self.eta_a,
-                            eta_syn = self.eta_syn,
-                            eta_ic = self.eta_ic,
+                            eta_a = self._effective('eta_a', i_t),
+                            eta_syn = self._effective('eta_syn', i_t),
+                            eta_ic = self._effective('eta_ic', i_t),
                             to_inject_e = self.to_inject_e,
                             to_inject_theta = self.to_inject_theta,
-                            ecut = self.ecut,
-                            ebr=self.ebr,
-                            delta_p_e=self.delta_p_e,
-                            epow_norm_e=self.epow_norm_e,
-                            n_e_cut=self.n_e_cut,
-                            p_e=self.p_e,
-                            beta_e=self.beta_e,
-                            norm_e = self.norm_e,
+                            ecut = self._effective('ecut', i_t),
+                            ebr=self._effective('ebr', i_t),
+                            delta_p_e=self._effective('delta_p_e', i_t),
+                            epow_norm_e=self._effective('epow_norm_e', i_t),
+                            n_e_cut=self._effective('n_e_cut', i_t),
+                            p_e=self._effective('p_e', i_t),
+                            beta_e=self._effective('beta_e', i_t),
+                            norm_e = self._effective('norm_e', i_t),
                             emin = self.emin,
                             emax = self.emax,
                             emin_grid = self.emin_grid,
                             emax_grid = self.emax_grid,
                             to_cut_e = self.to_cut_e,
                             to_cut_theta = self.to_cut_theta,
-                            where_cut_theta = self.where_cut_theta,
+                            where_cut_theta = self._effective('where_cut_theta', i_t),
                             use_mimic_eta = self.use_mimic_eta,
                             ) 
 
         e_vals_now, dNe_de_IBS_now = els_now.calculate(to_return=True, 
                                             require_lorentz=self.lorentz_boost)
         spec_now = SpectrumIBS(els=els_now,
-                                delta_power = self.delta_power,
+                                delta_power = self._effective('delta_power', i_t),
                                 lorentz_boost = self.lorentz_boost,
                                 ani_lorentz_boost=self.ani_lorentz_boost,
                                 method = self.method,
                                 abs_photoel = self.abs_photoel,
                                 abs_gg = self.abs_gg,
-                                nh_tbabs = self.nh_tbabs,
+                                nh_tbabs = self._effective('nh_tbabs', i_t),
                                 mechanisms=self.mechanisms,
                                 ic_ani=self.ic_ani,
-                                distance = self.distance,
+                                distance = self._effective('distance', i_t),
                                 ne_mult=self.ne_mult,
                                 mode=self.mode,
                                 nEed_ic=self.nEed_ic,
@@ -779,7 +923,7 @@ class LightCurve: # !!!
                     ibs_now, els_now, dNe_de_IBS_now, e_vals_now, spec_now,
                     E_ph_now, sed_tot_now, sed_s_now, fluxes_now, indexes_now, 
                     emissiv_now,
-                    ) = self.calculate_at_time(t_)
+                    ) = self.calculate_at_time(t_, i_t=i_t)
                 ###################################
                 r_sps[i_t] = r_sp_now
                 r_pes[i_t] = r_pe_now
@@ -807,7 +951,7 @@ class LightCurve: # !!!
                     ibs_now, els_now, dNe_de_IBS_now, e_vals_now, spec_now,
                     E_ph_now, sed_tot_now, sed_s_now, fluxes_now, indexes_now, 
                     emissiv_now,
-                    ) = self.calculate_at_time(self.t[i_t])
+                    ) = self.calculate_at_time(self.t[i_t], i_t=i_t)
                 
                 return (r_sp_now, r_pe_now, r_se_now, Bp_apex_now, B_s_apex_now,
                     ibs_now, els_now, dNe_de_IBS_now, e_vals_now, spec_now,

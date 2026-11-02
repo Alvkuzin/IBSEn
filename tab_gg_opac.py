@@ -6,10 +6,7 @@ from ibsen.absorption.absorption import tabulate_absgg_d_mu
 from ibsen.orbit import Orbit
 
 def main():
-    DAY = 86400.
     R_SOLAR = float(const.R_sun.cgs.value)
-    M_SOLAR = float(const.M_sun.cgs.value)
-    # RAD_IN_DEG = np.pi / 180.0
     
     parser = argparse.ArgumentParser(
         description="""
@@ -17,24 +14,7 @@ def main():
         ibsen-readable file.
         """
     )
-    # parser.add_argument("--T", type=float, required=True,
-    #                     help="T: Orbital system [days]")
-    # parser.add_argument("--e", type=float, required=True,
-    #                     help="e: Orbit eccentricity")
-    # parser.add_argument("--M_s", type=float, required=True,
-    #                     help="M_s: optical-star mass [Msol]")
-    # parser.add_argument("--M_p", type=float, required=True,
-    #                     help="M_p: pulsar mass [Msol]")
-    # parser.add_argument("--nu_los", type=float, required=True,
-    #                     help="""
-    #                     nu_los: angle between direction to periastron 
-    #                     and line of sight [deg]
-    #                     """)
-    # parser.add_argument("--incl_los", type=float, required=True,
-    #                     help="""
-    #                     incl_los: Orbit inclination [deg] (angle between 
-    #                     orbital angular velocity and lne of sight)
-    #                     """)
+
     parser.add_argument("--Ts", type=float, required=True,
                         help="Ts: optical-star effective temperature [K]")
     
@@ -70,13 +50,6 @@ def main():
                         
 
     args = parser.parse_args()
-    # orb = Orbit(T = args.T * DAY,
-    #             e = args.e,
-    #             M_s=args.M_s * M_SOLAR,
-    #             M_p=args.M_p * M_SOLAR,
-    #             nu_los = np.deg2rad(args.nu_los),
-    #             incl_los = np.deg2rad(args.incl_los),
-    #             )
     tabulate_absgg_d_mu(
                    nr = args.nr,
                    nmu = args.nmu,

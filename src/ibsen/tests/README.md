@@ -158,12 +158,6 @@ the pulsar and star. Absorption is the transmission `exp(-tau)`, evaluated
 by `gg_abs` at `1e12 eV` (1 TeV) using the PSRB opacity table and
 `analyt=False`. This records the existing 3D absorption approximation.
 
-**Recorded implementation limitation:** although `orientation="flow_p"`
-is passed to `IBS3D`, its current axis construction calls `vec_pe_3d` without
-forwarding that orientation, so the axis uses the default `flow` vector.
-The regression references deliberately record this current behavior;
-it is likely a bug, I will fix it soon.
-
 Comparisons use relative tolerance `1e-5`, plus absolute tolerances of
 1 cm, `1e-6 K`, or `1e-12` in the other columns' units. All values must
 be finite and each table must have the expected shape. Use `np.loadtxt(path)`

@@ -1033,7 +1033,7 @@ class Winds: # !!!
         elif orientation == 'flow_p':
             _func = self._vec_pe_3d_novec_full
         else:
-            raise ValueError('nah')
+            raise ValueError('`Orientation` should be `flow` or `flow_p` or None.')
         if t_.ndim == 0:
             return _func(float(t), eps)
         
