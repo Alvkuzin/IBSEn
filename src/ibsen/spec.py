@@ -362,7 +362,7 @@ def calculate_synchrotron_sed_scaled(dne_de, e_el, b, dopls, e_ph, distance,
         delta=shift, weights=amplitudes, e_big=e_ph_ext, e_out=e_ph)
     return sed_cells
 
-docstr_specibs =  f"""
+docstr_specibs =  rf"""
     Spectral energy distribution (SED) from an intrabinary shock (IBS).
 
     Builds broadband SEDs produced along the IBS at a chosen orbital epoch,
@@ -828,7 +828,8 @@ class SpectrumIBS: #!!!
             n_norm_sy = n_i_syn / np.sum(n_i_syn) 
             
             emiss_function = Synchrotron
-            ptot = index(dne_de_tot, self.e_el, e_el_sy_low/5., e_el_sy_high*5.)
+            _ptot = index(dne_de_tot, self.e_el, e_el_sy_low/5., e_el_sy_high*5.)
+            ptot = _ptot if np.isfinite(_ptot) else self.pe_default
             sed_slope = 0.5 * (ptot - 3.)
             dopl_pow = self.delta_power + sed_slope
             b_eff = avg(self.b, power=0.5*(ptot+1.), weights= n_i_syn * self.dopls**dopl_pow)
@@ -838,15 +839,14 @@ class SpectrumIBS: #!!!
         else:
             emiss_function = InverseCompton
             _e_soft_avg = np.average( (self.temp_eff * K_BOLTZ * u.erg).to('eV').value)
-            one_minus_cos_psi = 1. - np.cos(self.scat_ang)
-            psi_avg = np.arccos(np.clip(1. - avg(one_minus_cos_psi),
-                                                 -0.99, 0.99)
-                                )
+            one_minus_cos_psi = np.clip((1. - np.cos(self.scat_ang)), 0.001,  1.999)
+            psi_avg = np.arccos(np.clip(1. - avg(one_minus_cos_psi), -0.999, 0.999))
             # psi_avg = avg(self.scat_ang)
             e_el_ic_low, e_el_ic_high = (e_ic_el(e_ph=4e11, e_soft=_e_soft_avg, return_dim='eV', psi=psi_avg*u.rad),
                                          e_ic_el(e_ph=1e13, e_soft=_e_soft_avg, return_dim='eV', psi=psi_avg*u.rad))
 
-            pe_u = index(dne_de_tot, self.e_el, e_el_ic_low/5., e_el_ic_high*5.)
+            _pe_u = index(dne_de_tot, self.e_el, e_el_ic_low/5., e_el_ic_high*5.)
+            pe_u = _pe_u if np.isfinite(_pe_u) else self.pe_default
             if ic_approx.lower() == 'kn':
                 T_pow = 2.0
                 sed_ic_slope = pe_u - 1.
@@ -875,12 +875,12 @@ class SpectrumIBS: #!!!
                 w_ic_a = self.dopls**dopl_pow * n_i_ic * one_minus_cos_psi  
                 temp_eff_eff = avg(self.temp_eff, power=T_pow, weights=w_ic_a) 
                 u_eff = avg(self.u, power=1.0, weights=w_ic_a)
-                rescale_coef = (self.temp_eff / temp_eff_eff) ** T_pow * n_norm_ic * (self.u / u_eff) 
+                rescale_coef = (self.temp_eff / temp_eff_eff) ** T_pow * n_norm_ic * (self.u / u_eff)
                 one_minus_cos_psi_eff = avg(one_minus_cos_psi,
                                              power=1.0, 
                                              weights=w_ic_a,
                                             )
-                scat_ang_eff = np.arccos(1. - one_minus_cos_psi_eff)
+                scat_ang_eff = np.arccos(np.clip((1. - one_minus_cos_psi_eff), -0.999, 0.999))
                 if np.abs(one_minus_cos_psi_eff) < 1e-3:
                     rescale_coef *= (one_minus_cos_psi) / (one_minus_cos_psi_eff + 1e-3)
                 else:
