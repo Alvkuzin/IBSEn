@@ -4,8 +4,8 @@ from numpy import pi
 from scipy.interpolate import interp1d
 import warnings
 
-from joblib import Parallel, delayed
-import multiprocessing
+from joblib import Parallel, delayed, cpu_count
+import os
 
 import matplotlib.pyplot as plt
 
@@ -869,7 +869,40 @@ class LightCurve: # !!!
                 E_ph_now, sed_tot_now, sed_s_now, fluxes_now, indexes_now, 
                 emissiv_now,
                 )
+    
+    def _njobs_for_lc(self):
+        available_cpus = cpu_count()
 
+        # Some Slurm installations do not enforce CPU affinity, so also respect the
+        # explicit per-task allocation when it is available.
+        slurm_cpus = os.environ.get("SLURM_CPUS_PER_TASK")
+        if slurm_cpus is not None:
+            try:
+                available_cpus = min(available_cpus, int(slurm_cpus))
+            except ValueError:
+                pass
+        
+        if self.n_cores is None:
+            # Conservative automatic setting for interactive/laptop use.
+            requested_jobs = min(4, available_cpus)
+        elif self.n_cores == "all":
+            requested_jobs = available_cpus
+        elif (
+            isinstance(self.n_cores, int)
+            and not isinstance(self.n_cores, bool)
+            and self.n_cores > 0
+        ):
+            requested_jobs = self.n_cores
+        else:
+            raise ValueError(
+                "n_cores must be None, 'all', or a positive integer."
+            )
+        
+        # There cannot be more simultaneous calculations than time points.
+        n_jobs = min(requested_jobs, available_cpus, len(self.t))
+        n_jobs = max(1, n_jobs)
+        return n_jobs 
+    
     ############################################################
     def calculate(self):
         """
@@ -958,14 +991,7 @@ class LightCurve: # !!!
                     E_ph_now, sed_tot_now, sed_s_now, fluxes_now, indexes_now, 
                     emissiv_now,
                     )
-            if self.n_cores is None or self.n_cores == 'all':
-                n_jobs = multiprocessing.cpu_count()
-            elif isinstance(self.n_cores, int): 
-                n_jobs = self.n_cores
-            else:
-                raise ValueError('n_cores should be an int, or None, or \'all\'.')
-            n_jobs = max(1, min(20, n_jobs - 5) )
-            res= Parallel(n_jobs=n_jobs)(delayed(func_to_parall)(i_t)
+            res= Parallel(n_jobs=self._njobs_for_lc())(delayed(func_to_parall)(i_t)
                                  for i_t in range(0, len(self.t)))
 
             r_sps, r_pes, r_ses, B_p_apexs, B_s_apexs, ibs_classes, els_classes, \
@@ -1442,7 +1468,7 @@ class LightCurve: # !!!
             background = fig.canvas.copy_from_bbox(fig.bbox)
 
         pulsar_scatter = ax00.scatter(xp0, yp0, color='k', s=30, zorder=6)
-        bary_scatter = ax00.scatter(0, 0, color='k', marker='x')
+        # bary_scatter = ax00.scatter(0, 0, color='k', marker='x')
         
         
         line_sp, = ax00.plot([xs0, xp0], [ys0, yp0],
