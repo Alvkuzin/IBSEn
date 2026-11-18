@@ -265,15 +265,11 @@ PARAMS = {
 
 
 def make_lc(times, parall=True, ncores=None, **params):
-    """
-    Build and calculate a LightCurve.
-    """
-
     if parall:
         if ncores is None:
             ncores = 10
-        else:
-            ncores = None
+    else:
+        ncores = None
 
     params = params.copy()
     params["to_parall"] = parall
